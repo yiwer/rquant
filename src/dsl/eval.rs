@@ -15,6 +15,11 @@ pub fn eval_bool(expr: &Expr, ctx: &Context) -> Result<bool> {
     as_bool(&eval(expr, ctx)?)
 }
 
+/// Evaluate and reduce to a single f64 (series → last). For strength expressions.
+pub fn eval_scalar(expr: &Expr, ctx: &Context) -> Result<f64> {
+    as_scalar(&eval(expr, ctx)?)
+}
+
 pub fn eval(expr: &Expr, ctx: &Context) -> Result<Value> {
     match expr {
         Expr::Number(n) => Ok(Value::Scalar(*n)),
@@ -167,6 +172,10 @@ fn eval_call(name: &str, args: &[Expr], ctx: &Context) -> Result<Value> {
         "macd_signal" => { need(&vals, 4, name)?; Ok(Value::Series(indicators::macd_signal(&as_series(&vals[0])?, as_usize(&vals[1])?, as_usize(&vals[2])?, as_usize(&vals[3])?))) }
         "macd_hist" => { need(&vals, 4, name)?; Ok(Value::Series(indicators::macd_hist(&as_series(&vals[0])?, as_usize(&vals[1])?, as_usize(&vals[2])?, as_usize(&vals[3])?))) }
         "std" => { need(&vals, 2, name)?; Ok(Value::Scalar(indicators::std(&as_series(&vals[0])?, as_usize(&vals[1])?))) }
+        "sigmoid" => {
+            need(&vals, 1, name)?;
+            Ok(Value::Scalar(1.0 / (1.0 + (-as_scalar(&vals[0])?).exp())))
+        }
         _ => Err(Error::Eval(format!("unknown function: {name}"))),
     }
 }
@@ -231,5 +240,18 @@ mod tests {
         }
         assert_eq!(eval(&parse_str("macd_line(close,3,5) > -1000.0").unwrap(), &ctx).unwrap(), Value::Bool(true));
         assert_eq!(eval(&parse_str("macd_hist(close,3,5,2) > -1000.0").unwrap(), &ctx).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn sigmoid_eval() {
+        let ctx = ctx_from_closes(&[1.0]);
+        match eval(&parse_str("sigmoid(0)").unwrap(), &ctx).unwrap() {
+            Value::Scalar(x) => assert!((x - 0.5).abs() < 1e-9),
+            o => panic!("{o:?}"),
+        }
+        match eval(&parse_str("sigmoid(100)").unwrap(), &ctx).unwrap() {
+            Value::Scalar(x) => assert!(x > 0.99),
+            o => panic!("{o:?}"),
+        }
     }
 }
