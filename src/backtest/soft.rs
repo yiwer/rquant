@@ -1,10 +1,18 @@
 use crate::backtest::costs::CostModel;
 use crate::backtest::forward_return::forward_return;
 use crate::backtest::metrics::{signal_stat, SignalStat};
+use crate::backtest::runner::BacktestConfig;
 use crate::data::bar::Bar;
-use crate::engine::soft::SoftTrace;
-use crate::tree::loader::Tree;
+use crate::data::news::{read_news_csv, NewsRecord};
+use crate::data::reader::read_bars_csv;
+use crate::engine::soft::{traverse_soft, SoftTrace};
+use crate::eval::llm::LlmEvaluator;
+use crate::features::context::build_context;
+use crate::report::{write_soft_report, SoftReport};
+use crate::tree::loader::{load_tree_file, Tree};
 use crate::tree::schema::Stance;
+use crate::Result;
+use futures::stream::{self, StreamExt};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy)]
@@ -71,6 +79,54 @@ pub fn soft_metrics(items: &[Option<SoftScore>], primary: &[Bar]) -> SoftMetrics
         buy_and_hold,
         overlap_warning: "前瞻窗口重叠 → 样本自相关，t 值偏乐观，勿据此鼓吹显著性".into(),
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn eval_point_soft(
+    i: usize,
+    primary: &[Bar],
+    context: &[Bar],
+    news: &[NewsRecord],
+    tree: &Tree,
+    costs: &CostModel,
+    fw: usize,
+    window: usize,
+    llm: &LlmEvaluator,
+) -> Result<Option<SoftScore>> {
+    let t = primary[i].time;
+    let ctx = build_context(primary, context, news, t, window);
+    let soft = traverse_soft(tree, &ctx, llm).await?;
+    Ok(score_soft(&soft, tree, primary, i, fw, costs))
+}
+
+/// 软遍历回测：与 `run` 同构，每点用 traverse_soft + score_soft，聚合成 SoftReport。
+pub async fn run_soft(cfg: &BacktestConfig, llm: &LlmEvaluator) -> Result<SoftReport> {
+    let tree = load_tree_file(&cfg.tree_path)?;
+    let primary = read_bars_csv(&cfg.primary_path)?;
+    let context = read_bars_csv(&cfg.context_path)?;
+    let news: Vec<NewsRecord> = match &cfg.news_path {
+        Some(p) => read_news_csv(p)?,
+        None => Vec::new(),
+    };
+    let costs = CostModel { round_trip_bps: cfg.cost_bps };
+    let fw = tree.meta.forward_window;
+    let start = cfg.warmup.min(primary.len());
+    let results: Vec<Option<SoftScore>> = stream::iter(start..primary.len())
+        .map(|i| eval_point_soft(i, &primary, &context, &news, &tree, &costs, fw, cfg.window, llm))
+        .buffered(cfg.concurrency.max(1))
+        .collect::<Vec<Result<Option<SoftScore>>>>()
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?;
+    let metrics = soft_metrics(&results, &primary[start..]);
+    let report = SoftReport {
+        tree_name: tree.meta.name.clone(),
+        forward_window: fw,
+        cost_bps: cfg.cost_bps,
+        soft: metrics,
+    };
+    write_soft_report(&report, &cfg.out_path)?;
+    Ok(report)
 }
 
 #[cfg(test)]

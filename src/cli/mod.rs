@@ -39,6 +39,9 @@ enum Cmd {
         /// Optional A-share holidays file (one YYYY-MM-DD per line) for gap detection
         #[arg(long)]
         holidays: Option<PathBuf>,
+        /// Soft/probabilistic traversal: propagate confidence-weighted leaf distribution
+        #[arg(long, default_value_t = false)]
+        soft: bool,
         #[arg(long, default_value = "")]
         llm_model: String,
         #[arg(long, default_value = "")]
@@ -72,7 +75,7 @@ pub async fn main() -> anyhow::Result<()> {
     match cli.cmd {
         Cmd::Backtest {
             tree, primary, context, news, out, traces, cost_bps, warmup, window, concurrency,
-            holidays, llm_model, llm_base_url, llm_cache_dir,
+            holidays, soft, llm_model, llm_base_url, llm_cache_dir,
         } => {
             let api_key = std::env::var("RQUANT_LLM_API_KEY").unwrap_or_default();
             let llm = if !llm_model.is_empty() && !llm_base_url.is_empty() && !api_key.is_empty() {
@@ -94,8 +97,13 @@ pub async fn main() -> anyhow::Result<()> {
                 out_path: out, traces_path: traces, cost_bps, warmup, window, concurrency,
                 holidays_path: holidays,
             };
-            let report = run(&cfg, &llm).await?;
-            crate::report::print_summary(&report);
+            if soft {
+                let report = crate::backtest::soft::run_soft(&cfg, &llm).await?;
+                crate::report::print_soft_summary(&report);
+            } else {
+                let report = run(&cfg, &llm).await?;
+                crate::report::print_summary(&report);
+            }
         }
         Cmd::Fetch { symbol, scale, out, datalen, base_url } => {
             let http = reqwest::Client::builder()
