@@ -1,5 +1,5 @@
 use crate::eval::llm::{LlmEvaluator, LlmNode};
-use crate::eval::quant::eval_quant;
+use crate::eval::quant::quant_branch_dist;
 use crate::features::context::Context;
 use crate::tree::loader::{Node, Tree};
 use crate::{Error, Result};
@@ -13,11 +13,11 @@ pub struct SoftTrace {
     pub leaf_probs: BTreeMap<String, f64>,
 }
 
-/// 置信度加权软遍历：质量按 (选中支: c, 残余 1-c → default) 沿 DAG 传播 → 叶子分布。
+/// 置信度加权软遍历：质量按多路边 Vec<(goto, weight)>（Σweight=1）沿 DAG 传播 → 叶子分布。
 /// 两阶段：①async 收边（每可达节点评一次，weight>0 才探索）②sync 记忆化求叶子分布。
 pub async fn traverse_soft(tree: &Tree, ctx: &Context, llm: &LlmEvaluator) -> Result<SoftTrace> {
-    // 阶段一：收集 node -> (chosen_goto, c, default_goto)
-    let mut edges: HashMap<String, (String, f64, String)> = HashMap::new();
+    // 阶段一：收集 node -> Vec<(goto, weight)>（Σweight=1）
+    let mut edges: HashMap<String, Vec<(String, f64)>> = HashMap::new();
     let mut stack: Vec<String> = vec![tree.root.clone()];
     while let Some(id) = stack.pop() {
         if tree.leaves.contains_key(&id) || edges.contains_key(&id) {
@@ -27,23 +27,28 @@ pub async fn traverse_soft(tree: &Tree, ctx: &Context, llm: &LlmEvaluator) -> Re
             .nodes
             .get(&id)
             .ok_or_else(|| Error::Engine(format!("dangling node '{id}'")))?;
-        let (decision, default_goto) = match node {
-            Node::Quant { branches, default } => (eval_quant(branches, default, ctx)?, default.goto.clone()),
+        let dist: Vec<(String, f64)> = match node {
+            Node::Quant { branches, default } => quant_branch_dist(branches, default, ctx)?,
             Node::Llm { inputs, prompt, labels, default } => {
                 let ln = LlmNode { inputs, prompt, labels, default };
-                (llm.eval_llm(&id, &ln, ctx).await?, default.clone())
+                let d = llm.eval_llm(&id, &ln, ctx).await?;
+                let c = d.confidence;
+                let mut v: Vec<(String, f64)> = Vec::new();
+                if c > 0.0 {
+                    v.push((d.goto.clone(), c));
+                }
+                if 1.0 - c > 0.0 {
+                    v.push((default.clone(), 1.0 - c));
+                }
+                v
             }
         };
-        let chosen = decision.goto.clone();
-        let c = decision.confidence;
-        // 仅探索 weight>0 的分支（避免评估 0 质量子树 / 多余 LLM 调用）
-        if c > 0.0 && tree.nodes.contains_key(&chosen) {
-            stack.push(chosen.clone());
+        for (g, w) in &dist {
+            if *w > 0.0 && tree.nodes.contains_key(g) {
+                stack.push(g.clone());
+            }
         }
-        if 1.0 - c > 0.0 && tree.nodes.contains_key(&default_goto) {
-            stack.push(default_goto.clone());
-        }
-        edges.insert(id, (chosen, c, default_goto));
+        edges.insert(id, dist);
     }
     // 阶段二：记忆化求叶子分布
     let mut memo: HashMap<String, BTreeMap<String, f64>> = HashMap::new();
@@ -58,7 +63,7 @@ pub async fn traverse_soft(tree: &Tree, ctx: &Context, llm: &LlmEvaluator) -> Re
 
 fn leaf_dist(
     id: &str,
-    edges: &HashMap<String, (String, f64, String)>,
+    edges: &HashMap<String, Vec<(String, f64)>>,
     tree: &Tree,
     memo: &mut HashMap<String, BTreeMap<String, f64>>,
 ) -> BTreeMap<String, f64> {
@@ -68,16 +73,13 @@ fn leaf_dist(
     if let Some(m) = memo.get(id) {
         return m.clone();
     }
-    let (chosen, c, default_goto) = edges[id].clone();
+    let dist = edges[id].clone();
     let mut out: BTreeMap<String, f64> = BTreeMap::new();
-    if c > 0.0 {
-        for (leaf, p) in leaf_dist(&chosen, edges, tree, memo) {
-            *out.entry(leaf).or_insert(0.0) += p * c;
-        }
-    }
-    if 1.0 - c > 0.0 {
-        for (leaf, p) in leaf_dist(&default_goto, edges, tree, memo) {
-            *out.entry(leaf).or_insert(0.0) += p * (1.0 - c);
+    for (g, w) in dist {
+        if w > 0.0 {
+            for (leaf, p) in leaf_dist(&g, edges, tree, memo) {
+                *out.entry(leaf).or_insert(0.0) += p * w;
+            }
         }
     }
     memo.insert(id.to_string(), out.clone());
@@ -187,5 +189,26 @@ leaves:
         let st = traverse_soft(&tree, &ctx(&[1.0, 2.0, 3.0]), &LlmEvaluator::Disabled).await.unwrap();
         assert_eq!(st.leaf_probs.len(), 1);
         assert!((st.leaf_probs["leaf_f"] - 1.0).abs() < 1e-9);
+    }
+
+    const QUANT_SOFT_TREE: &str = r#"
+meta: { name: t, forward_window: 3, stances: [long, flat] }
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "close > sma(close,3)", strength: "0.7", goto: leaf_l, label: up } ]
+    default: { goto: leaf_f, label: flat }
+leaves:
+  leaf_l: { stance: long }
+  leaf_f: { stance: flat }
+"#;
+
+    #[tokio::test]
+    async fn quant_strength_splits_soft() {
+        let tree = load_tree_str(QUANT_SOFT_TREE).unwrap();
+        let st = traverse_soft(&tree, &ctx(&[1.0, 2.0, 3.0, 4.0, 5.0]), &LlmEvaluator::Disabled).await.unwrap();
+        assert!((st.leaf_probs["leaf_l"] - 0.7).abs() < 1e-9);
+        assert!((st.leaf_probs["leaf_f"] - 0.3).abs() < 1e-9);
     }
 }
