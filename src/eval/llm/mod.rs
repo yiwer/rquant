@@ -1,4 +1,5 @@
 pub mod cache;
+pub mod prompt;
 
 use crate::eval::Decision;
 use crate::features::context::Context;
