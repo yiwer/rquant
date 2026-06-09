@@ -54,7 +54,6 @@ pub fn run(cfg: &BacktestConfig) -> Result<Report> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::path::Path;
 
     #[test]

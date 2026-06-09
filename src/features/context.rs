@@ -36,7 +36,7 @@ pub fn build_context(
 mod tests {
     use super::*;
     use crate::data::bar::Bar;
-    use chrono::{NaiveDate, NaiveDateTime};
+    use chrono::NaiveDate;
 
     fn bar_at(min_from_open: i64, price: f64) -> Bar {
         let base = NaiveDate::from_ymd_opt(2024, 1, 2)
