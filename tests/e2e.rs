@@ -1,5 +1,6 @@
 use rquant::backtest::runner::{run, BacktestConfig};
-use rquant::eval::llm::LlmEvaluator;
+use rquant::eval::llm::{LlmEvaluator, StubLlm};
+use std::collections::HashMap;
 use std::io::Write;
 
 fn write_file(content: &str, suffix: &str) -> tempfile::NamedTempFile {
@@ -85,4 +86,56 @@ async fn end_to_end_uptrend_yields_positive_long_edge() {
 
     let content = std::fs::read_to_string(out_f.path()).unwrap();
     assert!(content.contains("e2e"));
+}
+
+fn llm_tree_yaml() -> String {
+    r#"
+meta: { name: e2e_llm, forward_window: 2, stances: [long, flat] }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches: [ { when: "close > sma(close,5)", goto: judge, label: above } ]
+    default: { goto: leaf_flat, label: below }
+  judge:
+    type: llm
+    inputs: [news_score]
+    prompt: "go or not"
+    labels: { go: leaf_long }
+    default: leaf_flat
+leaves:
+  leaf_long: { stance: long }
+  leaf_flat: { stance: flat }
+"#
+    .to_string()
+}
+
+async fn run_llm_e2e(ev: &LlmEvaluator) -> rquant::report::Report {
+    let tree_f = write_file(&llm_tree_yaml(), ".yaml");
+    let primary_f = write_file(&gen_primary_csv(), ".csv");
+    let context_f = write_file(&gen_context_csv(), ".csv");
+    let out_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+    let cfg = BacktestConfig {
+        tree_path: tree_f.path().to_path_buf(),
+        primary_path: primary_f.path().to_path_buf(),
+        context_path: context_f.path().to_path_buf(),
+        news_path: None,
+        out_path: out_f.path().to_path_buf(),
+        traces_path: None,
+        cost_bps: 10.0,
+        warmup: 5,
+        window: 100,
+        concurrency: 4,
+    };
+    run(&cfg, ev).await.unwrap()
+}
+
+#[tokio::test]
+async fn llm_node_changes_path_vs_disabled() {
+    let stub = LlmEvaluator::Stub(StubLlm { answers: HashMap::from([("judge".to_string(), "go".to_string())]) });
+    let with_llm = run_llm_e2e(&stub).await;
+    assert!(with_llm.metrics.active.count > 0, "stub 'go' should produce long signals");
+
+    let disabled = run_llm_e2e(&LlmEvaluator::Disabled).await;
+    assert_eq!(disabled.metrics.active.count, 0, "disabled LLM should take default -> all flat");
 }
