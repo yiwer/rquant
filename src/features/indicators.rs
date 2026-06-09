@@ -151,6 +151,56 @@ pub fn crossunder(a: &[f64], b: &[f64]) -> bool {
     a[la - 2] >= b[lb - 2] && a[la - 1] < b[lb - 1]
 }
 
+/// 线性加权移动平均（权重 1..n，最新最重）；前 n-1 位为 NaN。
+pub fn wma(s: &[f64], n: usize) -> Vec<f64> {
+    let len = s.len();
+    let mut out = vec![f64::NAN; len];
+    if n == 0 || len < n {
+        return out;
+    }
+    let denom = (n * (n + 1) / 2) as f64;
+    for i in (n - 1)..len {
+        let mut acc = 0.0;
+        let start = i + 1 - n;
+        for k in 0..n {
+            acc += s[start + k] * (k + 1) as f64;
+        }
+        out[i] = acc / denom;
+    }
+    out
+}
+
+/// 最近 n 根的总体标准差（÷n）；不足返回 NaN。
+pub fn std(s: &[f64], n: usize) -> f64 {
+    let len = s.len();
+    if n == 0 || len < n {
+        return f64::NAN;
+    }
+    let w = &s[len - n..];
+    let mean = w.iter().sum::<f64>() / n as f64;
+    let var = w.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n as f64;
+    var.sqrt()
+}
+
+/// MACD 快线：ema(fast) - ema(slow) 逐点（ema 等长，下标对齐）。
+pub fn macd_line(s: &[f64], fast: usize, slow: usize) -> Vec<f64> {
+    let f = ema(s, fast);
+    let g = ema(s, slow);
+    f.iter().zip(g.iter()).map(|(a, b)| a - b).collect()
+}
+
+/// MACD 信号线：ema(macd_line, sig)。
+pub fn macd_signal(s: &[f64], fast: usize, slow: usize, sig: usize) -> Vec<f64> {
+    ema(&macd_line(s, fast, slow), sig)
+}
+
+/// MACD 柱：macd_line - macd_signal 逐点。
+pub fn macd_hist(s: &[f64], fast: usize, slow: usize, sig: usize) -> Vec<f64> {
+    let line = macd_line(s, fast, slow);
+    let signal = macd_signal(s, fast, slow, sig);
+    line.iter().zip(signal.iter()).map(|(a, b)| a - b).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,5 +257,27 @@ mod tests {
         assert!(crossover(&[1.0, 3.0], &[2.0, 2.0]));
         assert!(!crossover(&[3.0, 4.0], &[2.0, 2.0]));
         assert!(crossunder(&[3.0, 1.0], &[2.0, 2.0]));
+    }
+
+    #[test]
+    fn wma_known_value() {
+        let out = wma(&[1.0, 2.0, 3.0], 3);
+        assert!(out[0].is_nan());
+        assert!(out[1].is_nan());
+        assert_relative_eq!(out[2], 14.0 / 6.0); // (1*1 + 2*2 + 3*3) / (1+2+3)
+    }
+
+    #[test]
+    fn std_population() {
+        // [1,2,3,4,5]: mean 3, var=(4+1+0+1+4)/5=2, std=sqrt(2)
+        assert_relative_eq!(std(&[1.0, 2.0, 3.0, 4.0, 5.0], 5), 2.0_f64.sqrt());
+    }
+
+    #[test]
+    fn macd_zero_on_constant_series() {
+        let s = vec![5.0; 30];
+        assert!(macd_line(&s, 12, 26).last().unwrap().abs() < 1e-9);
+        assert!(macd_signal(&s, 12, 26, 9).last().unwrap().abs() < 1e-9);
+        assert!(macd_hist(&s, 12, 26, 9).last().unwrap().abs() < 1e-9);
     }
 }
