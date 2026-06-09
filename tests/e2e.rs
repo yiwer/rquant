@@ -74,6 +74,7 @@ async fn end_to_end_uptrend_yields_positive_long_edge() {
         warmup: 5,
         window: 100,
         concurrency: 4,
+        holidays_path: None,
     };
 
     let report = run(&cfg, &LlmEvaluator::Disabled).await.unwrap();
@@ -94,6 +95,7 @@ async fn end_to_end_uptrend_yields_positive_long_edge() {
 
     let content = std::fs::read_to_string(out_f.path()).unwrap();
     assert!(content.contains("e2e"));
+    assert!(report.gaps.is_empty(), "synthetic data should have no gaps");
 }
 
 fn llm_tree_yaml() -> String {
@@ -134,6 +136,7 @@ async fn run_llm_e2e(ev: &LlmEvaluator) -> rquant::report::Report {
         warmup: 5,
         window: 100,
         concurrency: 4,
+        holidays_path: None,
     };
     run(&cfg, ev).await.unwrap()
 }

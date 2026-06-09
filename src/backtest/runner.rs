@@ -24,6 +24,7 @@ pub struct BacktestConfig {
     pub warmup: usize,
     pub window: usize,
     pub concurrency: usize,
+    pub holidays_path: Option<PathBuf>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -54,6 +55,22 @@ pub async fn run(cfg: &BacktestConfig, llm: &LlmEvaluator) -> Result<Report> {
         Some(p) => crate::data::news::read_news_csv(p)?,
         None => Vec::new(),
     };
+    let holidays = match &cfg.holidays_path {
+        Some(p) => crate::data::calendar::read_holidays(p)?,
+        None => std::collections::HashSet::new(),
+    };
+    let calendar = crate::data::calendar::AShareCalendar::new(holidays);
+    let gaps = crate::backtest::gaps::detect_gaps(&primary, &calendar);
+    if !gaps.is_empty() {
+        eprintln!(
+            "[rquant] data gaps on primary: {} missing trading day(s), {} partial day(s) (see report.gaps)",
+            gaps.missing_trading_days.len(),
+            gaps.partial_days.len()
+        );
+        if cfg.holidays_path.is_none() {
+            eprintln!("  note: no --holidays provided; A-share holidays may be reported as missing trading days");
+        }
+    }
     let costs = CostModel { round_trip_bps: cfg.cost_bps };
     let fw = tree.meta.forward_window;
     let start = cfg.warmup.min(primary.len());
@@ -74,6 +91,7 @@ pub async fn run(cfg: &BacktestConfig, llm: &LlmEvaluator) -> Result<Report> {
         forward_window: fw,
         cost_bps: cfg.cost_bps,
         metrics,
+        gaps,
     };
     crate::report::write_report(&report, &cfg.out_path)?;
     if let Some(tp) = &cfg.traces_path {

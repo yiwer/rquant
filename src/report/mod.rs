@@ -1,3 +1,4 @@
+use crate::backtest::gaps::GapReport;
 use crate::backtest::metrics::Metrics;
 use crate::engine::trace::Trace;
 use crate::Result;
@@ -11,6 +12,7 @@ pub struct Report {
     pub forward_window: usize,
     pub cost_bps: f64,
     pub metrics: Metrics,
+    pub gaps: GapReport,
 }
 
 pub fn write_report(report: &Report, path: &Path) -> Result<()> {
@@ -47,6 +49,11 @@ pub fn print_summary(report: &Report) {
         m.t1_executable.hit_rate * 100.0
     );
     println!("buy&hold={:.4}", m.buy_and_hold);
+    println!(
+        "gaps    : {} missing trading day(s), {} partial day(s)",
+        report.gaps.missing_trading_days.len(),
+        report.gaps.partial_days.len()
+    );
     println!("[warn] {}", m.overlap_warning);
 }
 
@@ -58,10 +65,11 @@ mod tests {
     #[test]
     fn report_serializes_to_json() {
         let metrics = compute_metrics(&[], &[]);
-        let report = Report { tree_name: "t".into(), forward_window: 16, cost_bps: 10.0, metrics };
+        let report = Report { tree_name: "t".into(), forward_window: 16, cost_bps: 10.0, metrics, gaps: GapReport::default() };
         let json = serde_json::to_string(&report).unwrap();
         assert!(json.contains("\"tree_name\":\"t\""));
         assert!(json.contains("overlap_warning"));
+        assert!(json.contains("missing_trading_days"));
     }
 
     #[test]

@@ -95,7 +95,7 @@ mod tests {
     fn read_holidays_rejects_bad_date() {
         use std::io::Write;
         let mut f = tempfile::NamedTempFile::new().unwrap();
-        write!(f, "2024-13-99\n").unwrap();
+        writeln!(f, "2024-13-99").unwrap();
         f.flush().unwrap();
         assert!(read_holidays(f.path()).is_err());
     }
