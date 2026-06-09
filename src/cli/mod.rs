@@ -12,6 +12,7 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum Cmd {
     /// Run a quant backtest over local CSV bars (LLM nodes via OpenAI-standard API if configured)
     Backtest {
@@ -41,6 +42,22 @@ enum Cmd {
         llm_base_url: String,
         #[arg(long, default_value = ".rquant-cache/llm")]
         llm_cache_dir: PathBuf,
+    },
+    /// Fetch K-line bars from Sina Finance into a local CSV
+    Fetch {
+        /// Symbol, e.g. sh600000 / sz000001
+        #[arg(long)]
+        symbol: String,
+        /// K-line scale in minutes: 15, 60, 240 (daily)
+        #[arg(long)]
+        scale: u32,
+        /// Output CSV path
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long, default_value_t = 1023)]
+        datalen: u32,
+        #[arg(long, default_value = "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php")]
+        base_url: String,
     },
 }
 
@@ -73,6 +90,14 @@ pub async fn main() -> anyhow::Result<()> {
             };
             let report = run(&cfg, &llm).await?;
             crate::report::print_summary(&report);
+        }
+        Cmd::Fetch { symbol, scale, out, datalen, base_url } => {
+            let http = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()?;
+            let bars = crate::data::sina::fetch_sina_klines(&http, &base_url, &symbol, scale, datalen, 2).await?;
+            crate::data::reader::write_bars_csv(&bars, &out)?;
+            println!("wrote {} bars to {}", bars.len(), out.display());
         }
     }
     Ok(())

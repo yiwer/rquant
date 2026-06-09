@@ -40,3 +40,16 @@ CSV 表头：`time,open,high,low,close,volume`（time 形如 `2024-01-02 09:45:0
 LLM 调用 `temperature=0`，结论按 `hash(model + node_id + 渲染输入)` 缓存于 `--llm-cache-dir`（默认 `.rquant-cache/llm/`）。首轮并发填缓存；重跑全命中 → 零网络、可复现。注意：LLM 即便 temp=0 也非严格确定，复现性由缓存保证。
 
 > 每个到达 LLM 节点的决策点都会发起一次调用（未命中缓存时）。请让 LLM 节点处于被量化节点过滤后的稀疏位置，并控制回测区间，以免产生大量调用与费用。
+
+## 取数（新浪 fetcher）
+
+从新浪财经拉 A股 K 线到本地 CSV（再喂给 backtest）：
+
+    # 小周期 15min
+    cargo run --release -- fetch --symbol sh600000 --scale 15 --out 15m.csv
+    # 大周期 1h
+    cargo run --release -- fetch --symbol sh600000 --scale 60 --out 1h.csv
+
+`--symbol` 形如 `sh600000`(沪) / `sz000001`(深)；`--scale` 为分钟数（15/60/240=日线）；`--datalen` 最多 1023（新浪只给最近这么多根，浅历史）。端点可用 `--base-url` 覆盖。
+
+抓取与回测解耦：fetch 出 CSV 后，照常 `cargo run -- backtest --primary 15m.csv --context 1h.csv ...`。
