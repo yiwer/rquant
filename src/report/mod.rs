@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::Path;
 
+pub mod curve;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Report {
     pub tree_name: String,
