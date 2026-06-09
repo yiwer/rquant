@@ -27,7 +27,7 @@ pub struct Metrics {
     pub overlap_warning: String,
 }
 
-fn signal_stat(nets: &[f64]) -> SignalStat {
+pub(crate) fn signal_stat(nets: &[f64]) -> SignalStat {
     let count = nets.len();
     if count == 0 {
         return SignalStat { count: 0, mean_net: 0.0, hit_rate: 0.0, std: 0.0, t_stat: 0.0 };

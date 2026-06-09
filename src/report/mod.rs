@@ -1,5 +1,6 @@
 use crate::backtest::gaps::GapReport;
 use crate::backtest::metrics::Metrics;
+use crate::backtest::soft::SoftMetrics;
 use crate::engine::trace::Trace;
 use crate::Result;
 use serde::Serialize;
@@ -54,6 +55,33 @@ pub fn print_summary(report: &Report) {
         report.gaps.missing_trading_days.len(),
         report.gaps.partial_days.len()
     );
+    println!("[warn] {}", m.overlap_warning);
+}
+
+#[derive(Debug, Serialize)]
+pub struct SoftReport {
+    pub tree_name: String,
+    pub forward_window: usize,
+    pub cost_bps: f64,
+    pub soft: SoftMetrics,
+}
+
+pub fn write_soft_report(report: &SoftReport, path: &Path) -> Result<()> {
+    let json = serde_json::to_string_pretty(report)?;
+    std::fs::write(path, json)?;
+    Ok(())
+}
+
+pub fn print_soft_summary(report: &SoftReport) {
+    let m = &report.soft;
+    println!("=== rquant SOFT backtest: {} ===", report.tree_name);
+    println!("forward_window={} cost_bps={}", report.forward_window, report.cost_bps);
+    println!("decisions={} scored={}", m.total_decisions, m.scored);
+    println!(
+        "engaged : n={} mean_expected_net={:.4} hit={:.1}% t={:.2}",
+        m.engaged.count, m.engaged.mean_net, m.engaged.hit_rate * 100.0, m.engaged.t_stat
+    );
+    println!("buy&hold={:.4}", m.buy_and_hold);
     println!("[warn] {}", m.overlap_warning);
 }
 
