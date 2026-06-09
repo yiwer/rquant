@@ -1,13 +1,12 @@
 use crate::engine::trace::{StepRecord, Trace};
+use crate::eval::llm::{LlmEvaluator, LlmNode};
 use crate::eval::quant::eval_quant;
-use crate::eval::Decision;
 use crate::features::context::Context;
 use crate::tree::loader::{Node, Tree};
 use crate::{Error, Result};
 
-/// Walk the tree from root to a leaf, recording a Trace.
-/// Quant nodes use eval_quant; LLM nodes take their default branch in this phase.
-pub fn traverse(tree: &Tree, ctx: &Context) -> Result<Trace> {
+/// 从 root 走树到叶子。量化节点同步求值；LLM 节点 await 评估器（Disabled 时走 default）。
+pub async fn traverse(tree: &Tree, ctx: &Context, llm: &LlmEvaluator) -> Result<Trace> {
     let mut path: Vec<StepRecord> = Vec::new();
     let mut current = tree.root.clone();
     let max_steps = tree.nodes.len() + 1;
@@ -21,12 +20,10 @@ pub fn traverse(tree: &Tree, ctx: &Context) -> Result<Trace> {
             .ok_or_else(|| Error::Engine(format!("dangling node '{current}'")))?;
         let decision = match node {
             Node::Quant { branches, default } => eval_quant(branches, default, ctx)?,
-            Node::Llm { default, .. } => Decision {
-                goto: default.clone(),
-                label: "default".into(),
-                confidence: 0.0,
-                rationale: "LLM deferred (M5): took default branch".into(),
-            },
+            Node::Llm { inputs, prompt, labels, default } => {
+                let ln = LlmNode { inputs, prompt, labels, default };
+                llm.eval_llm(&current, &ln, ctx).await?
+            }
         };
         path.push(StepRecord {
             node_id: current.clone(),
@@ -43,21 +40,18 @@ pub fn traverse(tree: &Tree, ctx: &Context) -> Result<Trace> {
 mod tests {
     use super::*;
     use crate::data::bar::{Bar, Window};
+    use crate::eval::llm::{LlmEvaluator, StubLlm};
     use crate::features::context::Context;
     use crate::tree::loader::load_tree_str;
     use crate::tree::schema::Stance;
     use chrono::NaiveDate;
+    use std::collections::HashMap;
 
     fn ctx(closes: &[f64]) -> Context {
         let base = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap().and_hms_opt(9, 45, 0).unwrap();
-        let bars: Vec<Bar> = closes
-            .iter()
-            .enumerate()
-            .map(|(i, &c)| Bar {
-                time: base + chrono::Duration::minutes(i as i64 * 15),
-                open: c, high: c, low: c, close: c, volume: 1.0,
-            })
-            .collect();
+        let bars: Vec<Bar> = closes.iter().enumerate().map(|(i, &c)| Bar {
+            time: base + chrono::Duration::minutes(i as i64 * 15), open: c, high: c, low: c, close: c, volume: 1.0,
+        }).collect();
         let t = bars.last().unwrap().time;
         Context { t, primary: Window { bars: bars.clone() }, context: Window { bars }, news: None }
     }
@@ -89,22 +83,31 @@ leaves:
   leaf_f: { stance: flat }
 "#;
 
-    #[test]
-    fn quant_uptrend_reaches_long_leaf() {
+    #[tokio::test]
+    async fn quant_uptrend_reaches_long_leaf() {
         let tree = load_tree_str(QUANT_TREE).unwrap();
-        let tr = traverse(&tree, &ctx(&[1.0, 2.0, 3.0, 4.0, 5.0])).unwrap();
+        let tr = traverse(&tree, &ctx(&[1.0, 2.0, 3.0, 4.0, 5.0]), &LlmEvaluator::Disabled).await.unwrap();
         assert_eq!(tr.leaf, "leaf_l");
         assert!(matches!(tr.stance, Stance::Long));
         assert_eq!(tr.path.len(), 1);
         assert_eq!(tr.path[0].node_id, "a");
     }
 
-    #[test]
-    fn llm_node_takes_default_branch() {
+    #[tokio::test]
+    async fn llm_node_disabled_takes_default() {
         let tree = load_tree_str(LLM_TREE).unwrap();
-        let tr = traverse(&tree, &ctx(&[1.0, 2.0, 3.0])).unwrap();
+        let tr = traverse(&tree, &ctx(&[1.0, 2.0, 3.0]), &LlmEvaluator::Disabled).await.unwrap();
         assert_eq!(tr.leaf, "leaf_f");
         assert!(matches!(tr.stance, Stance::Flat));
-        assert!(tr.path[0].rationale.contains("LLM deferred"));
+        assert!(tr.path[0].rationale.contains("LLM disabled"));
+    }
+
+    #[tokio::test]
+    async fn llm_node_stub_takes_label() {
+        let tree = load_tree_str(LLM_TREE).unwrap();
+        let ev = LlmEvaluator::Stub(StubLlm { answers: HashMap::from([("a".to_string(), "yes".to_string())]) });
+        let tr = traverse(&tree, &ctx(&[1.0, 2.0, 3.0]), &ev).await.unwrap();
+        assert_eq!(tr.leaf, "leaf_l");
+        assert!(matches!(tr.stance, Stance::Long));
     }
 }

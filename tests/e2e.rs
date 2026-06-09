@@ -1,4 +1,5 @@
 use rquant::backtest::runner::{run, BacktestConfig};
+use rquant::eval::llm::LlmEvaluator;
 use std::io::Write;
 
 fn write_file(content: &str, suffix: &str) -> tempfile::NamedTempFile {
@@ -54,8 +55,8 @@ fn gen_context_csv() -> String {
     )
 }
 
-#[test]
-fn end_to_end_uptrend_yields_positive_long_edge() {
+#[tokio::test]
+async fn end_to_end_uptrend_yields_positive_long_edge() {
     let tree_f = write_file(&tree_yaml(), ".yaml");
     let primary_f = write_file(&gen_primary_csv(), ".csv");
     let context_f = write_file(&gen_context_csv(), ".csv");
@@ -65,14 +66,16 @@ fn end_to_end_uptrend_yields_positive_long_edge() {
         tree_path: tree_f.path().to_path_buf(),
         primary_path: primary_f.path().to_path_buf(),
         context_path: context_f.path().to_path_buf(),
+        news_path: None,
         out_path: out_f.path().to_path_buf(),
         traces_path: None,
         cost_bps: 10.0,
         warmup: 5,
         window: 100,
+        concurrency: 4,
     };
 
-    let report = run(&cfg).unwrap();
+    let report = run(&cfg, &LlmEvaluator::Disabled).await.unwrap();
     let m = &report.metrics;
     assert!(m.scored > 0, "should have scored signals");
     assert!(m.active.count > 0, "uptrend should trigger long signals");
