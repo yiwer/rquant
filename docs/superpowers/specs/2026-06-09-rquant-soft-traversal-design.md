@@ -99,7 +99,9 @@ pub struct SoftReport { pub tree_name: String, pub forward_window: usize, pub co
 `engaged` = `signal_stat(&[expected_net for scored points where engaged>0])`。`print_soft_summary` 打印 engaged 的 n/mean/hit/t + buy&hold + 重叠警告。
 
 ### 4.4 编排（`run_soft`）
-与 `run` 同构（加载 tree/primary/context/news、构 calendar 缺口检测照旧、`buffered(N)` 并发），但每点用 `traverse_soft` + `score_soft`，聚合成 `SoftReport`，写 JSON + 可选 soft traces（每点 `{t, leaf_probs, expected_net}`）。cli：`if soft { run_soft } else { run }`。
+与 `run` 同构（加载 tree/primary/context/news、`buffered(N)` 并发），但每点用 `traverse_soft` + `score_soft`，聚合成 `SoftReport`，写 JSON。cli：`if soft { run_soft } else { run }`。
+- 缺口检测：软模式做同样的 `detect_gaps`，但**仅告警 stderr**（`SoftReport` 无 `gaps` 字段，不存储）。
+- 逐点 soft traces（`{t, leaf_probs, expected_net}`）本期**不写**；`--traces` 在软模式下给出 stderr 告警（留作后续）。
 
 ## 5. 错误处理
 - `traverse_soft`：LLM 失败已在 `eval_llm` 内回退 default（c=0、走 default）；无新错误路径。空叶分布不可能（概率和恒 1，root 必达叶）。

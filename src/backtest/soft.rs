@@ -108,6 +108,25 @@ pub async fn run_soft(cfg: &BacktestConfig, llm: &LlmEvaluator) -> Result<SoftRe
         Some(p) => read_news_csv(p)?,
         None => Vec::new(),
     };
+    // 数据质量告警（与硬模式同口径；软模式不把缺口写进 SoftReport，仅告警）
+    let holidays = match &cfg.holidays_path {
+        Some(p) => crate::data::calendar::read_holidays(p)?,
+        None => std::collections::HashSet::new(),
+    };
+    let gaps = crate::backtest::gaps::detect_gaps(&primary, &crate::data::calendar::AShareCalendar::new(holidays));
+    if !gaps.is_empty() {
+        eprintln!(
+            "[rquant] data gaps on primary: {} missing trading day(s), {} partial day(s)",
+            gaps.missing_trading_days.len(),
+            gaps.partial_days.len()
+        );
+        if cfg.holidays_path.is_none() {
+            eprintln!("  note: no --holidays provided; A-share holidays may be reported as missing trading days");
+        }
+    }
+    if cfg.traces_path.is_some() {
+        eprintln!("[rquant] note: --traces is not written in --soft mode yet (SoftReport carries expected_net only)");
+    }
     let costs = CostModel { round_trip_bps: cfg.cost_bps };
     let fw = tree.meta.forward_window;
     let start = cfg.warmup.min(primary.len());
