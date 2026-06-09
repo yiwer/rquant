@@ -1,4 +1,5 @@
 pub mod quant;
+pub mod llm;
 
 #[derive(Debug, Clone)]
 pub struct Decision {
