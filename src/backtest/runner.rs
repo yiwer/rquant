@@ -67,7 +67,8 @@ pub async fn run(cfg: &BacktestConfig, llm: &LlmEvaluator) -> Result<Report> {
         .collect::<Result<Vec<_>>>()?;
 
     let traces: Vec<Trace> = results.iter().map(|(t, _)| t.clone()).collect();
-    let metrics = compute_metrics(&results, &primary);
+    // buy&hold 基准跨与信号相同的"过预热"窗口（不含 warmup 前缀），同口径对比
+    let metrics = compute_metrics(&results, &primary[start..]);
     let report = Report {
         tree_name: tree.meta.name.clone(),
         forward_window: fw,

@@ -82,7 +82,15 @@ async fn end_to_end_uptrend_yields_positive_long_edge() {
     assert!(m.active.count > 0, "uptrend should trigger long signals");
     assert!(m.active.mean_net > 0.0, "long edge in an uptrend should be positive after costs");
     assert!(m.t1_executable.count > 0, "some signals should cross a day boundary (T+1)");
-    assert!(m.buy_and_hold > 0.0);
+    // buy&hold baseline must span the same warmup-onward window as the signals
+    // (warmup=5 → buy at bar 5 open, hold to last close); price(i)=10.0+0.1*i over 40 bars.
+    let expected_bh = (10.0 + 0.1 * 39.0) / (10.0 + 0.1 * 5.0) - 1.0;
+    assert!(
+        (m.buy_and_hold - expected_bh).abs() < 1e-9,
+        "buy&hold={} expected warmup-onward {}",
+        m.buy_and_hold,
+        expected_bh
+    );
 
     let content = std::fs::read_to_string(out_f.path()).unwrap();
     assert!(content.contains("e2e"));

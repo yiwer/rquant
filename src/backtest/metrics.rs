@@ -41,6 +41,8 @@ fn signal_stat(nets: &[f64]) -> SignalStat {
     SignalStat { count, mean_net: mean, hit_rate, std, t_stat }
 }
 
+/// 聚合度量。`primary` 应传**评估窗口**那段（如 warmup 之后），
+/// `buy_and_hold` 即按该段首开盘 → 末收盘计算，与信号同口径。
 pub fn compute_metrics(items: &[(Trace, Option<ForwardResult>)], primary: &[Bar]) -> Metrics {
     let total = items.len();
     let mut active_nets: Vec<f64> = Vec::new();
