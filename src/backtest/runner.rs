@@ -31,7 +31,7 @@ pub fn run(cfg: &BacktestConfig) -> Result<Report> {
     let start = cfg.warmup.min(primary.len());
     for i in start..primary.len() {
         let t = primary[i].time;
-        let ctx = build_context(&primary, &context, t, cfg.window);
+        let ctx = build_context(&primary, &context, &[], t, cfg.window);
         let trace = crate::engine::traversal::traverse(&tree, &ctx)?;
         let fr = forward_return(&primary, i, tree.meta.forward_window, trace.stance, &costs);
         traces.push(trace.clone());

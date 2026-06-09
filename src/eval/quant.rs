@@ -45,7 +45,7 @@ mod tests {
             })
             .collect();
         let t = bars.last().unwrap().time;
-        Context { t, primary: Window { bars: bars.clone() }, context: Window { bars } }
+        Context { t, primary: Window { bars: bars.clone() }, context: Window { bars }, news: None }
     }
 
     fn br(when: &str, goto: &str, label: &str) -> Branch {
