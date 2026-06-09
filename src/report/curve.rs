@@ -58,7 +58,7 @@ fn histogram(points: &[SeriesPoint]) -> Histogram {
     }
     const N: usize = 21;
     let width = (max - min) / N as f64;
-    let mut counts = vec![0usize; N];
+    let mut counts = [0usize; N];
     for &x in &nets {
         let mut k = ((x - min) / width) as usize;
         if k >= N {

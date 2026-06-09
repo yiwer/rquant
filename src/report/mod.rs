@@ -8,6 +8,7 @@ use std::io::Write;
 use std::path::Path;
 
 pub mod curve;
+pub mod viz;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Report {
