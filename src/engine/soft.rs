@@ -49,6 +49,10 @@ pub async fn traverse_soft(tree: &Tree, ctx: &Context, llm: &LlmEvaluator) -> Re
     let mut memo: HashMap<String, BTreeMap<String, f64>> = HashMap::new();
     let mut leaf_probs = leaf_dist(&tree.root, &edges, tree, &mut memo);
     leaf_probs.retain(|_, p| *p > 0.0);
+    debug_assert!(
+        (leaf_probs.values().sum::<f64>() - 1.0).abs() < 1e-9,
+        "soft leaf_probs must sum to 1.0"
+    );
     Ok(SoftTrace { t: ctx.t, leaf_probs })
 }
 
@@ -165,5 +169,23 @@ leaves:
         let st = traverse_soft(&tree, &ctx(&[1.0]), &ev).await.unwrap();
         assert_eq!(st.leaf_probs.len(), 1);
         assert!((st.leaf_probs["leaf_x"] - 1.0).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn quant_default_routes_to_default() {
+        // 下跌 → close < sma → 无分支命中 → default(c=0.5, chosen==default) → 全给 leaf_f
+        let tree = load_tree_str(QUANT_TREE).unwrap();
+        let st = traverse_soft(&tree, &ctx(&[5.0, 4.0, 3.0, 2.0, 1.0]), &LlmEvaluator::Disabled).await.unwrap();
+        assert_eq!(st.leaf_probs.len(), 1);
+        assert!((st.leaf_probs["leaf_f"] - 1.0).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn llm_disabled_routes_to_default() {
+        // LLM 不可用 → c=0.0 → 全部质量走 default(leaf_f)
+        let tree = load_tree_str(LLM_TREE).unwrap();
+        let st = traverse_soft(&tree, &ctx(&[1.0, 2.0, 3.0]), &LlmEvaluator::Disabled).await.unwrap();
+        assert_eq!(st.leaf_probs.len(), 1);
+        assert!((st.leaf_probs["leaf_f"] - 1.0).abs() < 1e-9);
     }
 }
