@@ -26,7 +26,7 @@ impl OpenAiLlm {
     /// 缓存命中→直接还原；未命中→调用(带重试)→落缓存；失败→回退 default。
     pub async fn eval(&self, node_id: &str, node: &LlmNode<'_>, ctx: &Context) -> Result<Decision> {
         let rendered = render_user(node, ctx);
-        let key = FileCache::key(&self.cfg.model, node_id, &rendered);
+        let key = FileCache::key(&self.cfg.model, &self.cfg.base_url, SYSTEM_PROMPT, node_id, &rendered);
         if let Some(c) = self.cache.get(&key)
             && node.labels.contains_key(&c.label)
         {
