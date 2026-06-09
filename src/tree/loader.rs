@@ -9,6 +9,7 @@ use std::path::Path;
 pub struct Branch {
     pub when: Expr,
     pub when_src: String,
+    pub strength: Option<Expr>,
     pub goto: String,
     pub label: String,
 }
@@ -69,9 +70,16 @@ pub fn load_tree_str(src: &str) -> Result<Tree> {
                     let expr = parse_str(&b.when).map_err(|e| {
                         Error::Tree(format!("node '{id}' branch '{}': {e}", b.label))
                     })?;
+                    let strength = match &b.strength {
+                        Some(src) => Some(parse_str(src).map_err(|e| {
+                            Error::Tree(format!("node '{id}' branch '{}' strength: {e}", b.label))
+                        })?),
+                        None => None,
+                    };
                     compiled.push(Branch {
                         when: expr,
                         when_src: b.when.clone(),
+                        strength,
                         goto: b.goto.clone(),
                         label: b.label.clone(),
                     });
@@ -249,5 +257,44 @@ leaves:
   leaf_f: { stance: flat }
 "#;
         assert!(load_tree_str(cyc).is_err());
+    }
+
+    #[test]
+    fn loads_branch_strength() {
+        let src = r#"
+meta: { name: t, forward_window: 3, stances: [long, flat] }
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "close > 1", strength: "sigmoid(close - 1)", goto: leaf_l, label: up } ]
+    default: { goto: leaf_f, label: flat }
+leaves:
+  leaf_l: { stance: long }
+  leaf_f: { stance: flat }
+"#;
+        let tree = load_tree_str(src).unwrap();
+        let n = tree.nodes.get("a").unwrap();
+        match n {
+            crate::tree::loader::Node::Quant { branches, .. } => assert!(branches[0].strength.is_some()),
+            _ => panic!("expected quant"),
+        }
+    }
+
+    #[test]
+    fn bad_strength_expr_errors() {
+        let src = r#"
+meta: { name: t, forward_window: 3, stances: [long, flat] }
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "close > 1", strength: "sigmoid(", goto: leaf_l, label: up } ]
+    default: { goto: leaf_f, label: flat }
+leaves:
+  leaf_l: { stance: long }
+  leaf_f: { stance: flat }
+"#;
+        assert!(load_tree_str(src).is_err());
     }
 }

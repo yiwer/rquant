@@ -25,6 +25,8 @@ pub struct Target {
 #[derive(Debug, Deserialize)]
 pub struct BranchSpec {
     pub when: String,
+    #[serde(default)]
+    pub strength: Option<String>,
     pub goto: String,
     pub label: String,
 }

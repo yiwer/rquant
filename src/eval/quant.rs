@@ -49,7 +49,7 @@ mod tests {
     }
 
     fn br(when: &str, goto: &str, label: &str) -> Branch {
-        Branch { when: parse_str(when).unwrap(), when_src: when.into(), goto: goto.into(), label: label.into() }
+        Branch { when: parse_str(when).unwrap(), when_src: when.into(), strength: None, goto: goto.into(), label: label.into() }
     }
 
     #[test]
