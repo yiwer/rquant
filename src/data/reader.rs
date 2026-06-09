@@ -33,10 +33,10 @@ pub fn read_bars_csv(path: &Path) -> Result<Vec<Bar>> {
         if bar.high < bar.low {
             return Err(Error::Data(format!("high < low at {time}")));
         }
-        if let Some(prev) = bars.last() {
-            if time <= prev.time {
-                return Err(Error::Data(format!("non-increasing time at {time}")));
-            }
+        if let Some(prev) = bars.last()
+            && time <= prev.time
+        {
+            return Err(Error::Data(format!("non-increasing time at {time}")));
         }
         bars.push(bar);
     }
