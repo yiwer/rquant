@@ -68,6 +68,89 @@ pub fn rsi(s: &[f64], n: usize) -> Vec<f64> {
     out
 }
 
+/// Wilder ATR；前 n-1 个位置为 NaN。high/low/close 等长。
+pub fn atr(high: &[f64], low: &[f64], close: &[f64], n: usize) -> Vec<f64> {
+    let len = high.len();
+    let mut out = vec![f64::NAN; len];
+    if len == 0 || n == 0 || low.len() != len || close.len() != len || len < n {
+        return out;
+    }
+    let mut tr = vec![0.0; len];
+    tr[0] = high[0] - low[0];
+    for i in 1..len {
+        let a = high[i] - low[i];
+        let b = (high[i] - close[i - 1]).abs();
+        let c = (low[i] - close[i - 1]).abs();
+        tr[i] = a.max(b).max(c);
+    }
+    let mut sum = 0.0;
+    for v in tr.iter().take(n) {
+        sum += *v;
+    }
+    out[n - 1] = sum / n as f64;
+    for i in n..len {
+        out[i] = (out[i - 1] * (n as f64 - 1.0) + tr[i]) / n as f64;
+    }
+    out
+}
+
+/// 最近 n 根的线性回归斜率（x = 0..n-1）。不足返回 NaN。
+pub fn slope(s: &[f64], n: usize) -> f64 {
+    let len = s.len();
+    if n < 2 || len < n {
+        return f64::NAN;
+    }
+    let w = &s[len - n..];
+    let nf = n as f64;
+    let mean_x = (nf - 1.0) / 2.0;
+    let mean_y = w.iter().sum::<f64>() / nf;
+    let (mut num, mut den) = (0.0, 0.0);
+    for (i, &y) in w.iter().enumerate() {
+        let dx = i as f64 - mean_x;
+        num += dx * (y - mean_y);
+        den += dx * dx;
+    }
+    if den == 0.0 { f64::NAN } else { num / den }
+}
+
+/// 最近 n 根最高值。
+pub fn highest(s: &[f64], n: usize) -> f64 {
+    let len = s.len();
+    if len == 0 || n == 0 {
+        return f64::NAN;
+    }
+    let start = len.saturating_sub(n);
+    s[start..].iter().copied().fold(f64::NEG_INFINITY, f64::max)
+}
+
+/// 最近 n 根最低值。
+pub fn lowest(s: &[f64], n: usize) -> f64 {
+    let len = s.len();
+    if len == 0 || n == 0 {
+        return f64::NAN;
+    }
+    let start = len.saturating_sub(n);
+    s[start..].iter().copied().fold(f64::INFINITY, f64::min)
+}
+
+/// a 上穿 b：上一根 a<=b 且本根 a>b。
+pub fn crossover(a: &[f64], b: &[f64]) -> bool {
+    let (la, lb) = (a.len(), b.len());
+    if la < 2 || lb < 2 {
+        return false;
+    }
+    a[la - 2] <= b[lb - 2] && a[la - 1] > b[lb - 1]
+}
+
+/// a 下穿 b：上一根 a>=b 且本根 a<b。
+pub fn crossunder(a: &[f64], b: &[f64]) -> bool {
+    let (la, lb) = (a.len(), b.len());
+    if la < 2 || lb < 2 {
+        return false;
+    }
+    a[la - 2] >= b[lb - 2] && a[la - 1] < b[lb - 1]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,5 +179,33 @@ mod tests {
         let down: Vec<f64> = (0..30).map(|i| (30 - i) as f64).collect();
         assert_relative_eq!(*rsi(&up, 14).last().unwrap(), 100.0);
         assert_relative_eq!(*rsi(&down, 14).last().unwrap(), 0.0);
+    }
+
+    #[test]
+    fn atr_constant_range() {
+        let high = vec![11.0; 10];
+        let low = vec![9.0; 10];
+        let close = vec![10.0; 10];
+        let out = atr(&high, &low, &close, 3);
+        assert_relative_eq!(*out.last().unwrap(), 2.0);
+    }
+
+    #[test]
+    fn slope_of_linear_series() {
+        assert_relative_eq!(slope(&[1.0, 2.0, 3.0, 4.0, 5.0], 5), 1.0);
+    }
+
+    #[test]
+    fn highest_lowest_last_n() {
+        let s = [3.0, 1.0, 4.0, 1.0, 5.0, 9.0, 2.0];
+        assert_relative_eq!(highest(&s, 3), 9.0);
+        assert_relative_eq!(lowest(&s, 3), 2.0);
+    }
+
+    #[test]
+    fn cross_detection() {
+        assert!(crossover(&[1.0, 3.0], &[2.0, 2.0]));
+        assert!(!crossover(&[3.0, 4.0], &[2.0, 2.0]));
+        assert!(crossunder(&[3.0, 1.0], &[2.0, 2.0]));
     }
 }
