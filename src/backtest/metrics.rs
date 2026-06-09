@@ -2,10 +2,10 @@ use crate::backtest::forward_return::ForwardResult;
 use crate::data::bar::Bar;
 use crate::engine::trace::Trace;
 use crate::tree::schema::Stance;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SignalStat {
     pub count: usize,
     pub mean_net: f64,
@@ -14,7 +14,7 @@ pub struct SignalStat {
     pub t_stat: f64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Metrics {
     pub total_decisions: usize,
     pub scored: usize,

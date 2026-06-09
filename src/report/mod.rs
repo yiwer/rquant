@@ -3,11 +3,11 @@ use crate::backtest::metrics::Metrics;
 use crate::backtest::soft::SoftMetrics;
 use crate::engine::trace::Trace;
 use crate::Result;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::Path;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Report {
     pub tree_name: String,
     pub forward_window: usize,
@@ -114,5 +114,29 @@ mod tests {
         write_traces_jsonl(&traces, f.path()).unwrap();
         let content = std::fs::read_to_string(f.path()).unwrap();
         assert_eq!(content.lines().count(), 2);
+    }
+
+    #[test]
+    fn report_round_trips_json() {
+        let metrics = compute_metrics(&[], &[]);
+        let report = Report { tree_name: "rt".into(), forward_window: 8, cost_bps: 5.0, metrics, gaps: GapReport::default() };
+        let json = serde_json::to_string(&report).unwrap();
+        let back: Report = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.tree_name, "rt");
+        assert_eq!(back.forward_window, 8);
+        assert_eq!(back.metrics.total_decisions, 0);
+    }
+
+    #[test]
+    fn trace_round_trips_json() {
+        use crate::engine::trace::Trace;
+        use crate::tree::schema::Stance;
+        use chrono::NaiveDate;
+        let t = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap().and_hms_opt(9, 45, 0).unwrap();
+        let tr = Trace { t, path: vec![], leaf: "x".into(), stance: Stance::Long };
+        let json = serde_json::to_string(&tr).unwrap();
+        let back: Trace = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.leaf, "x");
+        assert_eq!(back.stance, Stance::Long);
     }
 }

@@ -1,17 +1,17 @@
 use crate::data::bar::Bar;
 use crate::data::calendar::AShareCalendar;
 use chrono::{Duration, NaiveDate};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PartialDay {
     pub date: NaiveDate,
     pub bars: usize,
     pub expected: usize,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GapReport {
     pub missing_trading_days: Vec<NaiveDate>,
     pub partial_days: Vec<PartialDay>,
