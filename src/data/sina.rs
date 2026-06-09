@@ -63,7 +63,27 @@ async fn fetch_once(http: &reqwest::Client, url: &str) -> Result<String> {
         .map_err(|e| Error::Data(format!("sina read body: {e}")))
 }
 
-/// 从新浪拉最近 datalen 根 K 线（带重试）。空结果（错误 symbol/无数据）报错。
+/// 一次尝试的分类：成功非空=Done；合法但空=Empty（不重试，通常是错误 symbol）；
+/// 网络错误或解析失败（截断/坏 body）=Retry（可重试）。
+enum Attempt {
+    Done(Vec<Bar>),
+    Empty,
+    Retry(String),
+}
+
+fn classify(attempt: Result<String>) -> Attempt {
+    match attempt {
+        Ok(body) => match parse_sina_klines(&body) {
+            Ok(bars) if bars.is_empty() => Attempt::Empty,
+            Ok(bars) => Attempt::Done(bars),
+            Err(e) => Attempt::Retry(e.to_string()),
+        },
+        Err(e) => Attempt::Retry(e.to_string()),
+    }
+}
+
+/// 从新浪拉最近 datalen 根 K 线（带重试：网络错误与截断/坏 body 都重试；
+/// 合法但空的结果不重试，直接报错）。
 pub async fn fetch_sina_klines(
     http: &reqwest::Client,
     base_url: &str,
@@ -75,15 +95,12 @@ pub async fn fetch_sina_klines(
     let url = sina_kline_url(base_url, symbol, scale, datalen);
     let mut last = String::from("no attempt");
     for _ in 0..=max_retries {
-        match fetch_once(http, &url).await {
-            Ok(body) => {
-                let bars = parse_sina_klines(&body)?;
-                if bars.is_empty() {
-                    return Err(Error::Data(format!("sina returned no bars for {symbol}")));
-                }
-                return Ok(bars);
+        match classify(fetch_once(http, &url).await) {
+            Attempt::Done(bars) => return Ok(bars),
+            Attempt::Empty => {
+                return Err(Error::Data(format!("sina returned no bars for {symbol}")));
             }
-            Err(e) => last = e.to_string(),
+            Attempt::Retry(e) => last = e,
         }
     }
     Err(Error::Data(format!("sina fetch failed after retries: {last}")))
@@ -121,6 +138,31 @@ mod tests {
     fn rejects_bad_float_field() {
         let json = r#"[{"day":"2024-01-02 15:00:00","open":"not-a-number","high":"10.5","low":"9.8","close":"10.2","volume":"1000"}]"#;
         assert!(parse_sina_klines(json).is_err());
+    }
+
+    #[test]
+    fn classify_truncated_body_is_retryable() {
+        // 截断/坏 body → 可重试（本次修复核心）
+        assert!(matches!(classify(Ok("truncated not json".to_string())), Attempt::Retry(_)));
+    }
+
+    #[test]
+    fn classify_network_error_is_retryable() {
+        assert!(matches!(classify(Err(Error::Data("net".into()))), Attempt::Retry(_)));
+    }
+
+    #[test]
+    fn classify_valid_empty_is_not_retried() {
+        assert!(matches!(classify(Ok("[]".to_string())), Attempt::Empty));
+    }
+
+    #[test]
+    fn classify_good_body_is_done() {
+        let json = r#"[{"day":"2024-01-02 15:00:00","open":"1","high":"1","low":"1","close":"1","volume":"1"}]"#;
+        match classify(Ok(json.to_string())) {
+            Attempt::Done(bars) => assert_eq!(bars.len(), 1),
+            _ => panic!("expected Done"),
+        }
     }
 
     #[test]
