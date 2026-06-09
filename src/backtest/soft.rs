@@ -41,7 +41,7 @@ pub fn score_soft(
         if !matches!(stance, Stance::Flat) {
             engaged += p;
         }
-        t1 = fr.t1_executable;
+        t1 |= fr.t1_executable;
     }
     Some(SoftScore { expected_net, engaged, t1_executable: t1 })
 }
