@@ -2,6 +2,7 @@ use rquant::backtest::runner::{run, BacktestConfig};
 use rquant::eval::llm::{LlmEvaluator, StubLlm};
 use std::collections::HashMap;
 use std::io::Write;
+use rquant::backtest::soft::run_soft;
 
 fn write_file(content: &str, suffix: &str) -> tempfile::NamedTempFile {
     let mut f = tempfile::Builder::new().suffix(suffix).tempfile().unwrap();
@@ -231,4 +232,51 @@ async fn report_html_renders_with_curve() {
     assert!(html.contains("<!doctype html>"));
     assert!(html.contains("<polyline"));
     assert!(html.contains(&rep.metrics.overlap_warning));
+}
+
+fn strength_tree_yaml() -> String {
+    r#"
+meta: { name: strength_demo, forward_window: 4, stances: [long, flat] }
+root: trend
+nodes:
+  trend:
+    type: quant
+    branches:
+      - when: "close > sma(close,5)"
+        strength: "sigmoid((close - sma(close,5)) / (0.02 * sma(close,5)))"
+        goto: leaf_long
+        label: above_ma
+    default: { goto: leaf_flat, label: below_ma }
+leaves:
+  leaf_long: { stance: long }
+  leaf_flat: { stance: flat }
+"#
+    .to_string()
+}
+
+#[tokio::test]
+async fn soft_quant_strength_engages() {
+    let tree_f = write_file(&strength_tree_yaml(), ".yaml");
+    let primary_f = write_file(&gen_primary_csv(), ".csv");
+    let context_f = write_file(&gen_context_csv(), ".csv");
+    let out_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+
+    let cfg = BacktestConfig {
+        tree_path: tree_f.path().to_path_buf(),
+        primary_path: primary_f.path().to_path_buf(),
+        context_path: context_f.path().to_path_buf(),
+        news_path: None,
+        out_path: out_f.path().to_path_buf(),
+        traces_path: None,
+        cost_bps: 10.0,
+        warmup: 5,
+        window: 100,
+        concurrency: 4,
+        holidays_path: None,
+    };
+
+    let report = run_soft(&cfg, &LlmEvaluator::Disabled).await.unwrap();
+    let m = &report.soft;
+    assert!(m.scored > 0, "should score points");
+    assert!(m.engaged.count > 0, "strength-weighted quant should put mass on long");
 }

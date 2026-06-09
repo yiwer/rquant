@@ -1,0 +1,17 @@
+meta:
+  name: strength_demo
+  forward_window: 16
+  stances: [long, flat]
+root: trend
+nodes:
+  trend:
+    type: quant
+    branches:
+      - when: "close > sma(close,20)"
+        strength: "sigmoid((close - sma(close,20)) / (0.02 * sma(close,20)))"
+        goto: leaf_long
+        label: above_ma
+    default: { goto: leaf_flat, label: below_ma }
+leaves:
+  leaf_long: { stance: long }
+  leaf_flat: { stance: flat }

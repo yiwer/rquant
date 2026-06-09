@@ -56,6 +56,22 @@ cargo run --release -- backtest --tree examples/trend_tree.yaml \
 （含 LLM `default` 子树里的 LLM 节点），LLM 调用比硬模式多（有缓存兜底）。LLM 的 confidence
 是"伪概率"、未做校准，叶子分布请谨慎解读。
 
+### 软量化谓词（`strength`）
+
+软模式下，量化分支可选 `strength`（标量 DSL 表达式，clamp[0,1]）表达"命中强度"。
+节点按 `when` 选真分支，按 `strength` 做**首真泄漏**：`w_i = remaining·strength_i`，残余给 `default`。
+不写 `strength` 则 `strength=1` —— 软模式退化为硬首真（渐进采用）。
+
+```yaml
+branches:
+  - when: "close > sma(close,20)"
+    strength: "sigmoid((close - sma(close,20)) / (0.02 * sma(close,20)))"  # 高于均线 2% 处≈0.88
+    goto: leaf_long
+```
+
+`sigmoid(x)=1/(1+e^-x)` 是内置 DSL 函数；尺度（`margin/scale`）由作者按指标量纲选定。
+（见 `examples/strength_tree.yaml`。）
+
 ## 取数（新浪 fetcher）
 
 从新浪财经拉 A股 K 线到本地 CSV（再喂给 backtest）：
