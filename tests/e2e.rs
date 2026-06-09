@@ -190,3 +190,45 @@ async fn soft_mode_yields_positive_engaged_edge() {
     let content = std::fs::read_to_string(out_f.path()).unwrap();
     assert!(content.contains("engaged"));
 }
+
+#[tokio::test]
+async fn report_html_renders_with_curve() {
+    let tree_f = write_file(&tree_yaml(), ".yaml");
+    let primary_f = write_file(&gen_primary_csv(), ".csv");
+    let context_f = write_file(&gen_context_csv(), ".csv");
+    let out_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+    let traces_f = tempfile::Builder::new().suffix(".jsonl").tempfile().unwrap();
+
+    let cfg = BacktestConfig {
+        tree_path: tree_f.path().to_path_buf(),
+        primary_path: primary_f.path().to_path_buf(),
+        context_path: context_f.path().to_path_buf(),
+        news_path: None,
+        out_path: out_f.path().to_path_buf(),
+        traces_path: Some(traces_f.path().to_path_buf()),
+        cost_bps: 10.0,
+        warmup: 5,
+        window: 100,
+        concurrency: 4,
+        holidays_path: None,
+    };
+
+    let _report = run(&cfg, &LlmEvaluator::Disabled).await.unwrap();
+
+    let rep: rquant::report::Report =
+        serde_json::from_str(&std::fs::read_to_string(out_f.path()).unwrap()).unwrap();
+    let traces_content = std::fs::read_to_string(traces_f.path()).unwrap();
+    let traces: Vec<rquant::engine::trace::Trace> = traces_content
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let bars = rquant::data::reader::read_bars_csv(primary_f.path()).unwrap();
+    let costs = rquant::backtest::costs::CostModel { round_trip_bps: rep.cost_bps };
+    let series = rquant::report::curve::derive_series(&traces, &bars, rep.forward_window, &costs);
+    assert!(!series.points.is_empty(), "uptrend should produce scored points");
+    let html = rquant::report::viz::render_html(&rep, Some(&series));
+    assert!(html.contains("<!doctype html>"));
+    assert!(html.contains("<polyline"));
+    assert!(html.contains(&rep.metrics.overlap_warning));
+}

@@ -68,3 +68,16 @@ cargo run --release -- backtest --tree examples/trend_tree.yaml \
 `--symbol` 形如 `sh600000`(沪) / `sz000001`(深)；`--scale` 为分钟数（15/60/240=日线）；`--datalen` 最多 1023（新浪只给最近这么多根，浅历史）。端点可用 `--base-url` 覆盖。
 
 抓取与回测解耦：fetch 出 CSV 后，照常 `cargo run -- backtest --primary 15m.csv --context 1h.csv ...`。
+
+## 报告可视化（`rquant report`）
+
+把回测产物渲染成**自包含 HTML**（内联 SVG，离线可分享）：
+
+```bash
+cargo run --release -- report --report report.json --out report.html \
+  --traces traces.jsonl --primary 15m.csv
+```
+
+- 含累计前瞻收益曲线、逐点净收益直方图、各叶子平均净收益条形、节点命中条形、headline 表。
+- `--traces`/`--primary` 二者都给才画时间序列（可视化器用 `forward_return` 重算逐点 net）；只给 `--report` 则仅画聚合图。
+- 累计曲线因前瞻窗口重叠是**信号质量曲线、非可交易净值**（HTML 内有标注）。

@@ -67,6 +67,17 @@ enum Cmd {
         #[arg(long, default_value = "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php")]
         base_url: String,
     },
+    /// Render a report.json (+ optional traces/primary) into a self-contained HTML report
+    Report {
+        #[arg(long)]
+        report: PathBuf,
+        #[arg(long, default_value = "report.html")]
+        out: PathBuf,
+        #[arg(long)]
+        traces: Option<PathBuf>,
+        #[arg(long)]
+        primary: Option<PathBuf>,
+    },
 }
 
 #[tokio::main]
@@ -112,6 +123,30 @@ pub async fn main() -> anyhow::Result<()> {
             let bars = crate::data::sina::fetch_sina_klines(&http, &base_url, &symbol, scale, datalen, 2).await?;
             crate::data::reader::write_bars_csv(&bars, &out)?;
             println!("wrote {} bars to {}", bars.len(), out.display());
+        }
+        Cmd::Report { report, out, traces, primary } => {
+            let json = std::fs::read_to_string(&report)?;
+            let rep: crate::report::Report = serde_json::from_str(&json)?;
+            let series = match (&traces, &primary) {
+                (Some(tp), Some(pp)) => {
+                    let content = std::fs::read_to_string(tp)?;
+                    let mut tr = Vec::new();
+                    for line in content.lines().filter(|l| !l.trim().is_empty()) {
+                        tr.push(serde_json::from_str::<crate::engine::trace::Trace>(line)?);
+                    }
+                    let bars = crate::data::reader::read_bars_csv(pp)?;
+                    let costs = crate::backtest::costs::CostModel { round_trip_bps: rep.cost_bps };
+                    Some(crate::report::curve::derive_series(&tr, &bars, rep.forward_window, &costs))
+                }
+                (None, None) => None,
+                _ => {
+                    eprintln!("[rquant] --traces and --primary must be given together to draw the curve; rendering aggregates only");
+                    None
+                }
+            };
+            let html = crate::report::viz::render_html(&rep, series.as_ref());
+            std::fs::write(&out, html)?;
+            println!("wrote HTML report to {}", out.display());
         }
     }
     Ok(())
