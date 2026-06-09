@@ -1,5 +1,7 @@
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Weekday};
 use std::collections::HashSet;
+use crate::{Error, Result};
+use std::path::Path;
 
 /// A股交易日历：工作日且非节假日为交易日；时段 09:30–11:30、13:00–15:00。
 /// bar 收盘时刻落在 (start, end] 内视为在交易时段（首根 15m bar 收于 09:45，末根收于 15:00）。
@@ -27,6 +29,22 @@ impl AShareCalendar {
         let pm_end = NaiveTime::from_hms_opt(15, 0, 0).unwrap();
         (t > am_start && t <= am_end) || (t > pm_start && t <= pm_end)
     }
+}
+
+/// 从文件读节假日：一行一个 YYYY-MM-DD；空行与以 # 开头的行忽略。
+pub fn read_holidays(path: &Path) -> Result<HashSet<NaiveDate>> {
+    let content = std::fs::read_to_string(path)?;
+    let mut set = HashSet::new();
+    for line in content.lines() {
+        let s = line.trim();
+        if s.is_empty() || s.starts_with('#') {
+            continue;
+        }
+        let d = NaiveDate::parse_from_str(s, "%Y-%m-%d")
+            .map_err(|e| Error::Data(format!("bad holiday '{s}': {e}")))?;
+        set.insert(d);
+    }
+    Ok(set)
 }
 
 #[cfg(test)]
@@ -59,5 +77,26 @@ mod tests {
         assert!(c.in_session(d.and_hms_opt(13, 15, 0).unwrap()));
         assert!(c.in_session(d.and_hms_opt(15, 0, 0).unwrap()));
         assert!(!c.in_session(d.and_hms_opt(15, 15, 0).unwrap()));
+    }
+
+    #[test]
+    fn read_holidays_parses_and_skips_comments_blanks() {
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        write!(f, "# 2024 holidays\n2024-01-01\n\n2024-02-10\n").unwrap();
+        f.flush().unwrap();
+        let h = read_holidays(f.path()).unwrap();
+        assert_eq!(h.len(), 2);
+        assert!(h.contains(&NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()));
+        assert!(h.contains(&NaiveDate::from_ymd_opt(2024, 2, 10).unwrap()));
+    }
+
+    #[test]
+    fn read_holidays_rejects_bad_date() {
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        write!(f, "2024-13-99\n").unwrap();
+        f.flush().unwrap();
+        assert!(read_holidays(f.path()).is_err());
     }
 }
