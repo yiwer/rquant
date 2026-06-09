@@ -125,10 +125,9 @@ fn eval_call(name: &str, args: &[Expr], ctx: &Context) -> Result<Value> {
             need(&vals, 2, name)?;
             Ok(Value::Series(indicators::ema(&as_series(&vals[0])?, as_usize(&vals[1])?)))
         }
-        // wma uses sma as a stand-in (documented design decision; do not fix)
         "wma" => {
             need(&vals, 2, name)?;
-            Ok(Value::Series(indicators::sma(&as_series(&vals[0])?, as_usize(&vals[1])?)))
+            Ok(Value::Series(indicators::wma(&as_series(&vals[0])?, as_usize(&vals[1])?)))
         }
         "rsi" => {
             need(&vals, 2, name)?;
@@ -164,6 +163,10 @@ fn eval_call(name: &str, args: &[Expr], ctx: &Context) -> Result<Value> {
             need(&vals, 2, name)?;
             Ok(Value::Bool(indicators::crossunder(&as_series(&vals[0])?, &as_series(&vals[1])?)))
         }
+        "macd_line" => { need(&vals, 3, name)?; Ok(Value::Series(indicators::macd_line(&as_series(&vals[0])?, as_usize(&vals[1])?, as_usize(&vals[2])?))) }
+        "macd_signal" => { need(&vals, 4, name)?; Ok(Value::Series(indicators::macd_signal(&as_series(&vals[0])?, as_usize(&vals[1])?, as_usize(&vals[2])?, as_usize(&vals[3])?))) }
+        "macd_hist" => { need(&vals, 4, name)?; Ok(Value::Series(indicators::macd_hist(&as_series(&vals[0])?, as_usize(&vals[1])?, as_usize(&vals[2])?, as_usize(&vals[3])?))) }
+        "std" => { need(&vals, 2, name)?; Ok(Value::Scalar(indicators::std(&as_series(&vals[0])?, as_usize(&vals[1])?))) }
         _ => Err(Error::Eval(format!("unknown function: {name}"))),
     }
 }
@@ -216,5 +219,17 @@ mod tests {
         let ctx = ctx_from_closes(&[1.0, 2.0, 3.0, 4.0, 5.0]);
         let e = parse_str("close > 4 and ctx.close > 0").unwrap();
         assert_eq!(eval(&e, &ctx).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn wma_std_macd_eval() {
+        let ctx = ctx_from_closes(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+        assert_eq!(eval(&parse_str("wma(close,3) > 0").unwrap(), &ctx).unwrap(), Value::Bool(true));
+        match eval(&parse_str("std(close,5)").unwrap(), &ctx).unwrap() {
+            Value::Scalar(x) => assert!((x - 2.0_f64.sqrt()).abs() < 1e-9),
+            other => panic!("expected scalar, got {other:?}"),
+        }
+        assert_eq!(eval(&parse_str("macd_line(close,3,5) > -1000.0").unwrap(), &ctx).unwrap(), Value::Bool(true));
+        assert_eq!(eval(&parse_str("macd_hist(close,3,5,2) > -1000.0").unwrap(), &ctx).unwrap(), Value::Bool(true));
     }
 }

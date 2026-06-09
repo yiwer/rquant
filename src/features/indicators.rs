@@ -159,13 +159,13 @@ pub fn wma(s: &[f64], n: usize) -> Vec<f64> {
         return out;
     }
     let denom = (n * (n + 1) / 2) as f64;
-    for i in (n - 1)..len {
+    for (idx, slot) in out.iter_mut().enumerate().skip(n - 1) {
         let mut acc = 0.0;
-        let start = i + 1 - n;
+        let start = idx + 1 - n;
         for k in 0..n {
             acc += s[start + k] * (k + 1) as f64;
         }
-        out[i] = acc / denom;
+        *slot = acc / denom;
     }
     out
 }
