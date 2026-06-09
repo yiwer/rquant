@@ -1,0 +1,35 @@
+meta:
+  name: "我的A股趋势树"
+  forward_window: 16          # 前瞻 16 根 15m ≈ 1 交易日（满足 T+1）
+  stances: [long, flat]       # 做空仅信息、默认不计盈亏
+root: trend
+nodes:
+  trend:                      # 量化节点：大周期趋势
+    type: quant
+    branches:
+      - when: "ema(ctx.close,20) > ema(ctx.close,50) and slope(ema(ctx.close,20),5) > 0"
+        goto: pullback
+        label: up
+      - when: "ema(ctx.close,20) < ema(ctx.close,50) and slope(ema(ctx.close,20),5) < 0"
+        goto: leaf_avoid
+        label: down
+    default: { goto: leaf_flat, label: none }
+  pullback:                   # 量化节点：小周期回调到位?
+    type: quant
+    branches:
+      - when: "rsi(close,14) < 35 and close > sma(close,60)"
+        goto: news_check
+        label: yes
+    default: { goto: leaf_flat, label: no }
+  news_check:                 # LLM 节点：本阶段走 default（M5 接入）
+    type: llm
+    inputs: [news_score, recent_headlines]
+    prompt: "给定消息面因子与标题，判断是否存在压制性重大利空。"
+    labels:
+      clear: leaf_buy
+      risk: leaf_flat
+    default: leaf_flat
+leaves:
+  leaf_buy:   { stance: long }
+  leaf_flat:  { stance: flat }
+  leaf_avoid: { stance: flat }
