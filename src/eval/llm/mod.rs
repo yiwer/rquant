@@ -57,6 +57,22 @@ impl StubLlm {
     }
 }
 
+pub enum LlmEvaluator {
+    OpenAi(client::OpenAiLlm),
+    Disabled,
+    Stub(StubLlm),
+}
+
+impl LlmEvaluator {
+    pub async fn eval_llm(&self, node_id: &str, node: &LlmNode<'_>, ctx: &Context) -> Result<Decision> {
+        match self {
+            LlmEvaluator::OpenAi(c) => c.eval(node_id, node, ctx).await,
+            LlmEvaluator::Disabled => Ok(default_decision(node, "LLM disabled")),
+            LlmEvaluator::Stub(s) => s.eval(node_id, node, ctx),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,5 +105,23 @@ mod tests {
         let d = stub.eval("n", &node, &ctx()).unwrap();
         assert_eq!(d.goto, "leaf_f");
         assert_eq!(d.label, "default");
+    }
+
+    #[tokio::test]
+    async fn disabled_returns_default() {
+        let lbl = labels();
+        let node = LlmNode { inputs: &[], prompt: "q", labels: &lbl, default: "leaf_f" };
+        let d = LlmEvaluator::Disabled.eval_llm("n", &node, &ctx()).await.unwrap();
+        assert_eq!(d.goto, "leaf_f");
+        assert_eq!(d.label, "default");
+    }
+
+    #[tokio::test]
+    async fn stub_via_enum_returns_label() {
+        let lbl = labels();
+        let node = LlmNode { inputs: &[], prompt: "q", labels: &lbl, default: "leaf_f" };
+        let ev = LlmEvaluator::Stub(StubLlm { answers: HashMap::from([("n".to_string(), "go".to_string())]) });
+        let d = ev.eval_llm("n", &node, &ctx()).await.unwrap();
+        assert_eq!(d.goto, "leaf_l");
     }
 }
