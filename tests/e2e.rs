@@ -150,3 +150,43 @@ async fn llm_node_changes_path_vs_disabled() {
     let disabled = run_llm_e2e(&LlmEvaluator::Disabled).await;
     assert_eq!(disabled.metrics.active.count, 0, "disabled LLM should take default -> all flat");
 }
+
+#[tokio::test]
+async fn soft_mode_yields_positive_engaged_edge() {
+    // Reuse the same fixtures as llm_node_changes_path_vs_disabled:
+    // LLM tree (quant gate -> LLM judge "go" -> leaf_long), uptrend data, stub answers "go" (c=0.9).
+    let tree_f = write_file(&llm_tree_yaml(), ".yaml");
+    let primary_f = write_file(&gen_primary_csv(), ".csv");
+    let context_f = write_file(&gen_context_csv(), ".csv");
+    let out_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+
+    let cfg = BacktestConfig {
+        tree_path: tree_f.path().to_path_buf(),
+        primary_path: primary_f.path().to_path_buf(),
+        context_path: context_f.path().to_path_buf(),
+        news_path: None,
+        out_path: out_f.path().to_path_buf(),
+        traces_path: None,
+        cost_bps: 10.0,
+        warmup: 5,
+        window: 100,
+        concurrency: 4,
+        holidays_path: None,
+    };
+
+    let ev = LlmEvaluator::Stub(StubLlm {
+        answers: HashMap::from([("judge".to_string(), "go".to_string())]),
+    });
+
+    let report = rquant::backtest::soft::run_soft(&cfg, &ev).await.unwrap();
+    let m = &report.soft;
+    assert!(m.scored > 0, "should score points");
+    assert!(m.engaged.count > 0, "soft mode should engage (some long mass)");
+    assert!(
+        m.engaged.mean_net > 0.0,
+        "uptrend + judge go(c=0.9) => positive expected net; got mean_net={}",
+        m.engaged.mean_net
+    );
+    let content = std::fs::read_to_string(out_f.path()).unwrap();
+    assert!(content.contains("engaged"));
+}

@@ -41,6 +41,21 @@ LLM 调用 `temperature=0`，结论按 `hash(model + node_id + 渲染输入)` �
 
 > 每个到达 LLM 节点的决策点都会发起一次调用（未命中缓存时）。请让 LLM 节点处于被量化节点过滤后的稀疏位置，并控制回测区间，以免产生大量调用与费用。
 
+## 软/概率遍历（`--soft`，可选）
+
+默认是**硬遍历**：每节点选一支、走单路径到单叶。加 `--soft` 切换为**置信度加权软遍历**：
+每节点按 `(选中支: confidence, 残余 1-c → default)` 把概率质量沿决策 DAG 传播，得**叶子概率分布**，
+再按期望打分 `expected_net = Σ p(leaf)·net(leaf.stance)`，输出 `SoftReport`（`soft.engaged` 为参与点的期望净收益统计）。
+
+```bash
+cargo run --release -- backtest --tree examples/trend_tree.yaml \
+  --primary 15m.csv --context 1h.csv --soft --out soft_report.json
+```
+
+说明：软效果目前体现在 **LLM 节点**（量化节点 confidence=1.0 仍硬）；软模式会评估所有可达节点
+（含 LLM `default` 子树里的 LLM 节点），LLM 调用比硬模式多（有缓存兜底）。LLM 的 confidence
+是"伪概率"、未做校准，叶子分布请谨慎解读。
+
 ## 取数（新浪 fetcher）
 
 从新浪财经拉 A股 K 线到本地 CSV（再喂给 backtest）：
