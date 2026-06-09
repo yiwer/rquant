@@ -54,8 +54,10 @@ enum Cmd {
         /// Output CSV path
         #[arg(long)]
         out: PathBuf,
+        /// Max bars to fetch (Sina cap: 1023)
         #[arg(long, default_value_t = 1023)]
         datalen: u32,
+        /// Override the Sina endpoint base URL
         #[arg(long, default_value = "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php")]
         base_url: String,
     },

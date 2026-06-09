@@ -1,7 +1,6 @@
 use crate::data::bar::Bar;
 use crate::{Error, Result};
 use chrono::NaiveDateTime;
-use reqwest;
 
 #[derive(serde::Deserialize)]
 struct SinaRow {
@@ -116,6 +115,12 @@ mod tests {
     #[test]
     fn bad_json_errors() {
         assert!(parse_sina_klines("not json").is_err());
+    }
+
+    #[test]
+    fn rejects_bad_float_field() {
+        let json = r#"[{"day":"2024-01-02 15:00:00","open":"not-a-number","high":"10.5","low":"9.8","close":"10.2","volume":"1000"}]"#;
+        assert!(parse_sina_klines(json).is_err());
     }
 
     #[test]
