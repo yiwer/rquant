@@ -1,4 +1,5 @@
 pub mod cache;
+pub mod client;
 pub mod prompt;
 
 use crate::eval::Decision;
