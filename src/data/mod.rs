@@ -3,5 +3,6 @@
 pub mod bar;
 pub mod calendar;
 pub mod reader;
+pub mod aux_table;
 pub mod news;
 pub mod sina;
