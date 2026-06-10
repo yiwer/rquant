@@ -77,6 +77,7 @@ async fn end_to_end_uptrend_yields_positive_long_edge() {
         concurrency: 4,
         holidays_path: None,
         folds: 3,
+        aux_paths: vec![],
     };
 
     let report = run(&cfg, &LlmEvaluator::Disabled).await.unwrap();
@@ -143,6 +144,7 @@ async fn run_llm_e2e(ev: &LlmEvaluator) -> rquant::report::Report {
         concurrency: 4,
         holidays_path: None,
         folds: 0,
+        aux_paths: vec![],
     };
     run(&cfg, ev).await.unwrap()
 }
@@ -179,6 +181,7 @@ async fn soft_mode_yields_positive_engaged_edge() {
         concurrency: 4,
         holidays_path: None,
         folds: 3,
+        aux_paths: vec![],
     };
 
     let ev = LlmEvaluator::Stub(StubLlm {
@@ -228,6 +231,7 @@ async fn soft_traces_written_when_path_given() {
         concurrency: 4,
         holidays_path: None,
         folds: 0,
+        aux_paths: vec![],
     };
 
     let ev = LlmEvaluator::Stub(StubLlm {
@@ -263,6 +267,7 @@ async fn report_html_renders_with_curve() {
         concurrency: 4,
         holidays_path: None,
         folds: 0,
+        aux_paths: vec![],
     };
 
     let _report = run(&cfg, &LlmEvaluator::Disabled).await.unwrap();
@@ -306,6 +311,7 @@ async fn soft_report_html_renders() {
         concurrency: 4,
         holidays_path: None,
         folds: 0,
+        aux_paths: vec![],
     };
 
     let ev = LlmEvaluator::Stub(StubLlm {
@@ -370,6 +376,7 @@ async fn soft_quant_strength_engages() {
         concurrency: 4,
         holidays_path: None,
         folds: 0,
+        aux_paths: vec![],
     };
 
     let report = run_soft(&cfg, &LlmEvaluator::Disabled).await.unwrap();
@@ -401,6 +408,7 @@ async fn render_report_files_soft_end_to_end() {
         concurrency: 4,
         holidays_path: None,
         folds: 0,
+        aux_paths: vec![],
     };
 
     let ev = LlmEvaluator::Stub(StubLlm {
@@ -478,6 +486,7 @@ leaves:
         concurrency: 4,
         holidays_path: None,
         folds: 0,
+        aux_paths: vec![],
     };
 
     // Hard run
@@ -533,5 +542,89 @@ async fn holidays_suppress_missing_day_in_gaps() {
         gaps.missing_trading_days.is_empty(),
         "2024-01-03 is a declared holiday, must not appear as missing; got: {:?}",
         gaps.missing_trading_days
+    );
+}
+
+// E3 T4 — aux relative-strength full chain:
+// primary rises fast (close = 10 + 0.1*i); aux.idx.v rises slow (v = 10 + 0.01*i).
+// Tree: when close/close[-5] > aux.idx.v/aux.idx.v[-5] → long
+// Primary momentum > aux momentum → branch fires → m.scored > 0 && m.active.count > 0.
+#[tokio::test]
+async fn aux_relative_strength_full_chain() {
+    use std::io::Write;
+
+    // Build aux CSV: same timestamps as gen_primary_csv, v rising slower than close
+    fn gen_aux_csv() -> String {
+        let mut s = String::from("time,v\n");
+        let mut idx = 0;
+        for day in 0..5 {
+            for k in 0..8 {
+                let v = 10.0 + 0.01 * idx as f64;
+                let hour = 9 + (45 + k * 15) / 60;
+                let minute = (45 + k * 15) % 60;
+                s.push_str(&format!(
+                    "2024-01-{:02} {:02}:{:02}:00,{v}\n",
+                    2 + day,
+                    hour,
+                    minute,
+                ));
+                idx += 1;
+            }
+        }
+        s
+    }
+
+    const AUX_TREE: &str = r#"
+meta: { name: aux_rs, forward_window: 4, stances: [long, flat] }
+root: entry
+nodes:
+  entry:
+    type: quant
+    branches:
+      - when: "close/close[-5] > aux.idx.v/aux.idx.v[-5]"
+        goto: leaf_long
+        label: rs_up
+    default: { goto: leaf_flat, label: flat }
+leaves:
+  leaf_long: { stance: long }
+  leaf_flat: { stance: flat }
+"#;
+
+    let tree_f = write_file(AUX_TREE, ".yaml");
+    let primary_f = write_file(&gen_primary_csv(), ".csv");
+    let context_f = write_file(&gen_context_csv(), ".csv");
+    let out_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+
+    let mut aux_f = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+    write!(aux_f, "{}", gen_aux_csv()).unwrap();
+    aux_f.flush().unwrap();
+
+    let cfg = BacktestConfig {
+        tree_path: tree_f.path().to_path_buf(),
+        primary_path: primary_f.path().to_path_buf(),
+        context_path: context_f.path().to_path_buf(),
+        news_path: None,
+        out_path: out_f.path().to_path_buf(),
+        traces_path: None,
+        cost_bps: 10.0,
+        warmup: 6,
+        window: 100,
+        concurrency: 4,
+        holidays_path: None,
+        folds: 0,
+        aux_paths: vec![("idx".into(), aux_f.path().to_path_buf())],
+    };
+
+    let report = run(&cfg, &LlmEvaluator::Disabled).await.unwrap();
+    let m = &report.metrics;
+    assert!(
+        m.scored > 0,
+        "aux relative-strength: expected scored > 0, got {}",
+        m.scored
+    );
+    assert!(
+        m.active.count > 0,
+        "primary outperforms aux => long branch should fire; active.count={}",
+        m.active.count
     );
 }

@@ -56,6 +56,9 @@ enum Cmd {
         llm_base_url: String,
         #[arg(long, default_value = ".rquant-cache/llm")]
         llm_cache_dir: PathBuf,
+        /// Mount an external series table: --aux name=path.csv (repeatable); DSL: aux.<name>.<column>
+        #[arg(long = "aux", value_name = "NAME=PATH")]
+        aux: Vec<String>,
     },
     /// Fetch K-line bars from Sina Finance into a local CSV
     Fetch {
@@ -98,7 +101,7 @@ pub async fn main() -> anyhow::Result<()> {
     match cli.cmd {
         Cmd::Backtest {
             tree, primary, context, news, out, traces, cost_bps, warmup, window, concurrency,
-            holidays, folds, soft, llm_model, llm_base_url, llm_cache_dir,
+            holidays, folds, soft, llm_model, llm_base_url, llm_cache_dir, aux,
         } => {
             let api_key = std::env::var("RQUANT_LLM_API_KEY").unwrap_or_default();
             let llm = if llm_enabled(&llm_model, &llm_base_url, &api_key) {
@@ -115,10 +118,20 @@ pub async fn main() -> anyhow::Result<()> {
                 eprintln!("[rquant] LLM not configured (need --llm-model, --llm-base-url, env RQUANT_LLM_API_KEY); LLM nodes will take their default branch.");
                 LlmEvaluator::Disabled
             };
+            let mut aux_paths: Vec<(String, PathBuf)> = Vec::new();
+            for spec in &aux {
+                let (n, p) = spec
+                    .split_once('=')
+                    .ok_or_else(|| anyhow::anyhow!("--aux expects NAME=PATH, got '{spec}'"))?;
+                if aux_paths.iter().any(|(en, _)| en == n) {
+                    return Err(anyhow::anyhow!("duplicate --aux name '{n}'"));
+                }
+                aux_paths.push((n.to_string(), PathBuf::from(p)));
+            }
             let cfg = BacktestConfig {
                 tree_path: tree, primary_path: primary, context_path: context, news_path: news,
                 out_path: out, traces_path: traces, cost_bps, warmup, window, concurrency,
-                holidays_path: holidays, folds,
+                holidays_path: holidays, folds, aux_paths,
             };
             if soft {
                 let report = crate::backtest::soft::run_soft(&cfg, &llm).await?;

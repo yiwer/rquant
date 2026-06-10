@@ -23,8 +23,9 @@
 | `hour` | 当前 bar 时间 | 小时，0–23（标量，不是序列） |
 | `minute` | 当前 bar 时间 | 分钟，0–59（标量） |
 | `dow` | 当前 bar 时间 | 星期几，1=周一 … 7=周日（ISO 序，标量） |
+| `aux.<表名>.<列名>` | 挂载的外部 aux 表 | `--aux <表名>=path.csv` 中 `<列名>` 对应的数值序列（time≤t 截断后的可见部分） |
 
-`resolve_series`（`eval.rs`）实现上述解析：前缀 `ctx.` 存在时路由到 `ctx.context`，否则路由到 `ctx.primary`。`hour`/`minute`/`dow` 在 `eval` 的 `Ident` 臂中优先匹配，直接从 `ctx.t`（当前 bar 时间戳）读取，不参与序列解析。
+`resolve_series`（`eval.rs`）实现上述解析：前缀 `aux.` 存在时路由到对应 `AuxView`，前缀 `ctx.` 存在时路由到 `ctx.context`，否则路由到 `ctx.primary`。`hour`/`minute`/`dow` 在 `eval` 的 `Ident` 臂中优先匹配，直接从 `ctx.t`（当前 bar 时间戳）读取，不参与序列解析。
 
 ```yaml
 # 示例：只在早盘（9:45–11:30）且非周五入场
@@ -178,3 +179,36 @@ factors:
 `factors` 按 YAML 文档顺序处理，每个因子只能引用前序定义的名字，不能向后引用——这保证了因子间无隐式循环依赖，且展开结果唯一确定。
 
 详细的命名限制与加载期报错行为见 [docs/tree-yaml-schema.md](tree-yaml-schema.md) 的"params 与 factors 块"一节。
+
+---
+
+## 外部 aux 序列（`aux.<表>.<列>`）
+
+通过 `--aux name=path.csv` 挂载的外部数值序列，DSL 以 `aux.<表名>.<列名>` 三段格式引用：
+
+```yaml
+when: "close/close[-5] > aux.idx.v/aux.idx.v[-5]"
+```
+
+### time≤t 闸门
+
+`build_context` 对每个决策点 `t`，将 aux 表按 `time ≤ t` 截断，向 DSL 暴露截断后的可见切片。**不会泄露未来数据**。
+
+### 低频序列的最近已知值
+
+若 aux 是日频（每日一行）而 primary 是 15m 级，截断后每个决策点自动取该日（及之前）最近一行的值——无需手动重采样。公告、财务数据等低频序列通过行时间表达滞后（例如，公告发布当天收盘后才写入 aux CSV，则当天日内不可见，次日起可见）。
+
+### 空截断弃权
+
+若当前 `t` 早于 aux 首行时间，截断结果为空序列。空序列经 `as_scalar` 得 `NaN`，所有比较运算对 `NaN` 返回 `false`（NaN 弃权语义），分支走 `default`，不产生错误。
+
+### 缺表运行时报错
+
+若 DSL 表达式引用了 `aux.<name>.<col>` 但 `--aux <name>=...` 未给出，引擎在运行时报错：
+```
+aux table '<name>' not mounted (use --aux <name>=path.csv)
+```
+
+### 格式校验（加载期左移）
+
+`aux.<表>.<列>` 必须是三段（恰好两个 `.`），表名与列名均非空且列名不含 `.`——此检查在树加载时（`check_no_unknown_idents`）完成，格式错误不会等到运行时才暴露。

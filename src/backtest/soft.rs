@@ -162,7 +162,10 @@ pub async fn run_soft(cfg: &BacktestConfig, llm: &LlmEvaluator) -> Result<SoftRe
     let costs = CostModel { round_trip_bps: cfg.cost_bps };
     let fw = tree.meta.forward_window;
     let start = cfg.warmup.min(primary.len());
-    let aux_tables: BTreeMap<String, AuxTable> = BTreeMap::new(); // Task 4 will wire real loading
+    let mut aux_tables: BTreeMap<String, AuxTable> = BTreeMap::new();
+    for (name, p) in &cfg.aux_paths {
+        aux_tables.insert(name.clone(), crate::data::aux_table::read_aux_csv(p)?);
+    }
     let results: Vec<(SoftTrace, Option<SoftScore>)> = stream::iter(start..primary.len())
         .map(|i| eval_point_soft(i, &primary, &context, &news, &aux_tables, &tree, &costs, cfg.window, llm))
         .buffered(cfg.concurrency.max(1))

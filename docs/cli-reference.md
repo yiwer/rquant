@@ -43,6 +43,7 @@ rquant backtest [OPTIONS]
 | `--llm-model <string>` | string | `""` | LLM 模型名，如 `deepseek-chat` |
 | `--llm-base-url <string>` | string | `""` | LLM API base URL |
 | `--llm-cache-dir <PATH>` | PathBuf | `.rquant-cache/llm` | LLM 响应缓存目录 |
+| `--aux NAME=PATH（可重复）` | string | — | 挂载外部 aux 序列；DSL 经 `aux.<name>.<column>` 引用 |
 
 ### 非显而易见的标志说明
 
@@ -63,6 +64,19 @@ rquant backtest [OPTIONS]
 **`--holidays`**
 
 文件格式：每行一个 `YYYY-MM-DD`，空行与以 `#` 开头的行忽略（注释）。用于 `AShareCalendar` 的缺口检测；未提供时周末/节假日可能被误报为缺失交易日。
+
+**`--aux NAME=PATH`（可重复）**
+
+挂载任意外部数值序列（通用列 CSV），供决策树 DSL 通过 `aux.<name>.<column>` 引用。可多次指定，每次挂载一张表，名字不可重复。
+
+aux CSV 格式要求：
+- **首列必须命名为 `time`**，支持两种格式：`YYYY-MM-DD HH:MM:SS`（日内精确）与 `YYYY-MM-DD`（日频，自动展开为当天 00:00:00）；
+- **其余列为任意数值（f64）列**，列名不得含 `.` 或空白；
+- **时间严格递增**，否则加载时报错。
+
+**低频序列**（如日线指数）与高频 primary（如 15m）挂载时，`build_context` 对每个决策点 `t` 取 `time ≤ t` 的所有行（最近已知值语义），不做重采样；DSL 中 `aux.idx.v[-1]` 即取该截断后的倒数第二行。
+
+如果 `--aux name=path.csv` 中 `name` 对应的表未被任何 DSL 表达式引用，它不会产生错误；如果 DSL 引用了未挂载的表名，运行时报错并给出提示文案：`aux table '<name>' not mounted (use --aux <name>=path.csv)`。
 
 **LLM 启用条件**
 

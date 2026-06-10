@@ -11,11 +11,12 @@
 cargo run --release -- fetch --symbol sh600000 --scale 15 --out 15m.csv
 cargo run --release -- fetch --symbol sh600000 --scale 60 --out 1h.csv
 
-# 2. 回测
+# 2. 回测（可选 --aux 挂载外部序列，如指数 CSV，DSL 用 aux.idx.close 引用）
 cargo run --release -- backtest \
   --tree examples/trend_tree.yaml \
   --primary 15m.csv --context 1h.csv \
-  --out report.json --traces traces.jsonl
+  --out report.json --traces traces.jsonl \
+  --aux idx=index.csv
 
 # 3. 渲染 HTML 报告
 cargo run --release -- report \
@@ -58,6 +59,7 @@ time,open,high,low,close,volume
 | `--llm-model` | `""` | LLM 模型名（空则 LLM disabled） |
 | `--llm-base-url` | `""` | LLM API base URL |
 | `--llm-cache-dir` | `.rquant-cache/llm` | LLM 缓存目录 |
+| `--aux NAME=PATH` | — | 挂载外部 aux 序列（可重复）；DSL: `aux.<name>.<column>` |
 
 `--warmup` 控制跳过多少根 bar 再开始出决策；`--window` 控制 Context 里能看到多少根历史 bar。两者独立：`--window` 应 ≥ 树中最长指标窗口参数（否则预热后仍可能遇到 NaN）。
 

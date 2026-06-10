@@ -42,6 +42,8 @@ pub struct BacktestConfig {
     pub holidays_path: Option<PathBuf>,
     /// Walk-forward 折叠数；`>= 2` 时启用，否则不计算。
     pub folds: usize,
+    /// 外部 aux 序列挂载列表：(name, csv_path)，DSL 经 `aux.<name>.<column>` 引用。
+    pub aux_paths: Vec<(String, std::path::PathBuf)>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -99,7 +101,10 @@ pub async fn run(cfg: &BacktestConfig, llm: &LlmEvaluator) -> Result<Report> {
     let costs = CostModel { round_trip_bps: cfg.cost_bps };
     let fw = tree.meta.forward_window;
     let start = cfg.warmup.min(primary.len());
-    let aux_tables: BTreeMap<String, AuxTable> = BTreeMap::new(); // Task 4 will wire real loading
+    let mut aux_tables: BTreeMap<String, AuxTable> = BTreeMap::new();
+    for (name, p) in &cfg.aux_paths {
+        aux_tables.insert(name.clone(), crate::data::aux_table::read_aux_csv(p)?);
+    }
 
     let results: Vec<(Trace, Option<ForwardResult>)> = stream::iter(start..primary.len())
         .map(|i| eval_point(i, &primary, &context, &news, &aux_tables, &tree, &costs, fw, cfg.window, llm))

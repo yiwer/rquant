@@ -215,7 +215,8 @@ factors:
 6. **strength 表达式可编译**：`strength` 字段若存在，在加载时解析为 DSL Expr 或 Auto(scale)；格式错误立即报错。
 7. **params/factors 命名合法**：键不得与内置标识符/函数名冲突，同块内不得重复定义；详见上方命名限制。
 8. **factors 无后向引用**：factors 表达式中只能引用前序定义的名字；引用后定义名字报错。
-9. **when/strength 无未知 Ident**：params/factors 内联展开后，残余裸 Ident 必须是内置标识符，否则报错（未知名左移到加载期）。
+9. **when/strength 无未知 Ident**：params/factors 内联展开后，残余裸 Ident 必须是内置标识符或合法 `aux.<表>.<列>` 三段标识符，否则报错（未知名左移到加载期）。
+9a. **aux 三段格式**：以 `aux.` 开头的标识符必须满足 `aux.<table>.<column>` 格式（恰好两个 `.`，表名与列名均非空且列名不含 `.`）；格式不合法在加载时报错，早于运行时。
 10. **叶子 weight ∈ (0,1]**：`weight` 若给出，必须满足 `0 < weight ≤ 1`，否则报错。
 11. **叶子 horizon ≥ 1**：`horizon` 若给出，必须 ≥ 1，否则报错。
 
