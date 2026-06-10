@@ -77,6 +77,7 @@ impl SimAccount {
 
 /// 一步执行+记账：决策于上根 bar 收盘的 target，在本 bar（prev_close→open→close）执行。
 /// 返回本步平掉的回合（翻向时为旧回合）。T+1：同自然日加过仓 → 减仓/翻向顺延（本步不交易）。
+#[allow(clippy::too_many_arguments)]
 pub fn sim_step(
     acc: &mut SimAccount,
     prev_close: f64,
