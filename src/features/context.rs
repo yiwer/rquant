@@ -1,6 +1,14 @@
+use crate::data::aux_table::AuxTable;
 use crate::data::bar::{Bar, Window};
 use crate::data::news::{NewsRecord, NewsView};
 use chrono::NaiveDateTime;
+use std::collections::BTreeMap;
+
+/// 已按 time≤t 截断的 aux 列视图。
+#[derive(Debug, Clone)]
+pub struct AuxView {
+    pub cols: BTreeMap<String, Vec<f64>>,
+}
 
 /// 决策时点上下文：节点能看到的全部信息（绝不含未来）。
 #[derive(Debug, Clone)]
@@ -9,6 +17,7 @@ pub struct Context {
     pub primary: Window,
     pub context: Window,
     pub news: Option<NewsView>,
+    pub aux: BTreeMap<String, AuxView>,
 }
 
 fn trailing_visible(bars: &[Bar], t: NaiveDateTime, window: usize) -> Vec<Bar> {
@@ -19,10 +28,12 @@ fn trailing_visible(bars: &[Bar], t: NaiveDateTime, window: usize) -> Vec<Bar> {
 
 /// 构建 t 时刻的 Context：小/大周期各取最近 window 根可见 bar；
 /// news 非空时取 time<=t 的最近 5 条（同 partition_point 闸门），空切片则 news=None。
+/// aux 每张表按 time<=t 截断为 AuxView（partition_point 闸门）。
 pub fn build_context(
     primary: &[Bar],
     context: &[Bar],
     news: &[NewsRecord],
+    aux: &BTreeMap<String, AuxTable>,
     t: NaiveDateTime,
     window: usize,
 ) -> Context {
@@ -33,11 +44,20 @@ pub fn build_context(
         let start = end.saturating_sub(5);
         Some(NewsView { recent: news[start..end].to_vec() })
     };
+    let aux_views = aux
+        .iter()
+        .map(|(name, table)| {
+            let cut = table.times.partition_point(|x| *x <= t);
+            let cols = table.cols.iter().map(|(c, v)| (c.clone(), v[..cut].to_vec())).collect();
+            (name.clone(), AuxView { cols })
+        })
+        .collect();
     Context {
         t,
         primary: Window { bars: trailing_visible(primary, t, window) },
         context: Window { bars: trailing_visible(context, t, window) },
         news: news_view,
+        aux: aux_views,
     }
 }
 
@@ -61,7 +81,7 @@ mod tests {
     fn window_takes_trailing_visible_bars() {
         let primary = series(10);
         let t = primary[5].time;
-        let ctx = build_context(&primary, &[], &[], t, 3);
+        let ctx = build_context(&primary, &[], &[], &BTreeMap::new(), t, 3);
         assert_eq!(ctx.primary.bars.len(), 3);
         assert_eq!(ctx.primary.bars.last().unwrap().close, 5.0);
         assert!(ctx.news.is_none());
@@ -72,7 +92,7 @@ mod tests {
         let primary = series(50);
         for i in 0..primary.len() {
             let t = primary[i].time;
-            let ctx = build_context(&primary, &primary, &[], t, 100);
+            let ctx = build_context(&primary, &primary, &[], &BTreeMap::new(), t, 100);
             for b in &ctx.primary.bars {
                 assert!(b.time <= t, "future primary bar leaked at i={i}");
             }
@@ -90,11 +110,32 @@ mod tests {
         ];
         let primary = series(20);
         let t = primary[3].time;
-        let ctx = build_context(&primary, &[], &news, t, 100);
+        let ctx = build_context(&primary, &[], &news, &BTreeMap::new(), t, 100);
         let v = ctx.news.unwrap();
         for r in &v.recent {
             assert!(r.time <= t, "future news leaked");
         }
         assert_eq!(v.recent.len(), 1);
+    }
+
+    #[test]
+    fn aux_tables_gated_by_time() {
+        use crate::data::aux_table::AuxTable;
+        let base = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap().and_hms_opt(9, 45, 0).unwrap();
+        let bars: Vec<Bar> = (0..3).map(|i| Bar {
+            time: base + chrono::Duration::minutes(i * 15),
+            open: 1.0, high: 1.0, low: 1.0, close: 1.0, volume: 1.0,
+        }).collect();
+        let mut aux = BTreeMap::new();
+        aux.insert("idx".to_string(), AuxTable {
+            times: vec![base, base + chrono::Duration::minutes(15), base + chrono::Duration::minutes(45)],
+            cols: BTreeMap::from([("v".to_string(), vec![1.0, 2.0, 3.0])]),
+        });
+        // t = 第 2 根 bar（base+15）：第三行（base+45）必须被闸门挡住
+        let ctx = build_context(&bars, &bars, &[], &aux, bars[1].time, 100);
+        assert_eq!(ctx.aux["idx"].cols["v"], vec![1.0, 2.0]);
+        // t 早于首行 → 空
+        let ctx2 = build_context(&bars, &bars, &[], &aux, base - chrono::Duration::minutes(1), 100);
+        assert!(ctx2.aux["idx"].cols["v"].is_empty());
     }
 }

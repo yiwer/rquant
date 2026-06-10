@@ -2,6 +2,7 @@ use crate::backtest::costs::CostModel;
 use crate::backtest::forward_return::forward_return;
 use crate::backtest::metrics::{signal_stat, SignalStat, OVERLAP_WARNING};
 use crate::backtest::runner::BacktestConfig;
+use crate::data::aux_table::AuxTable;
 use crate::data::bar::Bar;
 use crate::data::news::{read_news_csv, NewsRecord};
 use crate::data::reader::read_bars_csv;
@@ -120,13 +121,14 @@ async fn eval_point_soft(
     primary: &[Bar],
     context: &[Bar],
     news: &[NewsRecord],
+    aux: &BTreeMap<String, AuxTable>,
     tree: &Tree,
     costs: &CostModel,
     window: usize,
     llm: &LlmEvaluator,
 ) -> Result<(SoftTrace, Option<SoftScore>)> {
     let t = primary[i].time;
-    let ctx = build_context(primary, context, news, t, window);
+    let ctx = build_context(primary, context, news, aux, t, window);
     let soft = traverse_soft(tree, &ctx, llm).await?;
     let score = score_soft(&soft, tree, primary, i, costs);
     Ok((soft, score))
@@ -160,8 +162,9 @@ pub async fn run_soft(cfg: &BacktestConfig, llm: &LlmEvaluator) -> Result<SoftRe
     let costs = CostModel { round_trip_bps: cfg.cost_bps };
     let fw = tree.meta.forward_window;
     let start = cfg.warmup.min(primary.len());
+    let aux_tables: BTreeMap<String, AuxTable> = BTreeMap::new(); // Task 4 will wire real loading
     let results: Vec<(SoftTrace, Option<SoftScore>)> = stream::iter(start..primary.len())
-        .map(|i| eval_point_soft(i, &primary, &context, &news, &tree, &costs, cfg.window, llm))
+        .map(|i| eval_point_soft(i, &primary, &context, &news, &aux_tables, &tree, &costs, cfg.window, llm))
         .buffered(cfg.concurrency.max(1))
         .collect::<Vec<Result<(SoftTrace, Option<SoftScore>)>>>()
         .await

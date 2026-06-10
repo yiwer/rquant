@@ -1,6 +1,7 @@
 use crate::backtest::costs::CostModel;
 use crate::backtest::forward_return::{forward_return, ForwardResult};
 use crate::backtest::metrics::compute_metrics;
+use crate::data::aux_table::AuxTable;
 use crate::data::bar::Bar;
 use crate::data::news::NewsRecord;
 use crate::engine::trace::Trace;
@@ -11,6 +12,7 @@ use crate::tree::loader::Tree;
 use crate::tree::schema::Stance;
 use crate::Result;
 use futures::stream::{self, StreamExt};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 /// 回测运行时配置，硬/软模式共用。
@@ -48,6 +50,7 @@ async fn eval_point(
     primary: &[Bar],
     context: &[Bar],
     news: &[NewsRecord],
+    aux: &BTreeMap<String, AuxTable>,
     tree: &Tree,
     costs: &CostModel,
     fw: usize,
@@ -55,7 +58,7 @@ async fn eval_point(
     llm: &LlmEvaluator,
 ) -> Result<(Trace, Option<ForwardResult>)> {
     let t = primary[i].time;
-    let ctx = build_context(primary, context, news, t, window);
+    let ctx = build_context(primary, context, news, aux, t, window);
     let trace = crate::engine::traversal::traverse(tree, &ctx, llm).await?;
     let fr = match tree.leaves.get(&trace.leaf) {
         Some(l) => forward_return(primary, i, l.horizon, trace.stance, costs).map(|f| ForwardResult {
@@ -96,9 +99,10 @@ pub async fn run(cfg: &BacktestConfig, llm: &LlmEvaluator) -> Result<Report> {
     let costs = CostModel { round_trip_bps: cfg.cost_bps };
     let fw = tree.meta.forward_window;
     let start = cfg.warmup.min(primary.len());
+    let aux_tables: BTreeMap<String, AuxTable> = BTreeMap::new(); // Task 4 will wire real loading
 
     let results: Vec<(Trace, Option<ForwardResult>)> = stream::iter(start..primary.len())
-        .map(|i| eval_point(i, &primary, &context, &news, &tree, &costs, fw, cfg.window, llm))
+        .map(|i| eval_point(i, &primary, &context, &news, &aux_tables, &tree, &costs, fw, cfg.window, llm))
         .buffered(cfg.concurrency.max(1))
         .collect::<Vec<Result<(Trace, Option<ForwardResult>)>>>()
         .await
