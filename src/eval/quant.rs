@@ -1,7 +1,7 @@
-use crate::dsl::eval::{eval_bool, eval_scalar};
+use crate::dsl::eval::{eval_bool, eval_fuzzy, eval_scalar};
 use crate::eval::Decision;
 use crate::features::context::Context;
-use crate::tree::loader::Branch;
+use crate::tree::loader::{Branch, Strength};
 use crate::tree::schema::Target;
 use crate::Result;
 
@@ -32,7 +32,8 @@ pub fn quant_branch_dist(branches: &[Branch], default: &Target, ctx: &Context) -
     for b in branches {
         if eval_bool(&b.when, ctx)? {
             let raw = match &b.strength {
-                Some(e) => eval_scalar(e, ctx)?,
+                Some(Strength::Expr(e)) => eval_scalar(e, ctx)?,
+                Some(Strength::Auto(scale)) => eval_fuzzy(&b.when, ctx, *scale)?,
                 None => 1.0,
             };
             let s = if raw.is_nan() { 0.0 } else { raw.clamp(0.0, 1.0) };
@@ -58,7 +59,7 @@ mod tests {
     use crate::data::bar::{Bar, Window};
     use crate::dsl::parser::parse_str;
     use crate::features::context::Context;
-    use crate::tree::loader::Branch;
+    use crate::tree::loader::{Branch, Strength};
     use crate::tree::schema::Target;
     use chrono::NaiveDate;
 
@@ -81,7 +82,7 @@ mod tests {
     }
 
     fn br_s(when: &str, goto: &str, label: &str, strength: &str) -> Branch {
-        Branch { when: parse_str(when).unwrap(), when_src: when.into(), strength: Some(parse_str(strength).unwrap()), goto: goto.into(), label: label.into() }
+        Branch { when: parse_str(when).unwrap(), when_src: when.into(), strength: Some(Strength::Expr(parse_str(strength).unwrap())), goto: goto.into(), label: label.into() }
     }
 
     #[test]
@@ -142,5 +143,23 @@ mod tests {
         let default = Target { goto: "d".into(), label: "none".into() };
         let dist = quant_branch_dist(&branches, &default, &ctx(&[1.0, 2.0, 3.0])).unwrap();
         assert_eq!(dist, vec![("d".to_string(), 1.0)]);
+    }
+
+    #[test]
+    fn dist_auto_strength_uses_fuzzy_when() {
+        // close=10.2 vs 阈值 10：margin 2% / scale 0.02 → 权重 ∈ (0.5, 1)
+        let branches = vec![Branch {
+            when: parse_str("close > 10").unwrap(),
+            when_src: "close > 10".into(),
+            strength: Some(Strength::Auto(0.02)),
+            goto: "g".into(),
+            label: "up".into(),
+        }];
+        let default = Target { goto: "d".into(), label: "none".into() };
+        let dist = quant_branch_dist(&branches, &default, &ctx(&[10.0, 10.1, 10.2])).unwrap();
+        assert_eq!(dist[0].0, "g");
+        assert!(dist[0].1 > 0.5 && dist[0].1 < 1.0);
+        let sum: f64 = dist.iter().map(|(_, w)| w).sum();
+        assert!((sum - 1.0).abs() < 1e-9);
     }
 }

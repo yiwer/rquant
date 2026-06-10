@@ -5,11 +5,18 @@ use crate::{Error, Result};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+/// 分支强度：显式标量表达式，或对 when 做模糊求值的 auto(scale)。
+#[derive(Debug, Clone)]
+pub enum Strength {
+    Expr(Expr),
+    Auto(f64),
+}
+
 #[derive(Debug, Clone)]
 pub struct Branch {
     pub when: Expr,
     pub when_src: String,
-    pub strength: Option<Expr>,
+    pub strength: Option<Strength>,
     pub goto: String,
     pub label: String,
 }
@@ -71,7 +78,7 @@ pub fn load_tree_str(src: &str) -> Result<Tree> {
                         Error::Tree(format!("node '{id}' branch '{}': {e}", b.label))
                     })?;
                     let strength = match &b.strength {
-                        Some(src) => Some(parse_str(src).map_err(|e| {
+                        Some(src) => Some(parse_strength(src).map_err(|e| {
                             Error::Tree(format!("node '{id}' branch '{}' strength: {e}", b.label))
                         })?),
                         None => None,
@@ -119,6 +126,25 @@ pub fn load_tree_str(src: &str) -> Result<Tree> {
     };
     validate(&tree)?;
     Ok(tree)
+}
+
+/// "auto" → Auto(0.02)；"auto(<f64>)" → Auto(s)（s>0）；其余按 DSL 表达式编译。
+fn parse_strength(src: &str) -> Result<Strength> {
+    let s = src.trim();
+    if s == "auto" {
+        return Ok(Strength::Auto(0.02));
+    }
+    if let Some(inner) = s.strip_prefix("auto(").and_then(|r| r.strip_suffix(')')) {
+        let scale: f64 = inner
+            .trim()
+            .parse()
+            .map_err(|_| Error::Tree(format!("bad auto scale '{inner}'")))?;
+        if scale <= 0.0 {
+            return Err(Error::Tree(format!("auto scale must be > 0, got {scale}")));
+        }
+        return Ok(Strength::Auto(scale));
+    }
+    Ok(Strength::Expr(parse_str(s)?))
 }
 
 fn node_targets(node: &Node) -> Vec<String> {
@@ -296,5 +322,33 @@ leaves:
   leaf_f: { stance: flat }
 "#;
         assert!(load_tree_str(src).is_err());
+    }
+
+    #[test]
+    fn parses_auto_strength_variants() {
+        let yaml = |s: &str| format!(r#"
+meta: {{ name: t, forward_window: 3, stances: [long, flat] }}
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ {{ when: "close > 1", strength: "{s}", goto: leaf_l, label: up }} ]
+    default: {{ goto: leaf_f, label: flat }}
+leaves:
+  leaf_l: {{ stance: long }}
+  leaf_f: {{ stance: flat }}
+"#);
+        let get = |s: &str| -> Option<Strength> {
+            let tree = load_tree_str(&yaml(s)).ok()?;
+            match tree.nodes.get("a")? {
+                Node::Quant { branches, .. } => branches[0].strength.clone(),
+                _ => None,
+            }
+        };
+        assert!(matches!(get("auto"), Some(Strength::Auto(s)) if (s - 0.02).abs() < 1e-12));
+        assert!(matches!(get("auto(0.05)"), Some(Strength::Auto(s)) if (s - 0.05).abs() < 1e-12));
+        assert!(matches!(get("0.7"), Some(Strength::Expr(_))));
+        assert!(load_tree_str(&yaml("auto(x)")).is_err());
+        assert!(load_tree_str(&yaml("auto(-1)")).is_err());
     }
 }
