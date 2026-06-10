@@ -96,7 +96,7 @@ quant 分支可选 `strength`（标量 DSL 表达式，clamp[0,1]）控制软模
 
 软报告含两套口径：`engaged`（逐腿期望收益）与 `position`（净仓位 E = Σ p·dir 后的净额收益）；long/flat 树下数学等价，启用 short 后 `position` 更贴近实际执行。
 
-详见 [docs/tree-yaml-schema.md](docs/tree-yaml-schema.md) 与 [docs/dsl-reference.md](docs/dsl-reference.md)。
+详见 [docs/tree-yaml-schema.md](docs/tree-yaml-schema.md) 与 [docs/dsl-reference.md](docs/dsl-reference.md)。`examples/factor_tree.yaml` 展示了 `params`/`factors` 命名块与叶子 `weight`/`horizon` 的完整用法。
 
 ---
 

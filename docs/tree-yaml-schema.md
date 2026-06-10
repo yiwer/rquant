@@ -12,6 +12,14 @@ meta:          # 树元数据（必填）
   forward_window: 16
   stances: [long, flat]
 
+params:        # 命名数值参数（可选；加载期内联展开）
+  ma_n: 20
+  mom_n: 5
+
+factors:       # 命名 DSL 因子（可选；按文档顺序有序引用；加载期内联展开）
+  mom: "slope(ema(close, ma_n), mom_n)"
+  above: "close > sma(close, ma_n)"
+
 root: "node_id"    # 根节点 id（必须是 nodes 中的键，不能是叶子）
 
 nodes:             # 节点映射（HashMap，YAML 键顺序不影响语义）
@@ -22,6 +30,8 @@ nodes:             # 节点映射（HashMap，YAML 键顺序不影响语义）
 leaves:            # 叶子映射
   leaf_id:
     stance: long | flat | short
+    weight: 0.5    # 可选，仓位大小 ∈ (0,1]，默认 1.0
+    horizon: 8     # 可选，前瞻评分窗口（bar 数，≥1），默认 meta.forward_window
 ```
 
 ---
@@ -96,9 +106,19 @@ node_id:
 leaves:
   leaf_id:
     stance: long | flat | short
+    weight: 0.5    # 可选
+    horizon: 8     # 可选
 ```
 
 叶子的 `stance` 必须在 `meta.stances` 中声明。
+
+| 字段 | 类型 | 默认值 | 范围 | 打分语义 |
+|---|---|---|---|---|
+| `stance` | `long\|flat\|short` | 必填 | — | 交易方向 |
+| `weight` | f64 | `1.0` | `(0, 1]` | 仓位大小；硬打分中 `gross/net × weight`；软打分中 `p × weight × net` |
+| `horizon` | usize | `meta.forward_window` | `≥ 1` | 前瞻评分窗口（bar 数），覆盖树级全局值 |
+
+**软模式 position 口径**：净仓位 `r` 取分布内所有叶子中最大 `horizon` 对应的 gross 收益（`max_h` 腿），以避免多腿不同窗口下的口径混用。
 
 ---
 
@@ -146,6 +166,43 @@ branches:
 
 ---
 
+## `params` 与 `factors` 块
+
+### 语法
+
+```yaml
+params:
+  ma_n: 20       # 命名数值（f64）
+  mom_n: 5
+
+factors:
+  mom: "slope(ema(close, ma_n), mom_n)"   # 命名 DSL 表达式字符串
+  above: "close > sma(close, ma_n)"
+```
+
+两者均为可选，缺省等效空映射。
+
+### 有序引用规则
+
+`factors` 按 YAML **文档顺序**逐条展开（`serde_yaml::Mapping` 保序）。每条因子表达式中只能引用**在它之前**已定义的 `params` 或 `factors` 名字——后向引用（引用后定义的名字）在加载时报错。这让因子定义形成一条显式的依赖链，避免循环引用。
+
+### 加载期内联展开
+
+加载时，所有 `params` 名字替换为 `Expr::Number`，所有 `factors` 名字替换为对应的已展开子树（深拷贝）。展开完成后，`when`/`strength` 中残余的裸 Ident 必须是内置标识符（`close`/`open`/`high`/`low`/`volume`/`hour`/`minute`/`dow`）——否则视为未知名，**在加载时（而非运行时）报错**（"未知名左移到加载错"）。
+
+同一因子在多处引用时**各处独立展开、重复求值**——无运行时缓存。若因子计算代价高（如 `ema(close, 200)`），建议仅引用一次或在信号合并处统一处理。
+
+### 命名限制
+
+以下名字**不得**用作 `params`/`factors` 的键：
+
+- 内置标识符：`close` `open` `high` `low` `volume` `hour` `minute` `dow`
+- 内置函数名：`sma` `ema` `wma` `rsi` `atr` `slope` `highest` `lowest` `crossover` `crossunder` `macd_line` `macd_signal` `macd_hist` `std` `sigmoid` `auto`
+
+与上述任一名字冲突，或在同一块中重复定义，均在加载时报错。
+
+---
+
 ## 校验规则（`validate`，`loader.rs`）
 
 加载时执行以下全部检查，任何一项不通过则报错：
@@ -156,6 +213,11 @@ branches:
 4. **无环（DAG 检查）**：DFS 染色，检测到后向边（颜色=in-stack）即报错。
 5. **叶子 stance 合法**：每个叶子的 `stance` 必须在 `meta.stances` 中。
 6. **strength 表达式可编译**：`strength` 字段若存在，在加载时解析为 DSL Expr 或 Auto(scale)；格式错误立即报错。
+7. **params/factors 命名合法**：键不得与内置标识符/函数名冲突，同块内不得重复定义；详见上方命名限制。
+8. **factors 无后向引用**：factors 表达式中只能引用前序定义的名字；引用后定义名字报错。
+9. **when/strength 无未知 Ident**：params/factors 内联展开后，残余裸 Ident 必须是内置标识符，否则报错（未知名左移到加载期）。
+10. **叶子 weight ∈ (0,1]**：`weight` 若给出，必须满足 `0 < weight ≤ 1`，否则报错。
+11. **叶子 horizon ≥ 1**：`horizon` 若给出，必须 ≥ 1，否则报错。
 
 ---
 
@@ -191,3 +253,4 @@ leaves:
 
 - `examples/trend_tree.yaml`：两级量化节点 + 一个 LLM 节点的完整树
 - `examples/strength_tree.yaml`：带显式 strength 表达式的软模式示例
+- `examples/factor_tree.yaml`：`params`/`factors` 命名块 + 叶子 `weight`/`horizon` 的完整示例

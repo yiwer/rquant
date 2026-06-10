@@ -425,6 +425,82 @@ async fn render_report_files_soft_end_to_end() {
     assert!(html.contains("<polygon"), "HTML must contain a polygon stacked area element");
 }
 
+// E1+E2 T4 — factor_tree full chain: params/factors + weight + horizon through hard and soft scoring
+#[tokio::test]
+async fn factor_tree_full_chain() {
+    // Inline tree: same shape as examples/factor_tree.yaml but ma_n=5, horizon=4, and
+    // `hour < 23` (always true for any fixture bar) instead of `hour < 14`.
+    const FACTOR_TREE: &str = r#"
+meta:
+  name: factor_chain_e2e
+  forward_window: 16
+  stances: [long, flat]
+
+params: { ma_n: 5, mom_n: 3 }
+
+factors:
+  mom: "slope(ema(close, ma_n), mom_n)"
+  above: "close > sma(close, ma_n)"
+
+root: entry
+
+nodes:
+  entry:
+    type: quant
+    branches:
+      - when: "above and mom > 0 and hour < 23"
+        strength: "sigmoid(mom * 50)"
+        goto: leaf_half
+        label: trend
+    default: { goto: leaf_flat, label: none }
+
+leaves:
+  leaf_half: { stance: long, weight: 0.5, horizon: 4 }
+  leaf_flat: { stance: flat }
+"#;
+
+    let tree_f = write_file(FACTOR_TREE, ".yaml");
+    let primary_f = write_file(&gen_primary_csv(), ".csv");
+    let context_f = write_file(&gen_context_csv(), ".csv");
+    let out_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+    let out_soft_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+
+    let base_cfg = BacktestConfig {
+        tree_path: tree_f.path().to_path_buf(),
+        primary_path: primary_f.path().to_path_buf(),
+        context_path: context_f.path().to_path_buf(),
+        news_path: None,
+        out_path: out_f.path().to_path_buf(),
+        traces_path: None,
+        cost_bps: 10.0,
+        warmup: 5,
+        window: 100,
+        concurrency: 4,
+        holidays_path: None,
+        folds: 0,
+    };
+
+    // Hard run
+    let report = run(&base_cfg, &LlmEvaluator::Disabled).await.unwrap();
+    let m = &report.metrics;
+    assert!(m.scored > 0, "factor_tree hard: expected scored > 0, got {}", m.scored);
+
+    // Soft run
+    let soft_cfg = BacktestConfig {
+        out_path: out_soft_f.path().to_path_buf(),
+        ..base_cfg
+    };
+    let soft_report = rquant::backtest::soft::run_soft(&soft_cfg, &LlmEvaluator::Disabled)
+        .await
+        .unwrap();
+    let sm = &soft_report.soft;
+    assert!(
+        sm.engaged.count > 0,
+        "factor_tree soft: expected engaged.count > 0, got {}",
+        sm.engaged.count
+    );
+}
+
 // M5 — holidays integration: detect_gaps + read_holidays
 // Jan 2 and Jan 4 only (Jan 3 missing), holidays file contains 2024-01-03
 // → report.gaps.missing_trading_days should be empty

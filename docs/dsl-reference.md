@@ -20,8 +20,16 @@
 | `ctx.high` | context | 大周期最高价序列 |
 | `ctx.low` | context | 大周期最低价序列 |
 | `ctx.volume` | context | 大周期成交量序列 |
+| `hour` | 当前 bar 时间 | 小时，0–23（标量，不是序列） |
+| `minute` | 当前 bar 时间 | 分钟，0–59（标量） |
+| `dow` | 当前 bar 时间 | 星期几，1=周一 … 7=周日（ISO 序，标量） |
 
-`resolve_series`（`eval.rs`）实现上述解析：前缀 `ctx.` 存在时路由到 `ctx.context`，否则路由到 `ctx.primary`。
+`resolve_series`（`eval.rs`）实现上述解析：前缀 `ctx.` 存在时路由到 `ctx.context`，否则路由到 `ctx.primary`。`hour`/`minute`/`dow` 在 `eval` 的 `Ident` 臂中优先匹配，直接从 `ctx.t`（当前 bar 时间戳）读取，不参与序列解析。
+
+```yaml
+# 示例：只在早盘（9:45–11:30）且非周五入场
+when: "close > sma(close,5) and hour < 12 and dow < 5"
+```
 
 ---
 
@@ -143,3 +151,30 @@ sigmoid( (lhs - rhs) * sign / denom )
 ### 适用范围
 
 `eval_fuzzy` 只接受布尔表达式（比较或 and/or/not 组合）；传入纯数值或序列标识符时返回 `Err`。
+
+---
+
+## 命名因子与参数
+
+决策树顶层的 `params`/`factors` 块允许把常用数值和子表达式提取为有名变量，在 `when`/`strength` 中直接引用：
+
+```yaml
+params: { ma_n: 20, mom_n: 5 }
+factors:
+  mom: "slope(ema(close, ma_n), mom_n)"
+  above: "close > sma(close, ma_n)"
+```
+
+### 引用即内联展开
+
+引用一个 `params`/`factors` 名字等价于**在该位置直接写出对应的字面量或子表达式**。展开在加载时由 `substitute`（`dsl/ast.rs`）执行，运行时的 AST 中不存在任何因子名 Ident——编译后的树与手写展开版本完全等价。
+
+### 重复求值代价
+
+同一因子在多处引用时，**各引用处独立重新求值**，运行时无共享缓存。若因子包含代价较高的计算（如 `ema(close, 200)`），应尽量减少重复引用次数，或将多个引用合并到同一个更高层的因子表达式中。
+
+### 有序引用规则
+
+`factors` 按 YAML 文档顺序处理，每个因子只能引用前序定义的名字，不能向后引用——这保证了因子间无隐式循环依赖，且展开结果唯一确定。
+
+详细的命名限制与加载期报错行为见 [docs/tree-yaml-schema.md](tree-yaml-schema.md) 的"params 与 factors 块"一节。

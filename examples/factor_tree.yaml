@@ -1,0 +1,26 @@
+meta:
+  name: factor_demo
+  forward_window: 16
+  stances: [long, flat]
+
+params: { ma_n: 20, mom_n: 5 }
+
+factors:
+  mom: "slope(ema(close, ma_n), mom_n)"
+  above: "close > sma(close, ma_n)"
+
+root: entry
+
+nodes:
+  entry:
+    type: quant
+    branches:
+      - when: "above and mom > 0 and hour < 14"
+        strength: "sigmoid(mom * 50)"
+        goto: leaf_half
+        label: trend_morning
+    default: { goto: leaf_flat, label: none }
+
+leaves:
+  leaf_half: { stance: long, weight: 0.5, horizon: 32 }
+  leaf_flat: { stance: flat }

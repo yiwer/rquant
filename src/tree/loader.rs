@@ -608,6 +608,12 @@ leaves:
     }
 
     #[test]
+    fn loads_factor_tree_example() {
+        let src = include_str!("../../examples/factor_tree.yaml");
+        assert!(load_tree_str(src).is_ok(), "examples/factor_tree.yaml must load without error");
+    }
+
+    #[test]
     fn parses_auto_strength_variants() {
         let yaml = |s: &str| format!(r#"
 meta: {{ name: t, forward_window: 3, stances: [long, flat] }}
