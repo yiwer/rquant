@@ -120,6 +120,8 @@ leaves:
 
 **软模式 position 口径**：净仓位 `r` 取分布内所有叶子中最大 `horizon` 对应的 gross 收益（`max_h` 腿），以避免多腿不同窗口下的口径混用。
 
+**sim 模式叶子语义**：叶子表示**目标仓位**，不再用于前瞻打分。硬 sim：`target = stance_dir × weight`（`long=+1`、`flat=0`、`short=−1`，`weight` 默认 1.0）；软 sim：`target = Σ p(leaf) × stance_dir(leaf) × weight(leaf)`（期望净仓位 E）。`horizon` 在 sim 模式下不使用。
+
 ---
 
 ## `strength` 字段详解
@@ -166,6 +168,29 @@ branches:
 
 ---
 
+## `risk:` 块（可选，sim 模式专用）
+
+```yaml
+risk:
+  stop_loss: 0.05        # 可选：止损幅度（> 0）
+  take_profit: 0.10      # 可选：止盈幅度（> 0）
+  max_hold_bars: 60      # 可选：最大持仓 bar 数（≥ 1）
+```
+
+`risk:` 块是可选的顶层字段，三个字段均为可选（至少给出一个有意义）。校验规则：`stop_loss` / `take_profit` 若给出必须 `> 0`；`max_hold_bars` 若给出必须 `≥ 1`，否则加载报错。
+
+**触发语义（sim 模式下，bar 收盘检查）**
+
+| 字段 | 触发条件（pos≠0 时） | 覆盖结果 |
+|---|---|---|
+| `stop_loss` | `unreal_pnl ≤ −stop_loss` | `target=0`，reason="stop" |
+| `take_profit` | `unreal_pnl ≥ take_profit` | `target=0`，reason="tp" |
+| `max_hold_bars` | `bars_held ≥ max_hold_bars` | `target=0`，reason="max_hold" |
+
+三者按 stop→tp→max_hold 顺序检查，命中即短路，优先于树决策（reason="tree"）。非 sim 模式下 `risk:` 块被解析但不使用。
+
+---
+
 ## `params` 与 `factors` 块
 
 ### 语法
@@ -197,9 +222,12 @@ factors:
 以下名字**不得**用作 `params`/`factors` 的键：
 
 - 内置标识符：`close` `open` `high` `low` `volume` `hour` `minute` `dow`
+- **持仓状态标识符（sim 专用保留名）**：`pos` `entry_price` `bars_held` `unreal_pnl`
 - 内置函数名：`sma` `ema` `wma` `rsi` `atr` `slope` `highest` `lowest` `crossover` `crossunder` `macd_line` `macd_signal` `macd_hist` `std` `sigmoid` `auto`
 
 与上述任一名字冲突，或在同一块中重复定义，均在加载时报错。
+
+> 持仓标识符 `pos`/`entry_price`/`bars_held`/`unreal_pnl` 在非 sim 模式下取默认值（`pos=0`、`bars_held=0`、`unreal_pnl=0`、`entry_price=NaN`），因此同一棵树可以在打分模式和 sim 模式下都运行——打分模式时 `pos==0` 永远为真，分支退化为 flat 路径，不影响前瞻评分语义。`entry_price` 为 NaN 时所有比较运算返回 false（NaN 弃权），空仓状态下引用它的条件自动弃权走 default。
 
 ---
 

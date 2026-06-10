@@ -1,0 +1,29 @@
+meta:
+  name: sim_demo
+  forward_window: 16     # sim 模式不用，但 schema 必填
+  stances: [long, flat]
+
+params: { ma_n: 20 }
+
+risk: { stop_loss: 0.05, max_hold_bars: 60 }
+
+root: gate
+
+nodes:
+  gate:
+    type: quant
+    branches:
+      - when: "pos == 0 and crossover(close, sma(close, ma_n))"
+        goto: leaf_full
+        label: enter
+      - when: "pos > 0 and crossunder(close, sma(close, ma_n))"
+        goto: leaf_flat
+        label: exit
+      - when: "pos > 0"
+        goto: leaf_full
+        label: hold
+    default: { goto: leaf_flat, label: idle }
+
+leaves:
+  leaf_full: { stance: long }
+  leaf_flat: { stance: flat }

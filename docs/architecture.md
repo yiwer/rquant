@@ -47,6 +47,8 @@ CSV 文件
 
 `forward_return.rs` 计算前瞻收益（`t+1` 开盘起 `forward_window` 根 bar，扣往返成本 bps）；`costs.rs` 定义 `CostModel`；`metrics.rs` 聚合硬模式度量（按叶子/按 stance/整体，含 buy&hold 基准、t 值、重叠警告）；`soft.rs` 的 `score_soft` 计算期望净收益与净仓位 `position_net`，`soft_metrics` 聚合软模式度量；`walkforward.rs` 按时间等分 K 折，每折独立出度量；`gaps.rs` 检测数据缺口；`runner.rs` 将以上组件串联为完整的硬模式回测流程（异步有序并发，`buffered(concurrency)`）；`soft.rs` 同构地实现软模式流程。
 
+`sim.rs` 实现第三种运行模式——**顺序权益模拟**（`--sim`）：`SimAccount` 持有持仓/净值/峰值等状态；`sim_step` 按三段记账（旧仓段、成本段、新仓段）步进，内含 T+1 同日禁减仓约束；`finalize` 期末强制清算；`run_sim` 顺序（无并发）逐 bar 调度树遍历 + 风控覆盖 + `sim_step`，输出 `SimReport`（含 `Vec<RoundTrip>` 回合列表）与可选逐步 traces。成本口径：单边 `(cost_bps/2)/1e4 × |Δ|`，一进一出合计往返成本；T+1 口径：同自然日加仓当日禁减仓（整体顺延）。完整记账语义见 `docs/superpowers/specs/2026-06-10-rquant-e4-sim-design.md` §3。
+
 ### 8. 报告层（`src/report/`）
 
 `mod.rs` 定义 `Report`/`SoftReport` 的序列化结构，实现 JSON 写出（`serde_json::to_string_pretty`，确定性）与 JSONL trace 写出；`curve.rs` 从 traces 推导累计前瞻收益曲线、直方图、叶子概率堆叠；`viz.rs` 将所有数据渲染为自包含 HTML（内联 SVG）。
@@ -75,11 +77,18 @@ Context { primary, context, news }
  │                   └─ walk_forward (若 --folds≥2)  →  WalkForward
  │                        └─ write_report + write_traces_jsonl
  │
- └─ 软遍历: traverse_soft(tree, ctx, llm)
-      └─ quant_branch_dist / llm.eval_llm_dist  →  SoftTrace { leaf_probs }
-           └─ score_soft  →  SoftScore { expected_net, position_net }
-                └─ soft_metrics  →  SoftMetrics
-                     └─ write_soft_report + write_soft_traces_jsonl
+ ├─ 软遍历: traverse_soft(tree, ctx, llm)
+ │    └─ quant_branch_dist / llm.eval_llm_dist  →  SoftTrace { leaf_probs }
+ │         └─ score_soft  →  SoftScore { expected_net, position_net }
+ │              └─ soft_metrics  →  SoftMetrics
+ │                   └─ write_soft_report + write_soft_traces_jsonl
+ │
+ └─ 模拟 (--sim): 顺序，无并发，每 bar 注入 SimState
+      ├─ 硬: traverse(tree, ctx, llm)  →  target = stance×weight
+      └─ 软: traverse_soft(tree, ctx, llm)  →  target = Σp·w·dir
+           └─ 风控覆盖 (stop/tp/max_hold)  →  sim_step(&mut SimAccount, ...)
+                └─ finalize  →  SimReport { total_return, max_drawdown, trades, … }
+                     └─ print_sim_summary
 
 report JSON + traces JSONL
  │  render_report_files
@@ -104,6 +113,7 @@ report JSON + traces JSONL
 | Walk-forward（`--folds K`） | `backtest/walkforward.rs`、`backtest/runner.rs` |
 | HTML 可视化（累计曲线、直方图、堆叠图） | `report/viz.rs`、`report/curve.rs` |
 | 新浪 fetcher（`fetch` 子命令） | `data/sina.rs`、`cli/mod.rs` |
+| 持仓状态模拟（`--sim`，顺序权益模拟） | `backtest/sim.rs`、`cli/mod.rs` |
 
 ### 设计中提及但尚未实现
 

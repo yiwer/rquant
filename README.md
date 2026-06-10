@@ -113,6 +113,53 @@ cargo run --release -- backtest ... --folds 5 --soft
 
 ---
 
+## 持仓模拟（`--sim`）
+
+`--sim` 启用顺序权益模拟模式，与前瞻打分模式互补：
+
+```bash
+# 硬 sim：树目标 = stance × weight，risk 块提供止损/止盈/最大持仓
+cargo run --release -- backtest \
+  --tree examples/sim_tree.yaml \
+  --primary 60m.csv --context 60m.csv \
+  --sim --warmup 30 --out sim_report.json
+
+# 软 sim：目标 = E = Σ p·w·dir（连续仓位），可与 --soft 组合
+cargo run --release -- backtest \
+  --tree examples/sim_tree.yaml \
+  --primary 60m.csv --context 60m.csv \
+  --sim --soft --out sim_soft_report.json
+```
+
+输出摘要示例：
+```
+总收益率:     +12.34%
+最大回撤:      -6.78%
+回合数:            15
+胜率:           53.3%
+平均持仓 bar:   18.2
+换手:           8.40
+Buy & Hold:    +9.01%
+```
+
+**定位区别**
+
+| 维度 | 前瞻打分（默认） | 模拟（`--sim`） |
+|---|---|---|
+| 核心问题 | 信号是否有统计 edge？ | 策略在历史上是否盈利？ |
+| 执行模型 | 逐点独立，可并发 | 顺序，T+1，有持仓状态 |
+| 评分口径 | 前瞻 N bar 收益 | 实际净值曲线（三段记账）|
+| 成本 | 往返 `cost_bps` | 单边 `cost_bps/2`（一进一出合计 round-trip）|
+| 风控 | 无 | 树顶层 `risk:` 块（stop/tp/max_hold）|
+
+**诚实边界**
+
+- Bar 粒度：用 open/close 模拟，无盘中价位成交，不能捕捉跳空行情内的逐笔滑点。
+- 无涨跌停过滤：涨停板买入 / 跌停板卖出被视为可执行，实盘中不一定成交。
+- 成本模型：单边 `cost_bps/2`，不含印花税差异（A 股卖出单边 0.1%）——如需精确，请将 `--cost-bps` 设为 `stamp_tax×2 + commission×2`。
+
+---
+
 ## fetch
 
 ```bash

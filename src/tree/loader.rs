@@ -661,6 +661,22 @@ leaves:
     }
 
     #[test]
+    fn loads_sim_tree_example() {
+        let src = include_str!("../../examples/sim_tree.yaml");
+        let tree = load_tree_str(src).expect("examples/sim_tree.yaml must load without error");
+        // Verify risk block is parsed correctly
+        let risk = tree.risk.as_ref().expect("sim_tree.yaml must have a risk block");
+        assert!((risk.stop_loss.unwrap() - 0.05).abs() < 1e-12);
+        assert_eq!(risk.max_hold_bars, Some(60));
+        assert!(risk.take_profit.is_none());
+        // Verify the tree uses sim identifiers (pos) in branches
+        assert_eq!(tree.root, "gate");
+        assert!(tree.nodes.contains_key("gate"));
+        assert!(tree.leaves.contains_key("leaf_full"));
+        assert!(tree.leaves.contains_key("leaf_flat"));
+    }
+
+    #[test]
     fn aux_identifier_format_validated_at_load() {
         let yaml = |when: &str| format!(r#"
 meta: {{ name: t, forward_window: 3, stances: [long, flat] }}

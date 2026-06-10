@@ -38,8 +38,9 @@ rquant backtest [OPTIONS]
 | `--window <usize>` | usize | `100` | 传入 Context 的窗口大小（每个时点最多取最近 N 根 bar） |
 | `--concurrency <usize>` | usize | `8` | 异步并发度（同时运行的遍历任务数） |
 | `--holidays <PATH>` | PathBuf | 可选 | A 股节假日文件，用于缺口检测 |
-| `--folds <usize>` | usize | `0` | Walk-forward 折数，≥2 时启用 |
-| `--soft` | bool | `false` | 启用软/概率遍历模式 |
+| `--folds <usize>` | usize | `0` | Walk-forward 折数，≥2 时启用（`--sim` 下忽略并打印提示） |
+| `--soft` | bool | `false` | 启用软/概率遍历模式（可与 `--sim` 组合） |
+| `--sim` | bool | `false` | 持仓状态模拟模式（顺序权益，见下方模式对照） |
 | `--llm-model <string>` | string | `""` | LLM 模型名，如 `deepseek-chat` |
 | `--llm-base-url <string>` | string | `""` | LLM API base URL |
 | `--llm-cache-dir <PATH>` | PathBuf | `.rquant-cache/llm` | LLM 响应缓存目录 |
@@ -77,6 +78,21 @@ aux CSV 格式要求：
 **低频序列**（如日线指数）与高频 primary（如 15m）挂载时，`build_context` 对每个决策点 `t` 取 `time ≤ t` 的所有行（最近已知值语义），不做重采样；DSL 中 `aux.idx.v[-1]` 即取该截断后的倒数第二行。
 
 如果 `--aux name=path.csv` 中 `name` 对应的表未被任何 DSL 表达式引用，它不会产生错误；如果 DSL 引用了未挂载的表名，运行时报错并给出提示文案：`aux table '<name>' not mounted (use --aux <name>=path.csv)`。
+
+**`--sim`**
+
+切换为持仓状态模拟模式（`run_sim`）：顺序逐 bar 执行，树产出**目标仓位**而非前瞻打分，模拟器按差额交易、三段记账净值（prev_close→open 旧仓段 + 成本段 + open→close 新仓段），输出 `SimReport`（总收益/最大回撤/回合数/胜率/换手/buy&hold + 回合列表）。与 `--soft` 可自由组合：硬 sim（目标 = 叶 `stance×weight`）/ 软 sim（目标 = `E = Σ p·w·dir`）。`--folds` 在 sim 模式下被忽略（打印提示）。
+
+---
+
+### 模式对照
+
+| 模式 | 触发 | 产出目标 | 执行语义 | 适用场景 |
+|---|---|---|---|---|
+| 前瞻打分（默认） | 无额外标志 | 前瞻收益期望 / hit rate | 逐点独立，并发，无顺序约束 | 信号质量研究，验证 edge 是否存在 |
+| 软打分 | `--soft` | 期望净值 `E = Σp·w·dir` | 同上，叶子概率分布 | 连续信号强度研究 |
+| 模拟（硬） | `--sim` | 目标仓位（叶 `stance×weight`）| 顺序权益，T+1，成本单边 rt/2 | 策略回测，测量资金曲线与回撤 |
+| 模拟（软） | `--sim --soft` | 目标仓位（`E = Σp·w·dir`）| 同上，连续调仓 | 软权重驱动的连续仓位策略 |
 
 **LLM 启用条件**
 
