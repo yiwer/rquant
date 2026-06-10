@@ -1,30 +1,31 @@
 use crate::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::fmt::Write as FmtWrite;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Cached {
-    pub probs: BTreeMap<String, f64>,
-    pub reason: String,
-    pub model: String,
+pub(crate) struct Cached {
+    pub(crate) probs: BTreeMap<String, f64>,
+    pub(crate) reason: String,
+    pub(crate) model: String,
 }
 
-pub struct FileCache {
+pub(crate) struct FileCache {
     dir: PathBuf,
 }
 
 static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 impl FileCache {
-    pub fn new(dir: impl Into<PathBuf>) -> Self {
+    pub(crate) fn new(dir: impl Into<PathBuf>) -> Self {
         Self { dir: dir.into() }
     }
 
     /// 缓存键 = sha256_hex(model \0 base_url \0 system_prompt \0 node_id \0 rendered)。
     /// 纳入 base_url 与 system_prompt：换端点或改系统提示词时旧缓存自动失效。
-    pub fn key(model: &str, base_url: &str, system_prompt: &str, node_id: &str, rendered: &str) -> String {
+    pub(crate) fn key(model: &str, base_url: &str, system_prompt: &str, node_id: &str, rendered: &str) -> String {
         use sha2::{Digest, Sha256};
         let mut h = Sha256::new();
         for part in [model, base_url, system_prompt, node_id, rendered] {
@@ -34,7 +35,7 @@ impl FileCache {
         let d = h.finalize();
         let mut s = String::with_capacity(64);
         for b in d {
-            s.push_str(&format!("{b:02x}"));
+            let _ = write!(s, "{b:02x}");
         }
         s
     }
@@ -43,13 +44,13 @@ impl FileCache {
         self.dir.join(format!("{key}.json"))
     }
 
-    pub fn get(&self, key: &str) -> Option<Cached> {
+    pub(crate) fn get(&self, key: &str) -> Option<Cached> {
         let s = std::fs::read_to_string(self.path_for(key)).ok()?;
         serde_json::from_str(&s).ok()
     }
 
     /// 原子写：写唯一临时文件再 rename（并发各写各的、崩溃不留半截）。
-    pub fn put(&self, key: &str, c: &Cached) -> Result<()> {
+    pub(crate) fn put(&self, key: &str, c: &Cached) -> Result<()> {
         std::fs::create_dir_all(&self.dir)?;
         let uniq = format!(".{}.{}.tmp", std::process::id(), TMP_COUNTER.fetch_add(1, Ordering::Relaxed));
         let tmp = self.dir.join(uniq);

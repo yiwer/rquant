@@ -1,7 +1,13 @@
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Weekday};
 use std::collections::HashSet;
+use std::sync::LazyLock;
 use crate::{Error, Result};
 use std::path::Path;
+
+static AM_OPEN: LazyLock<NaiveTime> = LazyLock::new(|| NaiveTime::from_hms_opt(9, 30, 0).unwrap());
+static AM_CLOSE: LazyLock<NaiveTime> = LazyLock::new(|| NaiveTime::from_hms_opt(11, 30, 0).unwrap());
+static PM_OPEN: LazyLock<NaiveTime> = LazyLock::new(|| NaiveTime::from_hms_opt(13, 0, 0).unwrap());
+static PM_CLOSE: LazyLock<NaiveTime> = LazyLock::new(|| NaiveTime::from_hms_opt(15, 0, 0).unwrap());
 
 /// A股交易日历：工作日且非节假日为交易日；时段 09:30–11:30、13:00–15:00。
 /// bar 收盘时刻落在 (start, end] 内视为在交易时段（首根 15m bar 收于 09:45，末根收于 15:00）。
@@ -23,11 +29,7 @@ impl AShareCalendar {
             return false;
         }
         let t = dt.time();
-        let am_start = NaiveTime::from_hms_opt(9, 30, 0).unwrap();
-        let am_end = NaiveTime::from_hms_opt(11, 30, 0).unwrap();
-        let pm_start = NaiveTime::from_hms_opt(13, 0, 0).unwrap();
-        let pm_end = NaiveTime::from_hms_opt(15, 0, 0).unwrap();
-        (t > am_start && t <= am_end) || (t > pm_start && t <= pm_end)
+        (t > *AM_OPEN && t <= *AM_CLOSE) || (t > *PM_OPEN && t <= *PM_CLOSE)
     }
 }
 

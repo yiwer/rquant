@@ -5,6 +5,8 @@ use crate::tree::schema::Stance;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+pub(crate) const OVERLAP_WARNING: &str = "前瞻窗口重叠 → 样本自相关，t 值偏乐观，勿据此鼓吹显著性";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignalStat {
     pub count: usize,
@@ -73,7 +75,7 @@ pub fn compute_metrics(items: &[(Trace, Option<ForwardResult>)], primary: &[Bar]
     }
 
     let buy_and_hold = if primary.len() >= 2 {
-        primary.last().unwrap().close / primary[0].open - 1.0
+        primary.last().unwrap().close / primary.first().unwrap().open - 1.0
     } else {
         0.0
     };
@@ -87,7 +89,7 @@ pub fn compute_metrics(items: &[(Trace, Option<ForwardResult>)], primary: &[Bar]
         by_stance: by_stance.iter().map(|(k, v)| (k.clone(), signal_stat(v))).collect(),
         node_label_counts,
         buy_and_hold,
-        overlap_warning: "前瞻窗口重叠 → 样本自相关，t 值偏乐观，勿据此鼓吹显著性".into(),
+        overlap_warning: OVERLAP_WARNING.into(),
     }
 }
 

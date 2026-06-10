@@ -48,16 +48,16 @@ pub fn derive_series(traces: &[Trace], primary: &[Bar], fw: usize, cost: &CostMo
 }
 
 fn histogram(points: &[SeriesPoint]) -> Histogram {
+    const N: usize = 21;
     if points.is_empty() {
         return Histogram { bins: vec![] };
     }
     let nets: Vec<f64> = points.iter().map(|p| p.net).collect();
-    let min = nets.iter().cloned().fold(f64::INFINITY, f64::min);
-    let max = nets.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let min = nets.iter().copied().fold(f64::INFINITY, f64::min);
+    let max = nets.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     if (max - min).abs() < 1e-12 {
         return Histogram { bins: vec![(min, max, nets.len())] };
     }
-    const N: usize = 21;
     let width = (max - min) / N as f64;
     let mut counts = [0usize; N];
     for &x in &nets {

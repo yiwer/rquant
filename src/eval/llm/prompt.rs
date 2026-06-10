@@ -3,24 +3,25 @@ use crate::features::context::Context;
 use crate::{Error, Result};
 use serde::Deserialize;
 use std::collections::BTreeMap;
+use std::fmt::Write as FmtWrite;
 
-pub const SYSTEM_PROMPT: &str = "You are a financial-analysis classifier. Assign a probability between 0 and 1 to EVERY allowed label; probabilities should sum to 1. Respond ONLY with a JSON object: {\"probs\": {<label>: <number 0..1>, ...}, \"reason\": <short string>}.";
+pub(crate) const SYSTEM_PROMPT: &str = "You are a financial-analysis classifier. Assign a probability between 0 and 1 to EVERY allowed label; probabilities should sum to 1. Respond ONLY with a JSON object: {\"probs\": {<label>: <number 0..1>, ...}, \"reason\": <short string>}.";
 
 /// 渲染 user message。必须确定性（它是缓存键的一部分）：label 排序、价格定宽、inputs 按声明顺序。
-pub fn render_user(node: &LlmNode<'_>, ctx: &Context) -> String {
+pub(crate) fn render_user(node: &LlmNode<'_>, ctx: &Context) -> String {
     let mut s = String::new();
-    s.push_str(&format!("Question: {}\n", node.prompt));
+    let _ = writeln!(s, "Question: {}", node.prompt);
 
     let mut labels: Vec<&str> = node.labels.keys().map(|k| k.as_str()).collect();
     labels.sort_unstable();
-    s.push_str(&format!("Allowed labels: [{}]\n", labels.join(", ")));
+    let _ = writeln!(s, "Allowed labels: [{}]", labels.join(", "));
 
     let closes = ctx.primary.closes();
     let start = closes.len().saturating_sub(20);
     let recent: Vec<String> = closes[start..].iter().map(|c| format!("{c:.4}")).collect();
-    s.push_str(&format!("Recent primary closes: [{}]\n", recent.join(", ")));
+    let _ = writeln!(s, "Recent primary closes: [{}]", recent.join(", "));
     if let Some(last) = closes.last() {
-        s.push_str(&format!("Latest close: {last:.4}\n"));
+        let _ = writeln!(s, "Latest close: {last:.4}");
     }
 
     for input in node.inputs {
@@ -30,31 +31,31 @@ pub fn render_user(node: &LlmNode<'_>, ctx: &Context) -> String {
                     .and_then(|n| n.recent.last())
                     .map(|r| format!("{:.4}", r.score))
                     .unwrap_or_else(|| "none".to_string());
-                s.push_str(&format!("news_score: {v}\n"));
+                let _ = writeln!(s, "news_score: {v}");
             }
             "recent_headlines" => {
                 let v = ctx.news.as_ref()
                     .filter(|n| !n.recent.is_empty())
                     .map(|n| n.recent.iter().map(|r| r.headline.clone()).collect::<Vec<_>>().join("; "))
                     .unwrap_or_else(|| "none".to_string());
-                s.push_str(&format!("recent_headlines: {v}\n"));
+                let _ = writeln!(s, "recent_headlines: {v}");
             }
-            other => s.push_str(&format!("{other}: unavailable\n")),
+            other => { let _ = writeln!(s, "{other}: unavailable"); }
         }
     }
     s
 }
 
 #[derive(Debug, Deserialize)]
-pub struct LlmAnswer {
-    pub probs: BTreeMap<String, f64>,
+pub(crate) struct LlmAnswer {
+    pub(crate) probs: BTreeMap<String, f64>,
     #[serde(default)]
-    pub reason: String,
+    pub(crate) reason: String,
 }
 
 /// 解析+清洗：丢未知 label；p NaN→0、clamp[0,1]、0 丢弃；Σ>1 整体归一；清洗后空/全零 → Err。
 /// 产出 Σ ≤ 1（残余由消费方归 default）。
-pub fn parse_answer(content: &str, allowed: &std::collections::HashMap<String, String>) -> Result<LlmAnswer> {
+pub(crate) fn parse_answer(content: &str, allowed: &std::collections::HashMap<String, String>) -> Result<LlmAnswer> {
     let raw: LlmAnswer = serde_json::from_str(content.trim())
         .map_err(|e| Error::Eval(format!("LLM output not valid JSON: {e}")))?;
     let mut probs: BTreeMap<String, f64> = BTreeMap::new();

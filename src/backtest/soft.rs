@@ -1,6 +1,6 @@
 use crate::backtest::costs::CostModel;
 use crate::backtest::forward_return::forward_return;
-use crate::backtest::metrics::{signal_stat, SignalStat};
+use crate::backtest::metrics::{signal_stat, SignalStat, OVERLAP_WARNING};
 use crate::backtest::runner::BacktestConfig;
 use crate::data::bar::Bar;
 use crate::data::news::{read_news_csv, NewsRecord};
@@ -98,7 +98,7 @@ pub fn soft_metrics(items: &[Option<SoftScore>], primary: &[Bar]) -> SoftMetrics
         }
     }
     let buy_and_hold = if primary.len() >= 2 {
-        primary.last().unwrap().close / primary[0].open - 1.0
+        primary.last().unwrap().close / primary.first().unwrap().open - 1.0
     } else {
         0.0
     };
@@ -108,7 +108,7 @@ pub fn soft_metrics(items: &[Option<SoftScore>], primary: &[Bar]) -> SoftMetrics
         engaged: signal_stat(&engaged_nets),
         position: signal_stat(&position_nets),
         buy_and_hold,
-        overlap_warning: "前瞻窗口重叠 → 样本自相关，t 值偏乐观，勿据此鼓吹显著性".into(),
+        overlap_warning: OVERLAP_WARNING.into(),
     }
 }
 

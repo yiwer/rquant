@@ -23,17 +23,17 @@ pub struct Target {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct BranchSpec {
-    pub when: String,
+pub(crate) struct BranchSpec {
+    pub(crate) when: String,
     #[serde(default)]
-    pub strength: Option<String>,
-    pub goto: String,
-    pub label: String,
+    pub(crate) strength: Option<String>,
+    pub(crate) goto: String,
+    pub(crate) label: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub enum NodeSpec {
+pub(crate) enum NodeSpec {
     Quant {
         branches: Vec<BranchSpec>,
         default: Target,
@@ -50,16 +50,16 @@ pub enum NodeSpec {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct LeafSpec {
-    pub stance: Stance,
+pub(crate) struct LeafSpec {
+    pub(crate) stance: Stance,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct TreeSpec {
-    pub meta: Meta,
-    pub root: String,
-    pub nodes: HashMap<String, NodeSpec>,
-    pub leaves: HashMap<String, LeafSpec>,
+pub(crate) struct TreeSpec {
+    pub(crate) meta: Meta,
+    pub(crate) root: String,
+    pub(crate) nodes: HashMap<String, NodeSpec>,
+    pub(crate) leaves: HashMap<String, LeafSpec>,
 }
 
 #[cfg(test)]

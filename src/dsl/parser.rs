@@ -8,13 +8,13 @@ pub fn parse_str(src: &str) -> Result<Expr> {
     Parser::new(tokens).parse()
 }
 
-pub struct Parser {
+pub(crate) struct Parser {
     tokens: Vec<Token>,
     pos: usize,
 }
 
 impl Parser {
-    pub fn new(tokens: Vec<Token>) -> Self {
+    pub(crate) fn new(tokens: Vec<Token>) -> Self {
         Self { tokens, pos: 0 }
     }
 
@@ -30,8 +30,8 @@ impl Parser {
         t
     }
 
-    fn expect(&mut self, t: Token) -> Result<()> {
-        if self.peek() == Some(&t) {
+    fn expect(&mut self, t: &Token) -> Result<()> {
+        if self.peek() == Some(t) {
             self.pos += 1;
             Ok(())
         } else {
@@ -88,7 +88,7 @@ impl Parser {
             Some(Token::Number(n)) => self.parse_postfix(Expr::Number(n)),
             Some(Token::LParen) => {
                 let e = self.parse_expr(0)?;
-                self.expect(Token::RParen)?;
+                self.expect(&Token::RParen)?;
                 self.parse_postfix(e)
             }
             Some(Token::Ident(name)) => {
@@ -105,7 +105,7 @@ impl Parser {
                             }
                         }
                     }
-                    self.expect(Token::RParen)?;
+                    self.expect(&Token::RParen)?;
                     self.parse_postfix(Expr::Call(name, args))
                 } else {
                     self.parse_postfix(Expr::Ident(name))
@@ -130,7 +130,7 @@ impl Parser {
                 other => return Err(Error::Dsl(format!("expected index number, got {other:?}"))),
             };
             let idx = if neg { -idx } else { idx };
-            self.expect(Token::RBracket)?;
+            self.expect(&Token::RBracket)?;
             e = Expr::Index(Box::new(e), idx);
         }
         Ok(e)
