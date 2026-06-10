@@ -1,4 +1,4 @@
-/// 简单移动平均；out[i] = mean(s[i-n+1..=i])，i < n-1 处为 NaN。
+/// 简单移动平均；out\[i\] = mean(s\[i-n+1..=i\])，i < n-1 处为 NaN。
 pub fn sma(s: &[f64], n: usize) -> Vec<f64> {
     let mut out = vec![f64::NAN; s.len()];
     if n == 0 {
@@ -17,7 +17,7 @@ pub fn sma(s: &[f64], n: usize) -> Vec<f64> {
     out
 }
 
-/// 指数移动平均；out[0] = s[0]，alpha = 2/(n+1)。
+/// 指数移动平均；out\[0\] = s\[0\]，alpha = 2/(n+1)。
 pub fn ema(s: &[f64], n: usize) -> Vec<f64> {
     let mut out = vec![f64::NAN; s.len()];
     if s.is_empty() || n == 0 {

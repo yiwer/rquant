@@ -16,13 +16,20 @@ pub struct LlmNode<'a> {
     pub default: &'a str,
 }
 
+/// OpenAI 兼容 LLM 客户端配置。
 #[derive(Debug, Clone)]
 pub struct LlmConfig {
+    /// API 端点（OpenAI 兼容格式），如 `https://api.openai.com/v1`。
     pub base_url: String,
+    /// API 密钥。
     pub api_key: String,
+    /// 模型名称，如 `gpt-4o-mini`。
     pub model: String,
+    /// 单次请求超时（秒），超时后触发重试/回退。
     pub timeout_secs: u64,
+    /// 最大重试次数，超限后走节点 default 分支。
     pub max_retries: u32,
+    /// 磁盘缓存目录；相同 prompt 哈希命中时直接读缓存，保证复现性。
     pub cache_dir: PathBuf,
 }
 
@@ -36,7 +43,7 @@ pub fn default_decision(node: &LlmNode<'_>, why: &str) -> Decision {
     }
 }
 
-/// label 分布 → goto 分布：label→labels[label]（未知→default）、同 goto 合并、残余补 default。
+/// label 分布 → goto 分布：label→labels\[label\]（未知→default）、同 goto 合并、残余补 default。
 /// 前置：probs 已清洗（Σ ≤ 1）。产出 Σ = 1，按 goto 名排序（确定性）。
 pub fn dist_to_gotos(node: &LlmNode<'_>, probs: &BTreeMap<String, f64>) -> Vec<(String, f64)> {
     let mut acc: BTreeMap<String, f64> = BTreeMap::new();
@@ -106,9 +113,13 @@ impl StubLlm {
     }
 }
 
+/// LLM 求值器策略，在 CLI 和测试中按需选择。
 pub enum LlmEvaluator {
+    /// 真实 OpenAI 兼容客户端，带缓存与重试；需要网络及 API 密钥。
     OpenAi(client::OpenAiLlm),
+    /// 完全禁用 LLM，所有 LLM 节点直接走 default 分支，不需要网络。
     Disabled,
+    /// 确定性 stub，按 `node_id → 答案` 映射返回；用于集成测试。
     Stub(StubLlm),
 }
 

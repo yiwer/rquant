@@ -87,7 +87,7 @@ pub fn histogram_svg(hist: &Histogram, title: &str) -> String {
 
 const PALETTE: [&str; 6] = ["#1565c0", "#2e7d32", "#c62828", "#f9a825", "#6a1b9a", "#00838f"];
 
-/// 叶子概率堆叠面积图：y 域固定 [0,1]，每层 polygon（上=本层累计、下=前层累计），图例置顶。
+/// 叶子概率堆叠面积图：y 域固定 \[0,1\]，每层 polygon（上=本层累计、下=前层累计），图例置顶。
 pub fn stacked_area_chart(stack: &StackSeries, title: &str) -> String {
     let pad = 30.0;
     let mut s = String::new();

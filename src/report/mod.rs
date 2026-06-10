@@ -1,3 +1,5 @@
+//! 报告生成：硬回测与软回测结果的序列化、摘要打印及 HTML 渲染。
+
 use crate::backtest::gaps::GapReport;
 use crate::backtest::metrics::Metrics;
 use crate::backtest::soft::{SoftMetrics, SoftStepRecord};
@@ -11,13 +13,20 @@ use std::path::Path;
 pub mod curve;
 pub mod viz;
 
+/// 硬回测完整报告，可序列化为 JSON。
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Report {
+    /// YAML 树的 `meta.name`。
     pub tree_name: String,
+    /// 前瞻窗口大小（bar 数），取自树 meta。
     pub forward_window: usize,
+    /// 单边成本（bps），实际扣除双边（round-trip）。
     pub cost_bps: f64,
+    /// 汇总度量（active / T+1 可执行 / 按叶 / 按 stance）。
     pub metrics: Metrics,
+    /// 主行情数据质量报告（缺失交易日、残缺日）。
     pub gaps: GapReport,
+    /// Walk-forward 折叠结果；`folds < 2` 时为 `None`，不参与 JSON 序列化。
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub walk_forward: Option<WalkForward>,
 }
@@ -82,12 +91,18 @@ pub fn print_summary(report: &Report) {
     println!("[warn] {}", m.overlap_warning);
 }
 
+/// 软遍历回测完整报告，可序列化为 JSON。
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SoftReport {
+    /// YAML 树的 `meta.name`。
     pub tree_name: String,
+    /// 前瞻窗口大小（bar 数），取自树 meta。
     pub forward_window: usize,
+    /// 单边成本（bps），实际扣除双边（round-trip）。
     pub cost_bps: f64,
+    /// 软模式汇总度量（engaged 期望净收益 / 净仓位口径）。
     pub soft: SoftMetrics,
+    /// Walk-forward 折叠结果；`folds < 2` 时为 `None`，不参与 JSON 序列化。
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub walk_forward: Option<WalkForward>,
 }

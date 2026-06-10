@@ -19,7 +19,7 @@ pub struct WalkForward {
 }
 
 /// 固定树滚动分折：决策点按索引等分 k 个连续折（空索引段省略）。
-/// nets_per_point[i] = 第 i 点的参与净收益（未参与/未计分=None），与 primary_slice 一一对齐。
+/// nets_per_point\[i\] = 第 i 点的参与净收益（未参与/未计分=None），与 primary_slice 一一对齐。
 pub fn walk_forward(nets_per_point: &[Option<f64>], primary_slice: &[Bar], k: usize) -> WalkForward {
     let n = nets_per_point.len().min(primary_slice.len());
     let mut folds = Vec::new();

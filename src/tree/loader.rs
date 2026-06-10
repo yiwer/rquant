@@ -6,27 +6,39 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 /// 分支强度：显式标量表达式，或对 when 做模糊求值的 auto(scale)。
+/// `auto` 默认 scale=0.02；`auto(s)` 允许自定义正数 scale。
 #[derive(Debug, Clone)]
 pub enum Strength {
+    /// 用户提供的 DSL 标量表达式，结果 clamp 到 [0, 1]。
     Expr(Expr),
+    /// 基于 when 表达式边距的模糊强度，scale 控制边距→概率的斜率。
     Auto(f64),
 }
 
+/// 量化节点的一条分支：条件、可选强度及路由目标。
 #[derive(Debug, Clone)]
 pub struct Branch {
+    /// 编译后的条件表达式（运行时求值）。
     pub when: Expr,
+    /// 原始 DSL 字符串，用于 trace rationale。
     pub when_src: String,
+    /// 软遍历强度；`None` 等价于强度 1.0（硬跳转）。
     pub strength: Option<Strength>,
+    /// 条件成立时跳转到的节点/叶子 ID。
     pub goto: String,
+    /// 分支标签，写入 trace path。
     pub label: String,
 }
 
+/// 运行时节点：量化节点（DSL 分支）或 LLM 节点（语言模型调用）。
 #[derive(Debug, Clone)]
 pub enum Node {
+    /// 按序求值 branches，首个 when=true 的分支获胜；全不中走 default。
     Quant {
         branches: Vec<Branch>,
         default: Target,
     },
+    /// 调用 LLM，将返回的 label 映射到 goto；失败或 default 胜出时走 default。
     Llm {
         inputs: Vec<String>,
         prompt: String,
@@ -35,24 +47,39 @@ pub enum Node {
     },
 }
 
+/// 决策树叶子节点，持有最终 stance。
 #[derive(Debug, Clone)]
 pub struct Leaf {
+    /// 对应的交易方向（须在 `meta.stances` 中声明）。
     pub stance: Stance,
 }
 
+/// 加载并验证后的运行时决策树。
+///
+/// 验证保证：DAG（无环）、所有节点从 root 可达、
+/// 所有 goto 目标存在、叶子 stance 在 `meta.stances` 中。
 #[derive(Debug, Clone)]
 pub struct Tree {
+    /// 树级元信息（名称、前瞻窗口、允许的 stance 集合）。
     pub meta: Meta,
+    /// 根节点 ID（必须为节点，不得为叶子）。
     pub root: String,
+    /// 所有中间节点，键为节点 ID。
     pub nodes: HashMap<String, Node>,
+    /// 所有叶子节点，键为叶子 ID。
     pub leaves: HashMap<String, Leaf>,
 }
 
+/// 从文件加载并验证决策树。等价于读取文件后调用 [`load_tree_str`]。
 pub fn load_tree_file(path: &Path) -> Result<Tree> {
     let src = std::fs::read_to_string(path)?;
     load_tree_str(&src)
 }
 
+/// 从 YAML 字符串加载并验证决策树。
+///
+/// 验证规则：root 必须是节点；所有 goto 目标已定义；从 root 可达所有节点；
+/// 无环（DFS 着色）；叶子 stance 在 `meta.stances` 声明集合内。
 pub fn load_tree_str(src: &str) -> Result<Tree> {
     let spec: TreeSpec = serde_yaml::from_str(src)?;
     let stances: HashSet<Stance> = spec.meta.stances.iter().copied().collect();

@@ -7,25 +7,41 @@ use std::collections::BTreeMap;
 
 pub(crate) const OVERLAP_WARNING: &str = "前瞻窗口重叠 → 样本自相关，t 值偏乐观，勿据此鼓吹显著性";
 
+/// 单个信号子集的统计摘要。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignalStat {
+    /// 样本数量。
     pub count: usize,
+    /// 成本调整后的前瞻收益均值（非账户 P&L，不含仓位大小因素）。
     pub mean_net: f64,
+    /// 净收益 > 0 的比例。
     pub hit_rate: f64,
+    /// 净收益标准差。
     pub std: f64,
+    /// t 统计量；受前瞻窗口重叠影响，样本自相关导致其偏乐观，勿据此判断显著性。
     pub t_stat: f64,
 }
 
+/// 硬回测全量度量。
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Metrics {
+    /// 总决策点数（含 warmup 之后所有 bar）。
     pub total_decisions: usize,
+    /// 成功计算前瞻收益的点数（末尾 fw 个 bar 因越界可能不足）。
     pub scored: usize,
+    /// 非 Flat stance 的已评分点（主信号集）。
     pub active: SignalStat,
+    /// `active` 的子集，仅含 T+1 开盘可执行的决策（日内末 bar 之后有次日开盘）。
     pub t1_executable: SignalStat,
+    /// 按叶子 ID 分组的统计（含 Flat 叶）。
     pub by_leaf: BTreeMap<String, SignalStat>,
+    /// 按 stance 字符串分组的统计。
     pub by_stance: BTreeMap<String, SignalStat>,
+    /// 各节点 `node_id::label` 触发次数，用于树诊断。
     pub node_label_counts: BTreeMap<String, usize>,
+    /// 评估窗口（warmup 之后）的买入持有收益，与信号同口径对比。
     pub buy_and_hold: f64,
+    /// 固定警告文本，提示 t_stat 因窗口重叠而偏乐观。
     pub overlap_warning: String,
 }
 

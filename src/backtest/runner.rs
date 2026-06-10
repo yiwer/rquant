@@ -13,19 +13,32 @@ use crate::Result;
 use futures::stream::{self, StreamExt};
 use std::path::PathBuf;
 
+/// 回测运行时配置，硬/软模式共用。
 #[derive(Debug, Clone)]
 pub struct BacktestConfig {
+    /// YAML 决策树路径。
     pub tree_path: PathBuf,
+    /// 主行情 CSV（用于前瞻收益计算）。
     pub primary_path: PathBuf,
+    /// 上下文行情 CSV（DSL 表达式的 context 序列）。
     pub context_path: PathBuf,
+    /// 可选新闻 CSV 路径（LLM 节点 inputs 引用）。
     pub news_path: Option<PathBuf>,
+    /// 报告 JSON 输出路径。
     pub out_path: PathBuf,
+    /// 可选 trace JSONL 输出路径。
     pub traces_path: Option<PathBuf>,
+    /// 单边交易成本（基点），实际按 round-trip 扣除。
     pub cost_bps: f64,
+    /// 跳过前 N bar 不评估（数据预热期，不计入度量）。
     pub warmup: usize,
+    /// 每次评估时回看的上下文窗口长度（bar 数）。
     pub window: usize,
+    /// LLM 调用的异步并发数。
     pub concurrency: usize,
+    /// 可选节假日 CSV 路径，用于数据缺口检测。
     pub holidays_path: Option<PathBuf>,
+    /// Walk-forward 折叠数；`>= 2` 时启用，否则不计算。
     pub folds: usize,
 }
 

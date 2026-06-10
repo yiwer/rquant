@@ -110,7 +110,7 @@ pub fn avg_leaf_probs(records: &[SoftStepRecord]) -> Vec<(String, f64)> {
         .collect()
 }
 
-/// 堆叠面积图数据：names = 全体叶名（字典序），rows[i][k] = 第 i 点前 k+1 层的累计概率边界。
+/// 堆叠面积图数据：names = 全体叶名（字典序），rows\[i\]\[k\] = 第 i 点前 k+1 层的累计概率边界。
 pub struct StackSeries {
     pub names: Vec<String>,
     pub rows: Vec<Vec<f64>>,

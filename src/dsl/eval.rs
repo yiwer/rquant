@@ -20,7 +20,7 @@ pub fn eval_scalar(expr: &Expr, ctx: &Context) -> Result<f64> {
     as_scalar(&eval(expr, ctx)?)
 }
 
-/// Fuzzy evaluation of boolean expressions → [0,1] truth value (soft quantization strength: "auto" use).
+/// Fuzzy evaluation of boolean expressions → \[0,1\] truth value (soft quantization strength: "auto" use).
 /// Comparisons: sigmoid((lhs-rhs)/denom), denom = scale·max(|lhs|,|rhs|); denom≈0 → 0.5.
 /// and=min, or=max, not=1-x (Gödel); ==/!= stay hard; non-boolean nodes → Err.
 pub fn eval_fuzzy(expr: &Expr, ctx: &Context, scale: f64) -> Result<f64> {
