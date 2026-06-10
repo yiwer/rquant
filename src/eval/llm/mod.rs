@@ -81,6 +81,7 @@ impl StubLlm {
         if ans == "ERROR" {
             return None;
         }
+        // 多 label 语法是"全有或全无"：任一 pair 格式坏（缺冒号/坏浮点）→ 整串放弃 → 回退 default。
         if ans.contains(':') {
             let mut m = BTreeMap::new();
             for pair in ans.split(',') {

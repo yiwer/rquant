@@ -134,8 +134,10 @@ mod tests {
         // 未知 label 丢弃（剩余合法）
         let u = parse_answer("{\"probs\":{\"go\":0.5,\"nope\":0.5}}", &allowed).unwrap();
         assert_eq!(u.probs.len(), 1);
-        // 非 JSON / 全未知 → Err
+        // 非 JSON / 全未知 / 空 probs / 全零 → Err
         assert!(parse_answer("not json", &allowed).is_err());
         assert!(parse_answer("{\"probs\":{\"nope\":1.0}}", &allowed).is_err());
+        assert!(parse_answer("{\"probs\":{}}", &allowed).is_err());
+        assert!(parse_answer("{\"probs\":{\"go\":0.0}}", &allowed).is_err());
     }
 }
