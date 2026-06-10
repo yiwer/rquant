@@ -1,4 +1,4 @@
-use crate::report::Report;
+use crate::report::{Report, SoftReport};
 use crate::report::curve::{EquitySeries, Histogram};
 use std::fmt::Write;
 
@@ -125,6 +125,35 @@ pub fn render_html(report: &Report, series: Option<&EquitySeries>) -> String {
     s
 }
 
+/// 软模式报告 HTML：累计期望收益曲线 + expected_net 直方图 + 各叶平均概率条形 + headline。
+pub fn render_soft_html(report: &SoftReport, series: &EquitySeries, avg_leaf: &[(String, f64)]) -> String {
+    let m = &report.soft;
+    let mut s = String::new();
+    let _ = write!(s, "<!doctype html><html><head><meta charset=\"utf-8\"><title>rquant soft report: {}</title>", report.tree_name);
+    let _ = write!(s, "<style>body{{font-family:system-ui,Arial,sans-serif;margin:24px;max-width:720px}}table{{border-collapse:collapse}}td,th{{border:1px solid #ddd;padding:4px 8px;text-align:right}}th{{text-align:left}}.warn{{background:#fff3cd;border:1px solid #ffe08a;padding:8px;border-radius:4px;margin:12px 0}}svg{{border:1px solid #eee;margin:8px 0}}</style></head><body>");
+    let _ = write!(s, "<h1>rquant soft report: {}</h1>", report.tree_name);
+    let _ = write!(s, "<table><tr><th>metric</th><th>value</th></tr>");
+    let _ = write!(s, "<tr><th>forward_window</th><td>{}</td></tr>", report.forward_window);
+    let _ = write!(s, "<tr><th>cost_bps</th><td>{:.1}</td></tr>", report.cost_bps);
+    let _ = write!(s, "<tr><th>decisions / scored</th><td>{} / {}</td></tr>", m.total_decisions, m.scored);
+    let _ = write!(s, "<tr><th>engaged n</th><td>{}</td></tr>", m.engaged.count);
+    let _ = write!(s, "<tr><th>engaged mean_net</th><td>{:.4}</td></tr>", m.engaged.mean_net);
+    let _ = write!(s, "<tr><th>engaged hit%</th><td>{:.1}</td></tr>", m.engaged.hit_rate * 100.0);
+    let _ = write!(s, "<tr><th>engaged t</th><td>{:.2}</td></tr>", m.engaged.t_stat);
+    let _ = write!(s, "<tr><th>buy&amp;hold</th><td>{:.4}</td></tr>", m.buy_and_hold);
+    let _ = write!(s, "</table>");
+    let _ = write!(s, "<div class=\"warn\">{}</div>", m.overlap_warning);
+    let cum: Vec<(f64, f64)> = series.points.iter().enumerate().map(|(i, p)| (i as f64, p.cum)).collect();
+    let _ = write!(s, "{}", line_chart(&cum, "累计期望收益（窗口重叠 → 信号质量曲线，非可交易净值）"));
+    let _ = write!(s, "{}", histogram_svg(&series.hist, "逐点期望净收益分布"));
+    if series.skipped > 0 {
+        let _ = write!(s, "<p>{} 点未计入曲线（未计分）</p>", series.skipped);
+    }
+    let _ = write!(s, "{}", bar_chart(avg_leaf, "各叶平均概率"));
+    let _ = write!(s, "</body></html>");
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,5 +198,36 @@ mod tests {
         assert!(a.contains("viz")); // tree_name
         assert!(a.contains("<svg"));
         assert!(a.contains(&report.metrics.overlap_warning));
+    }
+
+    #[test]
+    fn render_soft_html_is_self_contained() {
+        use crate::report::SoftReport;
+        use crate::backtest::soft::SoftMetrics;
+        use crate::backtest::metrics::signal_stat;
+        use crate::report::curve::{EquitySeries, Histogram, SeriesPoint};
+        use chrono::NaiveDate;
+        let soft = SoftMetrics {
+            total_decisions: 3, scored: 2,
+            engaged: signal_stat(&[0.1, 0.2]),
+            buy_and_hold: 0.05,
+            overlap_warning: "OVLAP".into(),
+        };
+        let report = SoftReport { tree_name: "softviz".into(), forward_window: 4, cost_bps: 10.0, soft };
+        let t = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap().and_hms_opt(9, 45, 0).unwrap();
+        let series = EquitySeries {
+            points: vec![SeriesPoint { t, net: 0.1, cum: 0.1 }, SeriesPoint { t, net: 0.2, cum: 0.3 }],
+            hist: Histogram { bins: vec![(0.0, 0.2, 2)] },
+            skipped: 0,
+        };
+        let avg = vec![("leaf_l".to_string(), 0.7), ("leaf_f".to_string(), 0.3)];
+        let a = render_soft_html(&report, &series, &avg);
+        let b = render_soft_html(&report, &series, &avg);
+        assert_eq!(a, b);
+        assert!(a.contains("<!doctype html>"));
+        assert!(a.contains("softviz"));
+        assert!(a.contains("<polyline"));
+        assert!(a.contains("<rect"));
+        assert!(a.contains("OVLAP"));
     }
 }
