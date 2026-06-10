@@ -26,7 +26,7 @@
 | 3 | 引用规则 | factor 只能引用 params 与**先定义**的 factor（天然无环）|
 | 4 | 实现机制 | 加载期 AST 内联替换（params→`Expr::Number`，factor→子树深拷贝）|
 | 5 | engaged 口径 | `engaged += p·w`（仓位加权参与度；w=1 退化不变）|
-| 6 | position_net 的 r | 仍按全局 `meta.forward_window` 取裸收益（混合 horizon 时为近似，文档注明）|
+| 6 | position_net 的 r | 按**分布内最大 leaf horizon** 取裸收益（最长腿口径；max_h 必属于已通过边界检查的 horizon 集合 → "必 Some"不变量保持；混合 horizon 净额本质是近似，文档注明）|
 | 7 | dow | chrono `number_from_monday`（1-7）|
 
 ## 3. 架构
