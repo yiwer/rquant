@@ -53,7 +53,7 @@ pub fn score_soft(
         }
         t1 |= fr.t1_executable;
     }
-    // 净仓位口径：只交易净额 E，成本计在 |E| 上（r=裸收益；逐腿循环已过边界检查，此处必 Some）
+    // 净仓位口径：只交易净额 E，成本计在 |E| 上（r=裸收益；Long 与逐腿循环用同一 i/fw 边界检查，故此处必 Some——若 forward_return 边界逻辑改为按 stance 区分，此假设需重审）
     let r = forward_return(primary, i, fw, Stance::Long, costs)?.gross;
     let position_net = if exposure == 0.0 {
         0.0

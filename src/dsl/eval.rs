@@ -83,8 +83,15 @@ pub fn eval(expr: &Expr, ctx: &Context) -> Result<Value> {
                 BinaryOp::Lt => Value::Bool(as_scalar(&lv)? < as_scalar(&rv)?),
                 BinaryOp::Ge => Value::Bool(as_scalar(&lv)? >= as_scalar(&rv)?),
                 BinaryOp::Le => Value::Bool(as_scalar(&lv)? <= as_scalar(&rv)?),
-                BinaryOp::Eq => Value::Bool(as_scalar(&lv)? == as_scalar(&rv)?),
-                BinaryOp::Ne => Value::Bool(as_scalar(&lv)? != as_scalar(&rv)?),
+                BinaryOp::Eq => {
+                    let (a, b) = (as_scalar(&lv)?, as_scalar(&rv)?);
+                    Value::Bool(!a.is_nan() && !b.is_nan() && a == b)
+                }
+                BinaryOp::Ne => {
+                    let (a, b) = (as_scalar(&lv)?, as_scalar(&rv)?);
+                    Value::Bool(!a.is_nan() && !b.is_nan() && a != b)
+                }
+
             })
         }
         Expr::Call(name, args) => eval_call(name, args, ctx),
@@ -107,8 +114,8 @@ fn resolve_series(name: &str, ctx: &Context) -> Result<Vec<f64>> {
 }
 
 /// Reduce a Value to a single f64.
-/// Series: take the last element; empty/warm-up series → NaN so comparisons are
-/// false and branches abstain (the intended "warm-up abstention" semantics).
+/// Series: take the last element; empty/warm-up series → NaN. All comparisons (including explicit ==/!=)
+/// return false on NaN → branches abstain during warm-up ("warm-up abstention" semantics).
 fn as_scalar(v: &Value) -> Result<f64> {
     match v {
         Value::Scalar(x) => Ok(*x),
@@ -309,5 +316,19 @@ mod tests {
         assert!((f("0 > 0") - 0.5).abs() < 1e-9);
         // 非布尔 → Err
         assert!(eval_fuzzy(&parse_str("close").unwrap(), &ctx, 0.02).is_err());
+    }
+
+    #[test]
+    fn nan_comparisons_abstain_including_ne() {
+        // 3 bars, sma(close,10) is NaN (warm-up) → ALL comparisons must be false (abstention)
+        let ctx = ctx_from_closes(&[1.0, 2.0, 3.0]);
+        let f = |src: &str| eval(&parse_str(src).unwrap(), &ctx).unwrap();
+        assert_eq!(f("sma(close,10) != 0"), Value::Bool(false)); // the bug: was true
+        assert_eq!(f("sma(close,10) == sma(close,10)"), Value::Bool(false));
+        assert_eq!(f("sma(close,10) > 0"), Value::Bool(false));
+        // normal values unaffected
+        assert_eq!(f("5 != 4"), Value::Bool(true));
+        assert_eq!(f("5 == 5"), Value::Bool(true));
+        assert_eq!(f("5 != 5"), Value::Bool(false));
     }
 }

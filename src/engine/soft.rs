@@ -14,7 +14,7 @@ pub struct SoftTrace {
 }
 
 /// 置信度加权软遍历：质量按多路边 Vec<(goto, weight)>（Σweight=1）沿 DAG 传播 → 叶子分布。
-/// 两阶段：①async 收边（每可达节点评一次，weight>0 才探索）②sync 记忆化求叶子分布。
+/// 两阶段：①async 收边（每可达节点评一次；仅当某子边 weight>0 才把该子节点压栈）②sync 记忆化求叶子分布。
 pub async fn traverse_soft(tree: &Tree, ctx: &Context, llm: &LlmEvaluator) -> Result<SoftTrace> {
     // 阶段一：收集 node -> Vec<(goto, weight)>（Σweight=1）
     let mut edges: HashMap<String, Vec<(String, f64)>> = HashMap::new();
