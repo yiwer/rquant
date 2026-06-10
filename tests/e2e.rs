@@ -188,6 +188,8 @@ async fn soft_mode_yields_positive_engaged_edge() {
         "uptrend + judge go(c=0.9) => positive expected net; got mean_net={}",
         m.engaged.mean_net
     );
+    assert!(m.position.count > 0, "uptrend long mass => nonzero exposure points");
+    assert!(m.position.mean_net > 0.0, "net-position metric should also be positive on uptrend");
     let content = std::fs::read_to_string(out_f.path()).unwrap();
     assert!(content.contains("engaged"));
 }

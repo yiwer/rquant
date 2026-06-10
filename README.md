@@ -63,6 +63,10 @@ cargo run --release -- backtest --tree examples/trend_tree.yaml \
 
 软模式也支持 `--traces <file>`：写出逐点 JSONL（每决策点 `{t, leaf_probs, expected_net}`，未计分点 `expected_net` 为 null），可用于离线分析软遍历的叶子分布（report 软曲线消费为后续）。
 
+软报告含两套口径：`engaged`（逐腿期望 `Σ p·net`，每腿各自计成本）与 `position`（净仓位：`E = Σ p·dir`，
+`position_net = E·裸收益 − rate·|E|`，多空抵消后只交易净额）。long/flat 树下二者数学等价；
+启用 short 且多空共存时 `position` 是更贴近实际执行的口径。
+
 ### 软量化谓词（`strength`）
 
 软模式下，量化分支可选 `strength`（标量 DSL 表达式，clamp[0,1]）表达"命中强度"。
