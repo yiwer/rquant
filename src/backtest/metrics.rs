@@ -5,7 +5,7 @@ use crate::tree::schema::Stance;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignalStat {
     pub count: usize,
     pub mean_net: f64,
