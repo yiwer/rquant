@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 /// 一元运算符。
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnaryOp {
@@ -51,4 +53,38 @@ pub enum Expr {
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
     /// 函数调用（如 `sma(close, 20)`、`sigmoid(x)`）。
     Call(String, Vec<Expr>),
+}
+
+/// 把表达式中的 Ident(name) 按 env 替换为对应子树（深拷贝）；params/factors 加载期内联用。
+pub fn substitute(expr: &Expr, env: &HashMap<String, Expr>) -> Expr {
+    match expr {
+        Expr::Ident(name) => env.get(name).cloned().unwrap_or_else(|| expr.clone()),
+        Expr::Number(_) => expr.clone(),
+        Expr::Unary(op, e) => Expr::Unary(op.clone(), Box::new(substitute(e, env))),
+        Expr::Binary(op, l, r) => {
+            Expr::Binary(op.clone(), Box::new(substitute(l, env)), Box::new(substitute(r, env)))
+        }
+        Expr::Call(name, args) => {
+            Expr::Call(name.clone(), args.iter().map(|a| substitute(a, env)).collect())
+        }
+        Expr::Index(e, k) => Expr::Index(Box::new(substitute(e, env)), *k),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn substitute_params_and_nested() {
+        use crate::dsl::parser::parse_str;
+        let mut env = HashMap::new();
+        env.insert("n".to_string(), Expr::Number(20.0));
+        let e = substitute(&parse_str("sma(close, n) > n").unwrap(), &env);
+        // n 全部替换为 20，close 保留
+        let rendered = format!("{e:?}");
+        assert!(!rendered.contains("Ident(\"n\")"));
+        assert!(rendered.contains("Ident(\"close\")"));
+        assert!(rendered.contains("Number(20.0)"));
+    }
 }

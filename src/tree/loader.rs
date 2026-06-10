@@ -1,9 +1,66 @@
-use crate::dsl::ast::Expr;
+use crate::dsl::ast::{substitute, Expr};
 use crate::dsl::parser::parse_str;
 use crate::tree::schema::{Meta, NodeSpec, Stance, Target, TreeSpec};
 use crate::{Error, Result};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+
+const RESERVED_IDENTS: [&str; 8] =
+    ["close", "open", "high", "low", "volume", "hour", "minute", "dow"];
+const RESERVED_FNS: [&str; 16] = [
+    "sma",
+    "ema",
+    "wma",
+    "rsi",
+    "atr",
+    "slope",
+    "highest",
+    "lowest",
+    "crossover",
+    "crossunder",
+    "macd_line",
+    "macd_signal",
+    "macd_hist",
+    "std",
+    "sigmoid",
+    "auto",
+];
+
+fn check_name(name: &str, env: &HashMap<String, Expr>) -> Result<()> {
+    if RESERVED_IDENTS.contains(&name) || RESERVED_FNS.contains(&name) {
+        return Err(Error::Tree(format!(
+            "name '{name}' shadows a built-in identifier/function"
+        )));
+    }
+    if env.contains_key(name) {
+        return Err(Error::Tree(format!(
+            "duplicate name '{name}' in params/factors"
+        )));
+    }
+    Ok(())
+}
+
+/// 替换后残余 Ident 必须是内置标识符或 ctx. 前缀（把"未定义名"左移到加载错）。
+fn check_no_unknown_idents(expr: &Expr, where_: &str) -> Result<()> {
+    match expr {
+        Expr::Ident(name) => {
+            if RESERVED_IDENTS.contains(&name.as_str()) || name.starts_with("ctx.") {
+                Ok(())
+            } else {
+                Err(Error::Tree(format!(
+                    "{where_}: unknown identifier '{name}'"
+                )))
+            }
+        }
+        Expr::Number(_) => Ok(()),
+        Expr::Unary(_, e) | Expr::Index(e, _) => check_no_unknown_idents(e, where_),
+        Expr::Binary(_, l, r) => {
+            check_no_unknown_idents(l, where_)?;
+            check_no_unknown_idents(r, where_)
+        }
+        Expr::Call(_, args) => args.iter().try_for_each(|a| check_no_unknown_idents(a, where_)),
+    }
+}
 
 /// 分支强度：显式标量表达式，或对 when 做模糊求值的 auto(scale)。
 /// `auto` 默认 scale=0.02；`auto(s)` 允许自定义正数 scale。
@@ -84,6 +141,27 @@ pub fn load_tree_str(src: &str) -> Result<Tree> {
     let spec: TreeSpec = serde_yaml::from_str(src)?;
     let stances: HashSet<Stance> = spec.meta.stances.iter().copied().collect();
 
+    // Build substitution environment: params first, then factors (document order).
+    let mut env: HashMap<String, Expr> = HashMap::new();
+    for (k, v) in &spec.params {
+        check_name(k, &env)?;
+        env.insert(k.clone(), Expr::Number(*v));
+    }
+    for (k, v) in &spec.factors {
+        let name = k
+            .as_str()
+            .ok_or_else(|| Error::Tree("factor name must be a string".into()))?;
+        let src_expr = v
+            .as_str()
+            .ok_or_else(|| Error::Tree(format!("factor '{name}' expr must be a string")))?;
+        check_name(name, &env)?;
+        let e = parse_str(src_expr)
+            .map_err(|e| Error::Tree(format!("factor '{name}': {e}")))?;
+        let e = substitute(&e, &env);
+        check_no_unknown_idents(&e, &format!("factor '{name}'"))?;
+        env.insert(name.to_string(), e);
+    }
+
     let mut leaves = HashMap::new();
     for (id, l) in &spec.leaves {
         if !stances.contains(&l.stance) {
@@ -104,10 +182,34 @@ pub fn load_tree_str(src: &str) -> Result<Tree> {
                     let expr = parse_str(&b.when).map_err(|e| {
                         Error::Tree(format!("node '{id}' branch '{}': {e}", b.label))
                     })?;
+                    let expr = substitute(&expr, &env);
+                    let where_when =
+                        format!("node '{id}' branch '{}'", b.label);
+                    check_no_unknown_idents(&expr, &where_when)?;
                     let strength = match &b.strength {
-                        Some(src) => Some(parse_strength(src).map_err(|e| {
-                            Error::Tree(format!("node '{id}' branch '{}' strength: {e}", b.label))
-                        })?),
+                        Some(s_src) => {
+                            let st = parse_strength(s_src).map_err(|e| {
+                                Error::Tree(format!(
+                                    "node '{id}' branch '{}' strength: {e}",
+                                    b.label
+                                ))
+                            })?;
+                            // Substitute and check Strength::Expr; Auto uses the
+                            // already-substituted `when` so needs no extra work.
+                            let st = match st {
+                                Strength::Expr(se) => {
+                                    let se = substitute(&se, &env);
+                                    let where_st = format!(
+                                        "node '{id}' branch '{}' strength",
+                                        b.label
+                                    );
+                                    check_no_unknown_idents(&se, &where_st)?;
+                                    Strength::Expr(se)
+                                }
+                                other => other,
+                            };
+                            Some(st)
+                        }
                         None => None,
                     };
                     compiled.push(Branch {
@@ -402,6 +504,56 @@ leaves:
         let err = load_tree_str(bad).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("unreachable"), "expected 'unreachable' in error message, got: {msg}");
+    }
+
+    #[test]
+    fn params_and_factors_inline_and_validate() {
+        let ok = r#"
+meta: { name: t, forward_window: 3, stances: [long, flat] }
+params: { th: 2.0 }
+factors:
+  mom: "close - th"
+  momp: "mom > 0"
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "momp and mom > th", goto: leaf_l, label: up } ]
+    default: { goto: leaf_f, label: flat }
+leaves:
+  leaf_l: { stance: long }
+  leaf_f: { stance: flat }
+"#;
+        assert!(load_tree_str(ok).is_ok());
+
+        // Forward reference: mom references momp which is defined after it → load error.
+        let bad_order = r#"
+meta: { name: t, forward_window: 3, stances: [long, flat] }
+params: { th: 2.0 }
+factors:
+  mom: "close - momp"
+  momp: "mom > 0"
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "momp and mom > th", goto: leaf_l, label: up } ]
+    default: { goto: leaf_f, label: flat }
+leaves:
+  leaf_l: { stance: long }
+  leaf_f: { stance: flat }
+"#;
+        assert!(load_tree_str(bad_order).is_err());
+
+        // Name clash with built-in function "sma" → load error.
+        assert!(load_tree_str(&ok.replace("mom:", "sma:")).is_err());
+
+        // Name clash with built-in identifier "close" → load error.
+        assert!(load_tree_str(&ok.replace("th: 2.0", "close: 2.0")).is_err());
+
+        // `when` referencing undefined name → load-time error (left-shift).
+        let unknown = ok.replace("momp and mom > th", "nope > 0");
+        assert!(load_tree_str(&unknown).is_err());
     }
 
     #[test]
