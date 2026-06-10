@@ -48,7 +48,7 @@ pub fn score_soft(
     Some(SoftScore { expected_net, engaged, t1_executable: t1 })
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SoftMetrics {
     pub total_decisions: usize,
     pub scored: usize,

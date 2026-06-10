@@ -70,7 +70,7 @@ pub fn print_summary(report: &Report) {
     println!("[warn] {}", m.overlap_warning);
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SoftReport {
     pub tree_name: String,
     pub forward_window: usize,
