@@ -21,6 +21,8 @@ use std::collections::BTreeMap;
 pub struct SoftScore {
     pub expected_net: f64,
     pub engaged: f64,
+    pub exposure: f64,
+    pub position_net: f64,
     pub t1_executable: bool,
 }
 
@@ -35,17 +37,30 @@ pub fn score_soft(
 ) -> Option<SoftScore> {
     let mut expected_net = 0.0;
     let mut engaged = 0.0;
+    let mut exposure = 0.0;
     let mut t1 = false;
     for (leaf_id, &p) in &soft.leaf_probs {
         let stance = tree.leaves.get(leaf_id)?.stance;
         let fr = forward_return(primary, i, fw, stance, costs)?;
         expected_net += p * fr.net;
+        exposure += p * match stance {
+            Stance::Long => 1.0,
+            Stance::Short => -1.0,
+            Stance::Flat => 0.0,
+        };
         if !matches!(stance, Stance::Flat) {
             engaged += p;
         }
         t1 |= fr.t1_executable;
     }
-    Some(SoftScore { expected_net, engaged, t1_executable: t1 })
+    // 净仓位口径：只交易净额 E，成本计在 |E| 上（r=裸收益；逐腿循环已过边界检查，此处必 Some）
+    let r = forward_return(primary, i, fw, Stance::Long, costs)?.gross;
+    let position_net = if exposure == 0.0 {
+        0.0
+    } else {
+        exposure * r - (costs.round_trip_bps / 10_000.0) * exposure.abs()
+    };
+    Some(SoftScore { expected_net, engaged, exposure, position_net, t1_executable: t1 })
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -53,6 +68,7 @@ pub struct SoftMetrics {
     pub total_decisions: usize,
     pub scored: usize,
     pub engaged: SignalStat,
+    pub position: SignalStat,
     pub buy_and_hold: f64,
     pub overlap_warning: String,
 }
@@ -71,10 +87,14 @@ pub fn soft_metrics(items: &[Option<SoftScore>], primary: &[Bar]) -> SoftMetrics
     let total = items.len();
     let mut scored = 0;
     let mut engaged_nets: Vec<f64> = Vec::new();
+    let mut position_nets: Vec<f64> = Vec::new();
     for s in items.iter().flatten() {
         scored += 1;
         if s.engaged > 0.0 {
             engaged_nets.push(s.expected_net);
+        }
+        if s.exposure.abs() > 0.0 {
+            position_nets.push(s.position_net);
         }
     }
     let buy_and_hold = if primary.len() >= 2 {
@@ -86,6 +106,7 @@ pub fn soft_metrics(items: &[Option<SoftScore>], primary: &[Bar]) -> SoftMetrics
         total_decisions: total,
         scored,
         engaged: signal_stat(&engaged_nets),
+        position: signal_stat(&position_nets),
         buy_and_hold,
         overlap_warning: "前瞻窗口重叠 → 样本自相关，t 值偏乐观，勿据此鼓吹显著性".into(),
     }
@@ -229,15 +250,88 @@ leaves:
     #[test]
     fn soft_metrics_aggregates_engaged() {
         let items = vec![
-            Some(SoftScore { expected_net: 0.04, engaged: 0.5, t1_executable: true }),
-            Some(SoftScore { expected_net: -0.02, engaged: 0.3, t1_executable: false }),
-            Some(SoftScore { expected_net: 0.0, engaged: 0.0, t1_executable: false }),
+            Some(SoftScore { expected_net: 0.04, engaged: 0.5, exposure: 0.5, position_net: 0.04, t1_executable: true }),
+            Some(SoftScore { expected_net: -0.02, engaged: 0.3, exposure: -0.3, position_net: -0.02, t1_executable: false }),
+            Some(SoftScore { expected_net: 0.0, engaged: 0.0, exposure: 0.0, position_net: 0.0, t1_executable: false }),
             None,
         ];
         let m = soft_metrics(&items, &[]);
         assert_eq!(m.total_decisions, 4);
         assert_eq!(m.scored, 3);
         assert_eq!(m.engaged.count, 2);
+        assert_eq!(m.position.count, 2); // 仅 |exposure|>0 两点
+    }
+
+    #[test]
+    fn position_equals_expected_for_long_flat() {
+        let tree = load_tree_str(TREE).unwrap();
+        let primary = vec![
+            bar("2024-01-02 14:45:00", 9.0, 9.5),
+            bar("2024-01-02 15:00:00", 10.0, 10.2),
+            bar("2024-01-03 09:45:00", 10.2, 11.0),
+        ];
+        let costs = CostModel { round_trip_bps: 10.0 };
+        let mut lp = BTreeMap::new();
+        lp.insert("leaf_l".to_string(), 0.5);
+        lp.insert("leaf_f".to_string(), 0.5);
+        let soft = SoftTrace { t: primary[0].time, leaf_probs: lp };
+        let s = score_soft(&soft, &tree, &primary, 0, 2, &costs).unwrap();
+        // long/flat 下净仓位 ≡ 逐腿期望（成本线性）
+        assert!((s.position_net - s.expected_net).abs() < 1e-12);
+        assert!((s.exposure - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn position_nets_out_hedged_legs() {
+        // 树要含 short：行内构造三叶树
+        const TREE_LS: &str = r#"
+meta: { name: t, forward_window: 2, stances: [long, flat, short] }
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "close > 0", goto: leaf_l, label: up } ]
+    default: { goto: leaf_f, label: flat }
+leaves:
+  leaf_l: { stance: long }
+  leaf_s: { stance: short }
+  leaf_f: { stance: flat }
+"#;
+        let tree = load_tree_str(TREE_LS).unwrap();
+        let primary = vec![
+            bar("2024-01-02 14:45:00", 9.0, 9.5),
+            bar("2024-01-02 15:00:00", 10.0, 10.2),
+            bar("2024-01-03 09:45:00", 10.2, 11.0),
+        ];
+        let costs = CostModel { round_trip_bps: 10.0 };
+        let mut lp = BTreeMap::new();
+        lp.insert("leaf_l".to_string(), 0.6);
+        lp.insert("leaf_s".to_string(), 0.4);
+        let soft = SoftTrace { t: primary[0].time, leaf_probs: lp };
+        let s = score_soft(&soft, &tree, &primary, 0, 2, &costs).unwrap();
+        // r = 11/10 - 1 = 0.1, rate = 0.001
+        // E = 0.6 - 0.4 = 0.2；position_net = 0.2*0.1 - 0.001*0.2 = 0.0198
+        assert!((s.exposure - 0.2).abs() < 1e-9);
+        assert!((s.position_net - 0.0198).abs() < 1e-9);
+        // 逐腿：0.6*(0.1-0.001) + 0.4*(-0.1-0.001) = 0.0594 - 0.0404 = 0.019
+        assert!((s.expected_net - 0.019).abs() < 1e-9);
+    }
+
+    #[test]
+    fn all_flat_has_zero_exposure_and_position() {
+        let tree = load_tree_str(TREE).unwrap();
+        let primary = vec![
+            bar("2024-01-02 14:45:00", 9.0, 9.5),
+            bar("2024-01-02 15:00:00", 10.0, 10.2),
+            bar("2024-01-03 09:45:00", 10.2, 11.0),
+        ];
+        let costs = CostModel { round_trip_bps: 10.0 };
+        let mut lp = BTreeMap::new();
+        lp.insert("leaf_f".to_string(), 1.0);
+        let soft = SoftTrace { t: primary[0].time, leaf_probs: lp };
+        let s = score_soft(&soft, &tree, &primary, 0, 2, &costs).unwrap();
+        assert_eq!(s.exposure, 0.0);
+        assert_eq!(s.position_net, 0.0);
     }
 
     #[test]

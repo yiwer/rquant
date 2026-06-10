@@ -140,6 +140,8 @@ pub fn render_soft_html(report: &SoftReport, series: &EquitySeries, avg_leaf: &[
     let _ = write!(s, "<tr><th>engaged mean_net</th><td>{:.4}</td></tr>", m.engaged.mean_net);
     let _ = write!(s, "<tr><th>engaged hit%</th><td>{:.1}</td></tr>", m.engaged.hit_rate * 100.0);
     let _ = write!(s, "<tr><th>engaged t</th><td>{:.2}</td></tr>", m.engaged.t_stat);
+    let _ = write!(s, "<tr><th>position n</th><td>{}</td></tr>", m.position.count);
+    let _ = write!(s, "<tr><th>position mean_net</th><td>{:.4}</td></tr>", m.position.mean_net);
     let _ = write!(s, "<tr><th>buy&amp;hold</th><td>{:.4}</td></tr>", m.buy_and_hold);
     let _ = write!(s, "</table>");
     let _ = write!(s, "<div class=\"warn\">{}</div>", m.overlap_warning);
@@ -210,6 +212,7 @@ mod tests {
         let soft = SoftMetrics {
             total_decisions: 3, scored: 2,
             engaged: signal_stat(&[0.1, 0.2]),
+            position: signal_stat(&[0.1, 0.2]),
             buy_and_hold: 0.05,
             overlap_warning: "OVLAP".into(),
         };

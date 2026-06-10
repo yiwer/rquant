@@ -93,6 +93,10 @@ pub fn print_soft_summary(report: &SoftReport) {
         "engaged : n={} mean_expected_net={:.4} hit={:.1}% t={:.2}",
         m.engaged.count, m.engaged.mean_net, m.engaged.hit_rate * 100.0, m.engaged.t_stat
     );
+    println!(
+        "position: n={} mean_net={:.4} hit={:.1}% t={:.2}",
+        m.position.count, m.position.mean_net, m.position.hit_rate * 100.0, m.position.t_stat
+    );
     println!("buy&hold={:.4}", m.buy_and_hold);
     println!("[warn] {}", m.overlap_warning);
 }
