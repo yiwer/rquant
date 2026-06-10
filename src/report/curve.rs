@@ -110,6 +110,39 @@ pub fn avg_leaf_probs(records: &[SoftStepRecord]) -> Vec<(String, f64)> {
         .collect()
 }
 
+/// 堆叠面积图数据：names = 全体叶名（字典序），rows[i][k] = 第 i 点前 k+1 层的累计概率边界。
+pub struct StackSeries {
+    pub names: Vec<String>,
+    pub rows: Vec<Vec<f64>>,
+}
+
+pub fn leaf_prob_stack(records: &[SoftStepRecord]) -> StackSeries {
+    if records.is_empty() {
+        return StackSeries { names: vec![], rows: vec![] };
+    }
+    let mut nameset: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for r in records {
+        for k in r.leaf_probs.keys() {
+            nameset.insert(k.clone());
+        }
+    }
+    let names: Vec<String> = nameset.into_iter().collect();
+    let rows = records
+        .iter()
+        .map(|r| {
+            let mut cum = 0.0;
+            names
+                .iter()
+                .map(|n| {
+                    cum += r.leaf_probs.get(n).copied().unwrap_or(0.0);
+                    cum
+                })
+                .collect()
+        })
+        .collect();
+    StackSeries { names, rows }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,5 +224,29 @@ mod tests {
         assert_eq!(avg[1].0, "b"); assert!((avg[1].1 - 0.25).abs() < 1e-9);
         let sum: f64 = avg.iter().map(|(_, v)| v).sum();
         assert!((sum - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn leaf_prob_stack_cumulative_boundaries() {
+        use crate::backtest::soft::SoftStepRecord;
+        use std::collections::BTreeMap;
+        let t = NaiveDateTime::parse_from_str("2024-01-02 09:45:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let mut lp1 = BTreeMap::new(); lp1.insert("b".to_string(), 0.7); lp1.insert("a".to_string(), 0.3);
+        let mut lp2 = BTreeMap::new(); lp2.insert("a".to_string(), 1.0);
+        let recs = vec![
+            SoftStepRecord { t, leaf_probs: lp1, expected_net: Some(0.0) },
+            SoftStepRecord { t, leaf_probs: lp2, expected_net: None },
+        ];
+        let st = leaf_prob_stack(&recs);
+        assert_eq!(st.names, vec!["a".to_string(), "b".to_string()]); // 字典序
+        assert_eq!(st.rows.len(), 2);
+        // 点1: a 累计 0.3，b 累计 1.0；点2: a 累计 1.0，b 累计 1.0
+        assert!((st.rows[0][0] - 0.3).abs() < 1e-9);
+        assert!((st.rows[0][1] - 1.0).abs() < 1e-9);
+        assert!((st.rows[1][0] - 1.0).abs() < 1e-9);
+        assert!((st.rows[1][1] - 1.0).abs() < 1e-9);
+        // 空 → 空
+        let empty = leaf_prob_stack(&[]);
+        assert!(empty.names.is_empty() && empty.rows.is_empty());
     }
 }
