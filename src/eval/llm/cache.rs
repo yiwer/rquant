@@ -87,4 +87,32 @@ mod tests {
         cache.put(&key, &c).unwrap();
         assert_eq!(cache.get(&key).unwrap(), c);
     }
+
+    // M6 — concurrent cache put: 8 threads each writing the same key with distinct reasons
+    #[test]
+    fn concurrent_put_same_key_survives() {
+        use std::sync::Arc;
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Arc::new(FileCache::new(dir.path()));
+        let key = FileCache::key("m", "u", "sys", "n", "concurrent");
+        let mut handles = Vec::new();
+        for i in 0..8 {
+            let cache = Arc::clone(&cache);
+            let key = key.clone();
+            handles.push(std::thread::spawn(move || {
+                let c = Cached {
+                    probs: BTreeMap::from([("go".to_string(), i as f64 * 0.1)]),
+                    reason: format!("reason_{i}"),
+                    model: "m".into(),
+                };
+                cache.put(&key, &c).unwrap();
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        // After all writes, the key must be present and parseable (any one value wins)
+        let got = cache.get(&key).expect("key must exist after concurrent puts");
+        assert!(got.reason.starts_with("reason_"), "reason should be one of the written values, got: {}", got.reason);
+    }
 }

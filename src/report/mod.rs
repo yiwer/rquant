@@ -256,6 +256,27 @@ mod tests {
         assert!(back.walk_forward.is_none());
     }
 
+    // M7 — report JSON determinism: writing the same Report twice gives byte-identical output
+    #[test]
+    fn write_report_is_deterministic() {
+        let metrics = compute_metrics(&[], &[]);
+        let report = Report {
+            tree_name: "det".into(),
+            forward_window: 4,
+            cost_bps: 10.0,
+            metrics,
+            gaps: GapReport::default(),
+            walk_forward: None,
+        };
+        let f1 = tempfile::NamedTempFile::new().unwrap();
+        let f2 = tempfile::NamedTempFile::new().unwrap();
+        write_report(&report, f1.path()).unwrap();
+        write_report(&report, f2.path()).unwrap();
+        let s1 = std::fs::read_to_string(f1.path()).unwrap();
+        let s2 = std::fs::read_to_string(f2.path()).unwrap();
+        assert_eq!(s1, s2, "write_report output must be byte-identical on repeated calls");
+    }
+
     #[test]
     fn soft_traces_jsonl_one_line_per_record() {
         use crate::backtest::soft::SoftStepRecord;

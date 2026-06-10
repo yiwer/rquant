@@ -4,6 +4,11 @@ use crate::eval::llm::{LlmConfig, LlmEvaluator};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+/// Returns true iff all three LLM credentials are non-empty.
+pub(crate) fn llm_enabled(model: &str, base_url: &str, api_key: &str) -> bool {
+    !model.is_empty() && !base_url.is_empty() && !api_key.is_empty()
+}
+
 #[derive(Parser)]
 #[command(name = "rquant", about = "Fuzzy decision-tree A-share backtester")]
 struct Cli {
@@ -96,7 +101,7 @@ pub async fn main() -> anyhow::Result<()> {
             holidays, folds, soft, llm_model, llm_base_url, llm_cache_dir,
         } => {
             let api_key = std::env::var("RQUANT_LLM_API_KEY").unwrap_or_default();
-            let llm = if !llm_model.is_empty() && !llm_base_url.is_empty() && !api_key.is_empty() {
+            let llm = if llm_enabled(&llm_model, &llm_base_url, &api_key) {
                 let cfg = LlmConfig {
                     base_url: llm_base_url,
                     api_key,
@@ -136,4 +141,29 @@ pub async fn main() -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::llm_enabled;
+
+    #[test]
+    fn llm_enabled_all_set_is_true() {
+        assert!(llm_enabled("gpt-4", "https://api.openai.com", "sk-abc"));
+    }
+
+    #[test]
+    fn llm_enabled_empty_model_is_false() {
+        assert!(!llm_enabled("", "https://api.openai.com", "sk-abc"));
+    }
+
+    #[test]
+    fn llm_enabled_empty_base_url_is_false() {
+        assert!(!llm_enabled("gpt-4", "", "sk-abc"));
+    }
+
+    #[test]
+    fn llm_enabled_empty_api_key_is_false() {
+        assert!(!llm_enabled("gpt-4", "https://api.openai.com", ""));
+    }
 }

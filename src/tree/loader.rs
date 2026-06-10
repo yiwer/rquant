@@ -324,6 +324,59 @@ leaves:
         assert!(load_tree_str(src).is_err());
     }
 
+    // H2 — root not a node (root points at a leaf)
+    #[test]
+    fn rejects_root_that_is_a_leaf() {
+        let bad = r#"
+meta: { name: t, forward_window: 3, stances: [long, flat] }
+root: leaf_l
+nodes:
+  a:
+    type: quant
+    branches:
+      - when: "close > 1"
+        goto: leaf_l
+        label: up
+    default: { goto: leaf_f, label: none }
+leaves:
+  leaf_l: { stance: long }
+  leaf_f: { stance: flat }
+"#;
+        let err = load_tree_str(bad).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("root"), "expected 'root' in error message, got: {msg}");
+    }
+
+    // H3 — unreachable node
+    #[test]
+    fn rejects_unreachable_node() {
+        let bad = r#"
+meta: { name: t, forward_window: 3, stances: [long, flat] }
+root: a
+nodes:
+  a:
+    type: quant
+    branches:
+      - when: "close > 1"
+        goto: leaf_l
+        label: up
+    default: { goto: leaf_f, label: none }
+  orphan:
+    type: quant
+    branches:
+      - when: "close > 1"
+        goto: leaf_l
+        label: up
+    default: { goto: leaf_f, label: none }
+leaves:
+  leaf_l: { stance: long }
+  leaf_f: { stance: flat }
+"#;
+        let err = load_tree_str(bad).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("unreachable"), "expected 'unreachable' in error message, got: {msg}");
+    }
+
     #[test]
     fn parses_auto_strength_variants() {
         let yaml = |s: &str| format!(r#"

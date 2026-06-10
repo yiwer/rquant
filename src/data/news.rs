@@ -67,4 +67,11 @@ mod tests {
         let f = tmp("time,score,headline\n2024-01-02 10:00:00,0.1,a\n2024-01-02 09:00:00,0.1,b\n");
         assert!(read_news_csv(f.path()).is_err());
     }
+
+    // M4 — bad time in news CSV
+    #[test]
+    fn rejects_bad_time_in_news_csv() {
+        let f = tmp("time,score,headline\nnot-a-date,0.5,headline text\n");
+        assert!(read_news_csv(f.path()).is_err());
+    }
 }

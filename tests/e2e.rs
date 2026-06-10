@@ -76,7 +76,7 @@ async fn end_to_end_uptrend_yields_positive_long_edge() {
         window: 100,
         concurrency: 4,
         holidays_path: None,
-        folds: 0,
+        folds: 3,
     };
 
     let report = run(&cfg, &LlmEvaluator::Disabled).await.unwrap();
@@ -98,6 +98,9 @@ async fn end_to_end_uptrend_yields_positive_long_edge() {
     let content = std::fs::read_to_string(out_f.path()).unwrap();
     assert!(content.contains("e2e"));
     assert!(report.gaps.is_empty(), "synthetic data should have no gaps");
+    // H6 — walk-forward folds shape check
+    let wf = report.walk_forward.as_ref().unwrap();
+    assert_eq!(wf.folds.len(), 3, "folds=3 should produce 3 fold entries");
 }
 
 fn llm_tree_yaml() -> String {
@@ -373,4 +376,86 @@ async fn soft_quant_strength_engages() {
     let m = &report.soft;
     assert!(m.scored > 0, "should score points");
     assert!(m.engaged.count > 0, "strength-weighted quant should put mass on long");
+}
+
+// H5 — render_report_files soft end-to-end
+#[tokio::test]
+async fn render_report_files_soft_end_to_end() {
+    // Use the same fixture as soft_traces_written_when_path_given (LLM tree, uptrend data, Stub ev)
+    let tree_f = write_file(&llm_tree_yaml(), ".yaml");
+    let primary_f = write_file(&gen_primary_csv(), ".csv");
+    let context_f = write_file(&gen_context_csv(), ".csv");
+    let out_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+    let traces_f = tempfile::Builder::new().suffix(".jsonl").tempfile().unwrap();
+
+    let cfg = BacktestConfig {
+        tree_path: tree_f.path().to_path_buf(),
+        primary_path: primary_f.path().to_path_buf(),
+        context_path: context_f.path().to_path_buf(),
+        news_path: None,
+        out_path: out_f.path().to_path_buf(),
+        traces_path: Some(traces_f.path().to_path_buf()),
+        cost_bps: 10.0,
+        warmup: 5,
+        window: 100,
+        concurrency: 4,
+        holidays_path: None,
+        folds: 0,
+    };
+
+    let ev = LlmEvaluator::Stub(StubLlm {
+        answers: HashMap::from([("judge".to_string(), "go".to_string())]),
+    });
+
+    let _report = rquant::backtest::soft::run_soft(&cfg, &ev).await.unwrap();
+
+    let html_f = tempfile::Builder::new().suffix(".html").tempfile().unwrap();
+    rquant::report::render_report_files(
+        out_f.path(),
+        html_f.path(),
+        Some(traces_f.path()),
+        None,
+        true,
+    )
+    .unwrap();
+
+    let html = std::fs::read_to_string(html_f.path()).unwrap();
+    assert!(!html.is_empty(), "HTML output must be non-empty");
+    assert!(html.contains("<polyline"), "HTML must contain a polyline chart element");
+    assert!(html.contains("<polygon"), "HTML must contain a polygon stacked area element");
+}
+
+// M5 — holidays integration: detect_gaps + read_holidays
+// Jan 2 and Jan 4 only (Jan 3 missing), holidays file contains 2024-01-03
+// → report.gaps.missing_trading_days should be empty
+#[tokio::test]
+async fn holidays_suppress_missing_day_in_gaps() {
+    use std::io::Write;
+    // Build data: Jan 2 and Jan 4 only (Jan 3 intentionally absent)
+    let csv = "time,open,high,low,close,volume\n\
+        2024-01-02 09:45:00,10.0,10.0,10.0,10.0,1\n\
+        2024-01-02 10:00:00,10.1,10.1,10.1,10.1,1\n\
+        2024-01-04 09:45:00,10.2,10.2,10.2,10.2,1\n\
+        2024-01-04 10:00:00,10.3,10.3,10.3,10.3,1\n";
+
+    let mut holidays_f = tempfile::Builder::new().suffix(".txt").tempfile().unwrap();
+    writeln!(holidays_f, "2024-01-03").unwrap();
+    holidays_f.flush().unwrap();
+
+    let holidays = rquant::data::calendar::read_holidays(holidays_f.path()).unwrap();
+    let cal = rquant::data::calendar::AShareCalendar::new(holidays);
+
+    let bars: Vec<rquant::data::bar::Bar> = {
+        let mut tmp_f = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+        write!(tmp_f, "{csv}").unwrap();
+        tmp_f.flush().unwrap();
+        rquant::data::reader::read_bars_csv(tmp_f.path()).unwrap()
+    };
+
+    let gaps = rquant::backtest::gaps::detect_gaps(&bars, &cal);
+    assert!(
+        gaps.missing_trading_days.is_empty(),
+        "2024-01-03 is a declared holiday, must not appear as missing; got: {:?}",
+        gaps.missing_trading_days
+    );
 }

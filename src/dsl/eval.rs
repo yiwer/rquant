@@ -331,4 +331,57 @@ mod tests {
         assert_eq!(f("5 == 5"), Value::Bool(true));
         assert_eq!(f("5 != 5"), Value::Bool(false));
     }
+
+    // H1 — Ge/Le hard eval
+    #[test]
+    fn ge_le_hard_eval() {
+        // close >= 3 true on closes [1,2,3]: last close is 3, 3>=3 true
+        let ctx = ctx_from_closes(&[1.0, 2.0, 3.0]);
+        let f = |src: &str| eval(&parse_str(src).unwrap(), &ctx).unwrap();
+        assert_eq!(f("close >= 3"), Value::Bool(true));
+        assert_eq!(f("5 <= 5"), Value::Bool(true));
+        assert_eq!(f("2 >= 3"), Value::Bool(false));
+    }
+
+    // M2 — Ge/Le fuzzy eval
+    #[test]
+    fn ge_le_fuzzy_eval() {
+        let ctx = ctx_from_closes(&[1.0]);
+        let f = |src: &str| eval_fuzzy(&parse_str(src).unwrap(), &ctx, 0.02).unwrap();
+        // 10 >= 10: equal → 0.5
+        assert!((f("10 >= 10") - 0.5).abs() < 1e-9);
+        // 9.8 <= 10: lhs < rhs → >0.5
+        assert!(f("9.8 <= 10") > 0.5);
+    }
+
+    // M1 — eval dispatch: ema, rsi, atr, crossover/crossunder
+    #[test]
+    fn indicator_dispatch_no_error() {
+        let ctx = ctx_from_closes(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+        // ema(close,3) > 0 → Bool
+        assert_eq!(
+            eval(&parse_str("ema(close,3) > 0").unwrap(), &ctx).unwrap(),
+            Value::Bool(true)
+        );
+        // rsi(close,3) >= 0 → Bool
+        assert_eq!(
+            eval(&parse_str("rsi(close,3) >= 0").unwrap(), &ctx).unwrap(),
+            Value::Bool(true)
+        );
+        // atr(2) >= 0 → Bool
+        assert_eq!(
+            eval(&parse_str("atr(2) >= 0").unwrap(), &ctx).unwrap(),
+            Value::Bool(true)
+        );
+        // crossover or not crossover → always Bool
+        match eval(&parse_str("crossover(close, sma(close,3)) or not crossover(close, sma(close,3))").unwrap(), &ctx).unwrap() {
+            Value::Bool(_) => {}
+            other => panic!("expected Bool, got {other:?}"),
+        }
+        // crossunder as a boolean combined with or: Bool or Bool → Bool
+        match eval(&parse_str("crossunder(close, sma(close,3)) or not crossunder(close, sma(close,3))").unwrap(), &ctx).unwrap() {
+            Value::Bool(_) => {}
+            other => panic!("expected Bool from crossunder or, got {other:?}"),
+        }
+    }
 }

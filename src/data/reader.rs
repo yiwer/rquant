@@ -108,6 +108,16 @@ mod tests {
         assert!(read_bars_csv(f.path()).is_err());
     }
 
+    // M3 — bad time in bars CSV
+    #[test]
+    fn rejects_bad_time_in_bars_csv() {
+        let f = write_csv(
+            "time,open,high,low,close,volume\n\
+             not-a-date,10.0,10.5,9.8,10.2,1000\n",
+        );
+        assert!(read_bars_csv(f.path()).is_err());
+    }
+
     #[test]
     fn write_then_read_roundtrips() {
         use crate::data::bar::Bar;
