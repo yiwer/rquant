@@ -2,6 +2,7 @@ use crate::dsl::ast::{BinaryOp, Expr, UnaryOp};
 use crate::features::context::Context;
 use crate::features::indicators;
 use crate::{Error, Result};
+use chrono::{Datelike, Timelike};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -52,7 +53,12 @@ fn fuzzy_cmp(l: &Expr, r: &Expr, ctx: &Context, scale: f64, sign: f64) -> Result
 pub fn eval(expr: &Expr, ctx: &Context) -> Result<Value> {
     match expr {
         Expr::Number(n) => Ok(Value::Scalar(*n)),
-        Expr::Ident(name) => Ok(Value::Series(resolve_series(name, ctx)?)),
+        Expr::Ident(name) => match name.as_str() {
+            "hour" => Ok(Value::Scalar(f64::from(ctx.t.hour()))),
+            "minute" => Ok(Value::Scalar(f64::from(ctx.t.minute()))),
+            "dow" => Ok(Value::Scalar(f64::from(ctx.t.weekday().number_from_monday()))),
+            _ => Ok(Value::Series(resolve_series(name, ctx)?)),
+        },
         Expr::Index(inner, k) => {
             let s = as_series(&eval(inner, ctx)?)?;
             let len = s.len() as i64;
@@ -383,5 +389,17 @@ mod tests {
             Value::Bool(_) => {}
             other => panic!("expected Bool from crossunder or, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn time_identifiers_hour_minute_dow() {
+        let ctx = ctx_from_closes(&[1.0]); // t = 2024-01-02 09:45（周二）
+        let f = |src: &str| eval(&parse_str(src).unwrap(), &ctx).unwrap();
+        assert_eq!(f("hour == 9"), Value::Bool(true));
+        assert_eq!(f("minute == 45"), Value::Bool(true));
+        assert_eq!(f("dow == 2"), Value::Bool(true));
+        assert_eq!(f("dow <= 5"), Value::Bool(true));
+        // fuzzy 路径可用（比较经 as_scalar）
+        assert!((eval_fuzzy(&parse_str("hour >= 9").unwrap(), &ctx, 0.02).unwrap() - 0.5).abs() < 0.5);
     }
 }
