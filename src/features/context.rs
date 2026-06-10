@@ -4,6 +4,21 @@ use crate::data::news::{NewsRecord, NewsView};
 use chrono::NaiveDateTime;
 use std::collections::BTreeMap;
 
+/// --sim 模式注入的持仓状态；打分模式恒为默认（pos=0/entry=NaN/…）。
+#[derive(Debug, Clone)]
+pub struct SimState {
+    pub pos: f64,
+    pub entry_price: f64,
+    pub bars_held: usize,
+    pub unreal_pnl: f64,
+}
+
+impl Default for SimState {
+    fn default() -> Self {
+        Self { pos: 0.0, entry_price: f64::NAN, bars_held: 0, unreal_pnl: 0.0 }
+    }
+}
+
 /// 已按 time≤t 截断的 aux 列视图。
 #[derive(Debug, Clone)]
 pub struct AuxView {
@@ -18,6 +33,7 @@ pub struct Context {
     pub context: Window,
     pub news: Option<NewsView>,
     pub aux: BTreeMap<String, AuxView>,
+    pub sim: SimState,
 }
 
 fn trailing_visible(bars: &[Bar], t: NaiveDateTime, window: usize) -> Vec<Bar> {
@@ -58,6 +74,7 @@ pub fn build_context(
         context: Window { bars: trailing_visible(context, t, window) },
         news: news_view,
         aux: aux_views,
+        sim: SimState::default(),
     }
 }
 

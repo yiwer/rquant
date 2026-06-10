@@ -5,8 +5,8 @@ use crate::{Error, Result};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-const RESERVED_IDENTS: [&str; 8] =
-    ["close", "open", "high", "low", "volume", "hour", "minute", "dow"];
+const RESERVED_IDENTS: [&str; 12] =
+    ["close", "open", "high", "low", "volume", "hour", "minute", "dow", "pos", "entry_price", "bars_held", "unreal_pnl"];
 const RESERVED_FNS: [&str; 16] = [
     "sma",
     "ema",
@@ -662,5 +662,26 @@ leaves:
         assert!(matches!(get("0.7"), Some(Strength::Expr(_))));
         assert!(load_tree_str(&yaml("auto(x)")).is_err());
         assert!(load_tree_str(&yaml("auto(-1)")).is_err());
+    }
+
+    #[test]
+    fn sim_identifiers_are_reserved() {
+        let yaml = |param: &str| format!(r#"
+meta: {{ name: t, forward_window: 3, stances: [long, flat] }}
+params: {{ {param}: 1.0 }}
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ {{ when: "close > 0", goto: leaf_l, label: up }} ]
+    default: {{ goto: leaf_f, label: flat }}
+leaves:
+  leaf_l: {{ stance: long }}
+  leaf_f: {{ stance: flat }}
+"#);
+        assert!(load_tree_str(&yaml("pos")).is_err());
+        assert!(load_tree_str(&yaml("entry_price")).is_err());
+        assert!(load_tree_str(&yaml("bars_held")).is_err());
+        assert!(load_tree_str(&yaml("unreal_pnl")).is_err());
     }
 }

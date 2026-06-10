@@ -57,6 +57,10 @@ pub fn eval(expr: &Expr, ctx: &Context) -> Result<Value> {
             "hour" => Ok(Value::Scalar(f64::from(ctx.t.hour()))),
             "minute" => Ok(Value::Scalar(f64::from(ctx.t.minute()))),
             "dow" => Ok(Value::Scalar(f64::from(ctx.t.weekday().number_from_monday()))),
+            "pos" => Ok(Value::Scalar(ctx.sim.pos)),
+            "entry_price" => Ok(Value::Scalar(ctx.sim.entry_price)),
+            "bars_held" => Ok(Value::Scalar(ctx.sim.bars_held as f64)),
+            "unreal_pnl" => Ok(Value::Scalar(ctx.sim.unreal_pnl)),
             _ => Ok(Value::Series(resolve_series(name, ctx)?)),
         },
         Expr::Index(inner, k) => {
@@ -254,7 +258,7 @@ mod tests {
             })
             .collect();
         let t = bars.last().unwrap().time;
-        Context { t, primary: Window { bars: bars.clone() }, context: Window { bars }, news: None, aux: std::collections::BTreeMap::new() }
+        Context { t, primary: Window { bars: bars.clone() }, context: Window { bars }, news: None, aux: std::collections::BTreeMap::new(), sim: crate::features::context::SimState::default() }
     }
 
     #[test]
@@ -432,5 +436,20 @@ mod tests {
         assert_eq!(f("dow <= 5"), Value::Bool(true));
         // fuzzy 路径可用（比较经 as_scalar）
         assert!((eval_fuzzy(&parse_str("hour >= 9").unwrap(), &ctx, 0.02).unwrap() - 0.5).abs() < 0.5);
+    }
+
+    #[test]
+    fn sim_state_identifiers() {
+        let mut ctx = ctx_from_closes(&[1.0]);
+        let f = |src: &str, c: &Context| eval(&parse_str(src).unwrap(), c).unwrap();
+        // 默认（非 sim）：pos=0、bars_held=0、unreal=0；entry_price=NaN → 比较弃权
+        assert_eq!(f("pos == 0", &ctx), Value::Bool(true));
+        assert_eq!(f("bars_held == 0", &ctx), Value::Bool(true));
+        assert_eq!(f("unreal_pnl == 0", &ctx), Value::Bool(true));
+        assert_eq!(f("entry_price > 0", &ctx), Value::Bool(false)); // NaN 弃权
+        // 注入后可见
+        ctx.sim = crate::features::context::SimState { pos: 0.5, entry_price: 10.0, bars_held: 3, unreal_pnl: -0.02 };
+        assert_eq!(f("pos > 0 and bars_held >= 3", &ctx), Value::Bool(true));
+        assert_eq!(f("unreal_pnl < -0.01 and entry_price == 10", &ctx), Value::Bool(true));
     }
 }
