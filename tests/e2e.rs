@@ -175,7 +175,7 @@ async fn soft_mode_yields_positive_engaged_edge() {
         window: 100,
         concurrency: 4,
         holidays_path: None,
-        folds: 0,
+        folds: 3,
     };
 
     let ev = LlmEvaluator::Stub(StubLlm {
@@ -195,6 +195,10 @@ async fn soft_mode_yields_positive_engaged_edge() {
     assert!(m.position.mean_net > 0.0, "net-position metric should also be positive on uptrend");
     let content = std::fs::read_to_string(out_f.path()).unwrap();
     assert!(content.contains("engaged"));
+    let wf = report.walk_forward.as_ref().expect("folds=3 should produce walk_forward");
+    assert_eq!(wf.folds.len(), 3);
+    assert!(wf.worst_mean_net > 0.0, "uptrend: every non-empty fold should be positive");
+    assert!(wf.positive_folds >= 1);
 }
 
 #[tokio::test]

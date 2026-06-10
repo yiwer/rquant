@@ -156,6 +156,16 @@ pub fn render_html(report: &Report, series: Option<&EquitySeries>) -> String {
     let _ = write!(s, "{}", bar_chart(&by_leaf, "各叶子平均净收益"));
     let node: Vec<(String, f64)> = m.node_label_counts.iter().map(|(k, c)| (k.clone(), *c as f64)).collect();
     let _ = write!(s, "{}", bar_chart(&node, "节点命中计数"));
+    if let Some(wf) = &report.walk_forward {
+        let items: Vec<(String, f64)> = wf
+            .folds
+            .iter()
+            .enumerate()
+            .map(|(i, f)| (format!("f{}", i + 1), f.stat.mean_net))
+            .collect();
+        let _ = write!(s, "{}", bar_chart(&items, "walk-forward 各折 mean_net"));
+        let _ = write!(s, "<p>walk-forward: positive {}/{}, worst mean {:.4}</p>", wf.positive_folds, wf.folds.len(), wf.worst_mean_net);
+    }
     let _ = write!(s, "</body></html>");
     s
 }
@@ -189,6 +199,16 @@ pub fn render_soft_html(report: &SoftReport, series: &EquitySeries, avg_leaf: &[
     let _ = write!(s, "{}", bar_chart(avg_leaf, "各叶平均概率"));
     if let Some(st) = stack {
         let _ = write!(s, "{}", stacked_area_chart(st, "叶子概率随时间（堆叠，Σ=1）"));
+    }
+    if let Some(wf) = &report.walk_forward {
+        let items: Vec<(String, f64)> = wf
+            .folds
+            .iter()
+            .enumerate()
+            .map(|(i, f)| (format!("f{}", i + 1), f.stat.mean_net))
+            .collect();
+        let _ = write!(s, "{}", bar_chart(&items, "walk-forward 各折 mean_net"));
+        let _ = write!(s, "<p>walk-forward: positive {}/{}, worst mean {:.4}</p>", wf.positive_folds, wf.folds.len(), wf.worst_mean_net);
     }
     let _ = write!(s, "</body></html>");
     s
@@ -254,8 +274,20 @@ mod tests {
             buy_and_hold: 0.05,
             overlap_warning: "OVLAP".into(),
         };
-        let report = SoftReport { tree_name: "softviz".into(), forward_window: 4, cost_bps: 10.0, soft, walk_forward: None };
         let t = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap().and_hms_opt(9, 45, 0).unwrap();
+        let report = SoftReport {
+            tree_name: "softviz".into(),
+            forward_window: 4,
+            cost_bps: 10.0,
+            soft,
+            walk_forward: Some(crate::backtest::walkforward::WalkForward {
+                folds: vec![crate::backtest::walkforward::FoldMetrics {
+                    from: t, to: t, stat: signal_stat(&[0.1]), buy_and_hold: 0.0,
+                }],
+                positive_folds: 1,
+                worst_mean_net: 0.1,
+            }),
+        };
         let series = EquitySeries {
             points: vec![SeriesPoint { t, net: 0.1, cum: 0.1 }, SeriesPoint { t, net: 0.2, cum: 0.3 }],
             hist: Histogram { bins: vec![(0.0, 0.2, 2)] },
@@ -275,6 +307,7 @@ mod tests {
         assert!(a.contains("<rect"));
         assert!(a.contains("OVLAP"));
         assert!(a.contains("<polygon"));
+        assert!(a.contains("walk-forward"));
     }
 
     #[test]

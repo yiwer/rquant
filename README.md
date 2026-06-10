@@ -87,6 +87,13 @@ branches:
 比较 → `sigmoid((lhs−rhs)/(scale·max(|lhs|,|rhs|)))`，`and`=min、`or`=max、`not`=1−x。
 适合**量纲相近的双边比较**（如 `close > sma(close,20)`）；对 `x > 0` 型比较相对尺度会饱和趋硬——这类请写显式 `strength` 公式。
 
+### Walk-forward（`--folds K`）
+
+`--folds 3` 把决策点按时间等分 3 折，逐折输出 n/mean/hit/buy&hold 与汇总（positive 折数、最差折均值），
+HTML 报告附各折 mean_net 条形图——回答"edge 是全程稳定还是一段行情撞的"。
+注意：这是**固定树的时间稳定性分析**（树无参数寻优，决策无状态，一次回测分桶即得），
+不是含样本内参数优化的完整 WFO；前瞻窗口跨折边界未裁剪（与全局重叠警告同口径）。
+
 ## 取数（新浪 fetcher）
 
 从新浪财经拉 A股 K 线到本地 CSV（再喂给 backtest）：
