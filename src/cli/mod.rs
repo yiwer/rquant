@@ -64,7 +64,8 @@ enum Cmd {
         #[arg(long, default_value_t = 1023)]
         datalen: u32,
         /// Override the Sina endpoint base URL
-        #[arg(long, default_value = "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php")]
+        // 2026-06 实测：money.finance.sina.com.cn 该服务回 "Service not valid"；quotes.sina.cn 可用
+        #[arg(long, default_value = "https://quotes.sina.cn/cn/api/json_v2.php")]
         base_url: String,
     },
     /// Render a report.json (+ optional traces/primary) into a self-contained HTML report
