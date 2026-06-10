@@ -31,16 +31,8 @@ pub async fn traverse_soft(tree: &Tree, ctx: &Context, llm: &LlmEvaluator) -> Re
             Node::Quant { branches, default } => quant_branch_dist(branches, default, ctx)?,
             Node::Llm { inputs, prompt, labels, default } => {
                 let ln = LlmNode { inputs, prompt, labels, default };
-                let d = llm.eval_llm(&id, &ln, ctx).await?;
-                let c = d.confidence;
-                let mut v: Vec<(String, f64)> = Vec::new();
-                if c > 0.0 {
-                    v.push((d.goto.clone(), c));
-                }
-                if 1.0 - c > 0.0 {
-                    v.push((default.clone(), 1.0 - c));
-                }
-                v
+                let (dist, _rationale) = llm.eval_llm_dist(&id, &ln, ctx).await?;
+                dist
             }
         };
         for (g, w) in &dist {
@@ -210,5 +202,32 @@ leaves:
         let st = traverse_soft(&tree, &ctx(&[1.0, 2.0, 3.0, 4.0, 5.0]), &LlmEvaluator::Disabled).await.unwrap();
         assert!((st.leaf_probs["leaf_l"] - 0.7).abs() < 1e-9);
         assert!((st.leaf_probs["leaf_f"] - 0.3).abs() < 1e-9);
+    }
+
+    const LLM3_TREE: &str = r#"
+meta: { name: t, forward_window: 3, stances: [long, flat] }
+root: a
+nodes:
+  a:
+    type: llm
+    prompt: "x"
+    labels: { up: leaf_x, dn: leaf_y }
+    default: leaf_f
+leaves:
+  leaf_x: { stance: long }
+  leaf_y: { stance: flat }
+  leaf_f: { stance: flat }
+"#;
+
+    #[tokio::test]
+    async fn llm_multi_label_distribution_splits_three_ways() {
+        let tree = load_tree_str(LLM3_TREE).unwrap();
+        let ev = LlmEvaluator::Stub(StubLlm { answers: HashMap::from([("a".to_string(), "up:0.5,dn:0.3".to_string())]) });
+        let st = traverse_soft(&tree, &ctx(&[1.0, 2.0, 3.0]), &ev).await.unwrap();
+        assert!((st.leaf_probs["leaf_x"] - 0.5).abs() < 1e-9);
+        assert!((st.leaf_probs["leaf_y"] - 0.3).abs() < 1e-9);
+        assert!((st.leaf_probs["leaf_f"] - 0.2).abs() < 1e-9);
+        let sum: f64 = st.leaf_probs.values().sum();
+        assert!((sum - 1.0).abs() < 1e-9);
     }
 }
