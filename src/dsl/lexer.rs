@@ -107,4 +107,13 @@ mod tests {
         assert_eq!(toks[4], Token::RBracket);
         assert_eq!(toks[5], Token::Lt);
     }
+
+    #[test]
+    fn multi_dot_ident_is_single_token() {
+        // aux.idx.v must be one Ident, not split at the second dot
+        let toks = tokenize("aux.idx.v > 0").unwrap();
+        assert_eq!(toks[0], Token::Ident("aux.idx.v".to_string()));
+        assert_eq!(toks[1], Token::Gt);
+        assert_eq!(toks[2], Token::Number(0.0));
+    }
 }

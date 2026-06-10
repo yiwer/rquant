@@ -45,12 +45,17 @@ fn check_no_unknown_idents(expr: &Expr, where_: &str) -> Result<()> {
     match expr {
         Expr::Ident(name) => {
             if RESERVED_IDENTS.contains(&name.as_str()) || name.starts_with("ctx.") {
-                Ok(())
-            } else {
-                Err(Error::Tree(format!(
-                    "{where_}: unknown identifier '{name}'"
-                )))
+                return Ok(());
             }
+            if let Some(rest) = name.strip_prefix("aux.") {
+                return match rest.split_once('.') {
+                    Some((t, c)) if !t.is_empty() && !c.is_empty() && !c.contains('.') => Ok(()),
+                    _ => Err(Error::Tree(format!("{where_}: aux identifier must be aux.<table>.<column>, got '{name}'"))),
+                };
+            }
+            Err(Error::Tree(format!(
+                "{where_}: unknown identifier '{name}'"
+            )))
         }
         Expr::Number(_) => Ok(()),
         Expr::Unary(_, e) | Expr::Index(e, _) => check_no_unknown_idents(e, where_),
@@ -611,6 +616,24 @@ leaves:
     fn loads_factor_tree_example() {
         let src = include_str!("../../examples/factor_tree.yaml");
         assert!(load_tree_str(src).is_ok(), "examples/factor_tree.yaml must load without error");
+    }
+
+    #[test]
+    fn aux_identifier_format_validated_at_load() {
+        let yaml = |when: &str| format!(r#"
+meta: {{ name: t, forward_window: 3, stances: [long, flat] }}
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ {{ when: "{when}", goto: leaf_l, label: up }} ]
+    default: {{ goto: leaf_f, label: flat }}
+leaves:
+  leaf_l: {{ stance: long }}
+  leaf_f: {{ stance: flat }}
+"#);
+        assert!(load_tree_str(&yaml("aux.idx.close > 0")).is_ok());
+        assert!(load_tree_str(&yaml("aux.idx > 0")).is_err());
     }
 
     #[test]

@@ -105,6 +105,19 @@ pub fn eval(expr: &Expr, ctx: &Context) -> Result<Value> {
 }
 
 fn resolve_series(name: &str, ctx: &Context) -> Result<Vec<f64>> {
+    if let Some(rest) = name.strip_prefix("aux.") {
+        let (table, column) = rest
+            .split_once('.')
+            .ok_or_else(|| Error::Eval(format!("aux identifier must be aux.<table>.<column>: '{name}'")))?;
+        let view = ctx.aux.get(table).ok_or_else(|| {
+            Error::Eval(format!("aux table '{table}' not mounted (use --aux {table}=path.csv)"))
+        })?;
+        return view
+            .cols
+            .get(column)
+            .cloned()
+            .ok_or_else(|| Error::Eval(format!("aux table '{table}' has no column '{column}'")));
+    }
     let (win, field) = match name.strip_prefix("ctx.") {
         Some(f) => (&ctx.context, f),
         None => (&ctx.primary, name),
@@ -389,6 +402,24 @@ mod tests {
             Value::Bool(_) => {}
             other => panic!("expected Bool from crossunder or, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn aux_identifier_resolves_and_gates() {
+        let mut ctx = ctx_from_closes(&[1.0, 2.0, 3.0]);
+        ctx.aux.insert("idx".to_string(), crate::features::context::AuxView {
+            cols: std::collections::BTreeMap::from([("v".to_string(), vec![10.0, 20.0])]),
+        });
+        let f = |src: &str, c: &Context| eval(&parse_str(src).unwrap(), c).unwrap();
+        // 归约取 last
+        assert_eq!(f("aux.idx.v == 20", &ctx), Value::Bool(true));
+        assert_eq!(f("aux.idx.v[-1] == 10", &ctx), Value::Bool(true));
+        // 缺列/缺表 → Err
+        assert!(eval(&parse_str("aux.idx.nope > 0").unwrap(), &ctx).is_err());
+        assert!(eval(&parse_str("aux.none.v > 0").unwrap(), &ctx).is_err());
+        // 空截断 → NaN → 比较 false（弃权）
+        ctx.aux.get_mut("idx").unwrap().cols.insert("v".to_string(), vec![]);
+        assert_eq!(f("aux.idx.v > 0", &ctx), Value::Bool(false));
     }
 
     #[test]
