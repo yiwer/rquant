@@ -50,6 +50,9 @@ enum Cmd {
         /// Soft/probabilistic traversal: propagate confidence-weighted leaf distribution
         #[arg(long, default_value_t = false)]
         soft: bool,
+        /// Position-state simulation mode (sequential equity; composable with --soft)
+        #[arg(long, default_value_t = false)]
+        sim: bool,
         #[arg(long, default_value = "")]
         llm_model: String,
         #[arg(long, default_value = "")]
@@ -101,7 +104,7 @@ pub async fn main() -> anyhow::Result<()> {
     match cli.cmd {
         Cmd::Backtest {
             tree, primary, context, news, out, traces, cost_bps, warmup, window, concurrency,
-            holidays, folds, soft, llm_model, llm_base_url, llm_cache_dir, aux,
+            holidays, folds, soft, sim, llm_model, llm_base_url, llm_cache_dir, aux,
         } => {
             let api_key = std::env::var("RQUANT_LLM_API_KEY").unwrap_or_default();
             let llm = if llm_enabled(&llm_model, &llm_base_url, &api_key) {
@@ -133,7 +136,13 @@ pub async fn main() -> anyhow::Result<()> {
                 out_path: out, traces_path: traces, cost_bps, warmup, window, concurrency,
                 holidays_path: holidays, folds, aux_paths,
             };
-            if soft {
+            if sim {
+                if folds >= 2 {
+                    eprintln!("[rquant] note: --folds is ignored in --sim mode");
+                }
+                let report = crate::backtest::sim::run_sim(&cfg, &llm, soft).await?;
+                crate::backtest::sim::print_sim_summary(&report);
+            } else if soft {
                 let report = crate::backtest::soft::run_soft(&cfg, &llm).await?;
                 crate::report::print_soft_summary(&report);
             } else {

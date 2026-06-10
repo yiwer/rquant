@@ -1,4 +1,5 @@
 use rquant::backtest::runner::{run, BacktestConfig};
+use rquant::backtest::sim::run_sim;
 use rquant::eval::llm::{LlmEvaluator, StubLlm};
 use std::collections::HashMap;
 use std::io::Write;
@@ -626,5 +627,127 @@ leaves:
         m.active.count > 0,
         "primary outperforms aux => long branch should fire; active.count={}",
         m.active.count
+    );
+}
+
+// E4 T5 — sim_full_chain: enter/exit/hold tree with pos conditions through run_sim (hard and soft)
+// Tree: pos==0 and close>0 → long; pos>0 and bars_held>=8 → flat; pos>0 → long; default flat
+// gen_primary_csv produces 40 bars (5 days × 8 bars/day), steadily uptrending from 10.0 to 13.9.
+// warmup=5 → loop from bar5 to bar38 → 34 decision steps.
+// bars_held>=8 fires after at least 8 held bars, yielding ≥1 round trip.
+#[tokio::test]
+async fn sim_full_chain() {
+    const SIM_TREE: &str = r#"
+meta: { name: sim_e2e, forward_window: 1, stances: [long, flat] }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - when: "pos == 0 and close > 0"
+        goto: leaf_long
+        label: enter
+      - when: "pos > 0 and bars_held >= 8"
+        goto: leaf_flat
+        label: exit
+      - when: "pos > 0"
+        goto: leaf_long
+        label: hold
+    default: { goto: leaf_flat, label: idle }
+leaves:
+  leaf_long: { stance: long }
+  leaf_flat: { stance: flat }
+"#;
+
+    let tree_f = write_file(SIM_TREE, ".yaml");
+    let primary_f = write_file(&gen_primary_csv(), ".csv");
+    let context_f = write_file(&gen_context_csv(), ".csv");
+    let out_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+    let out_soft_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+
+    let base_cfg = BacktestConfig {
+        tree_path: tree_f.path().to_path_buf(),
+        primary_path: primary_f.path().to_path_buf(),
+        context_path: context_f.path().to_path_buf(),
+        news_path: None,
+        out_path: out_f.path().to_path_buf(),
+        traces_path: None,
+        cost_bps: 10.0,
+        warmup: 5,
+        window: 100,
+        concurrency: 4,
+        holidays_path: None,
+        folds: 0,
+        aux_paths: vec![],
+    };
+
+    // Hard mode
+    let report = run_sim(&base_cfg, &LlmEvaluator::Disabled, false)
+        .await
+        .expect("run_sim hard should succeed");
+    assert!(
+        report.total_return.is_finite(),
+        "total_return must be finite, got {}",
+        report.total_return
+    );
+    assert!(
+        report.n_round_trips >= 1,
+        "uptrend + bars_held>=8 exit should yield >=1 round trip, got {}",
+        report.n_round_trips
+    );
+    // Verify the JSON output was written
+    let json_content = std::fs::read_to_string(out_f.path()).unwrap();
+    assert!(
+        json_content.contains("sim_e2e"),
+        "output JSON should contain tree name"
+    );
+
+    // Soft mode: same tree, should complete without error and produce finite result
+    let soft_cfg = BacktestConfig {
+        out_path: out_soft_f.path().to_path_buf(),
+        ..base_cfg
+    };
+    let soft_report = run_sim(&soft_cfg, &LlmEvaluator::Disabled, true)
+        .await
+        .expect("run_sim soft should succeed");
+    assert!(
+        soft_report.total_return.is_finite(),
+        "soft total_return must be finite, got {}",
+        soft_report.total_return
+    );
+}
+
+// E4 T5 — sim_legacy_tree_compat: legacy quant tree without pos conditions runs through --sim
+// without panic; naive rebalancing semantics (always long when above SMA) → Ok result.
+#[tokio::test]
+async fn sim_legacy_tree_compat() {
+    let tree_f = write_file(&tree_yaml(), ".yaml");
+    let primary_f = write_file(&gen_primary_csv(), ".csv");
+    let context_f = write_file(&gen_context_csv(), ".csv");
+    let out_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+
+    let cfg = BacktestConfig {
+        tree_path: tree_f.path().to_path_buf(),
+        primary_path: primary_f.path().to_path_buf(),
+        context_path: context_f.path().to_path_buf(),
+        news_path: None,
+        out_path: out_f.path().to_path_buf(),
+        traces_path: None,
+        cost_bps: 10.0,
+        warmup: 5,
+        window: 100,
+        concurrency: 4,
+        holidays_path: None,
+        folds: 0,
+        aux_paths: vec![],
+    };
+
+    // Legacy tree (no pos conditions) through run_sim must not panic and return Ok
+    let report = run_sim(&cfg, &LlmEvaluator::Disabled, false)
+        .await
+        .expect("sim on legacy tree should not panic");
+    assert!(
+        report.total_return.is_finite(),
+        "legacy tree sim total_return must be finite"
     );
 }
