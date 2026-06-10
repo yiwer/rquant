@@ -99,3 +99,6 @@ cargo run --release -- report --report report.json --out report.html \
 - 含累计前瞻收益曲线、逐点净收益直方图、各叶子平均净收益条形、节点命中条形、headline 表。
 - `--traces`/`--primary` 二者都给才画时间序列（可视化器用 `forward_return` 重算逐点 net）；只给 `--report` 则仅画聚合图。
 - 累计曲线因前瞻窗口重叠是**信号质量曲线、非可交易净值**（HTML 内有标注）。
+
+软模式报告：`rquant report --soft --report soft_report.json --traces soft_traces.jsonl --out soft.html`
+渲染累计期望收益曲线、expected_net 直方图、各叶平均概率条形、headline。软模式**不需 `--primary`**（expected_net 已在 traces 里）。

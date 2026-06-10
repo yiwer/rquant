@@ -271,6 +271,48 @@ async fn report_html_renders_with_curve() {
     assert!(html.contains(&rep.metrics.overlap_warning));
 }
 
+#[tokio::test]
+async fn soft_report_html_renders() {
+    let tree_f = write_file(&llm_tree_yaml(), ".yaml");
+    let primary_f = write_file(&gen_primary_csv(), ".csv");
+    let context_f = write_file(&gen_context_csv(), ".csv");
+    let out_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+    let traces_f = tempfile::Builder::new().suffix(".jsonl").tempfile().unwrap();
+
+    let cfg = BacktestConfig {
+        tree_path: tree_f.path().to_path_buf(),
+        primary_path: primary_f.path().to_path_buf(),
+        context_path: context_f.path().to_path_buf(),
+        news_path: None,
+        out_path: out_f.path().to_path_buf(),
+        traces_path: Some(traces_f.path().to_path_buf()),
+        cost_bps: 10.0,
+        warmup: 5,
+        window: 100,
+        concurrency: 4,
+        holidays_path: None,
+    };
+
+    let ev = LlmEvaluator::Stub(StubLlm {
+        answers: HashMap::from([("judge".to_string(), "go".to_string())]),
+    });
+
+    let report = rquant::backtest::soft::run_soft(&cfg, &ev).await.unwrap();
+    let recs: Vec<rquant::backtest::soft::SoftStepRecord> = std::fs::read_to_string(traces_f.path())
+        .unwrap()
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let series = rquant::report::curve::derive_soft_series(&recs);
+    let avg = rquant::report::curve::avg_leaf_probs(&recs);
+    let html = rquant::report::viz::render_soft_html(&report, &series, &avg);
+    assert!(html.contains("<!doctype html>"));
+    assert!(html.contains("<polyline"));
+    assert!(html.contains(&report.soft.overlap_warning));
+    assert!(!series.points.is_empty());
+}
+
 fn strength_tree_yaml() -> String {
     r#"
 meta: { name: strength_demo, forward_window: 4, stances: [long, flat] }

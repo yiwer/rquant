@@ -77,6 +77,9 @@ enum Cmd {
         traces: Option<PathBuf>,
         #[arg(long)]
         primary: Option<PathBuf>,
+        /// Render a soft-mode report (soft_report.json + soft_traces.jsonl); no --primary needed
+        #[arg(long, default_value_t = false)]
+        soft: bool,
     },
 }
 
@@ -124,29 +127,57 @@ pub async fn main() -> anyhow::Result<()> {
             crate::data::reader::write_bars_csv(&bars, &out)?;
             println!("wrote {} bars to {}", bars.len(), out.display());
         }
-        Cmd::Report { report, out, traces, primary } => {
-            let json = std::fs::read_to_string(&report)?;
-            let rep: crate::report::Report = serde_json::from_str(&json)?;
-            let series = match (&traces, &primary) {
-                (Some(tp), Some(pp)) => {
-                    let content = std::fs::read_to_string(tp)?;
-                    let mut tr = Vec::new();
-                    for line in content.lines().filter(|l| !l.trim().is_empty()) {
-                        tr.push(serde_json::from_str::<crate::engine::trace::Trace>(line)?);
+        Cmd::Report { report, out, traces, primary, soft } => {
+            if soft {
+                let rep: crate::report::SoftReport = serde_json::from_str(&std::fs::read_to_string(&report)?)?;
+                if primary.is_some() {
+                    eprintln!("[rquant] --primary ignored in --soft report (expected_net is in traces)");
+                }
+                let (series, avg) = match &traces {
+                    Some(tp) => {
+                        let content = std::fs::read_to_string(tp)?;
+                        let mut recs = Vec::new();
+                        for line in content.lines().filter(|l| !l.trim().is_empty()) {
+                            recs.push(serde_json::from_str::<crate::backtest::soft::SoftStepRecord>(line)?);
+                        }
+                        (crate::report::curve::derive_soft_series(&recs), crate::report::curve::avg_leaf_probs(&recs))
                     }
-                    let bars = crate::data::reader::read_bars_csv(pp)?;
-                    let costs = crate::backtest::costs::CostModel { round_trip_bps: rep.cost_bps };
-                    Some(crate::report::curve::derive_series(&tr, &bars, rep.forward_window, &costs))
-                }
-                (None, None) => None,
-                _ => {
-                    eprintln!("[rquant] --traces and --primary must be given together to draw the curve; rendering aggregates only");
-                    None
-                }
-            };
-            let html = crate::report::viz::render_html(&rep, series.as_ref());
-            std::fs::write(&out, html)?;
-            println!("wrote HTML report to {}", out.display());
+                    None => (
+                        crate::report::curve::EquitySeries {
+                            points: vec![],
+                            hist: crate::report::curve::Histogram { bins: vec![] },
+                            skipped: 0,
+                        },
+                        vec![],
+                    ),
+                };
+                let html = crate::report::viz::render_soft_html(&rep, &series, &avg);
+                std::fs::write(&out, html)?;
+                println!("wrote soft HTML report to {}", out.display());
+            } else {
+                let json = std::fs::read_to_string(&report)?;
+                let rep: crate::report::Report = serde_json::from_str(&json)?;
+                let series = match (&traces, &primary) {
+                    (Some(tp), Some(pp)) => {
+                        let content = std::fs::read_to_string(tp)?;
+                        let mut tr = Vec::new();
+                        for line in content.lines().filter(|l| !l.trim().is_empty()) {
+                            tr.push(serde_json::from_str::<crate::engine::trace::Trace>(line)?);
+                        }
+                        let bars = crate::data::reader::read_bars_csv(pp)?;
+                        let costs = crate::backtest::costs::CostModel { round_trip_bps: rep.cost_bps };
+                        Some(crate::report::curve::derive_series(&tr, &bars, rep.forward_window, &costs))
+                    }
+                    (None, None) => None,
+                    _ => {
+                        eprintln!("[rquant] --traces and --primary must be given together to draw the curve; rendering aggregates only");
+                        None
+                    }
+                };
+                let html = crate::report::viz::render_html(&rep, series.as_ref());
+                std::fs::write(&out, html)?;
+                println!("wrote HTML report to {}", out.display());
+            }
         }
     }
     Ok(())
