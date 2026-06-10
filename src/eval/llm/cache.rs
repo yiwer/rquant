@@ -1,12 +1,12 @@
 use crate::Result;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Cached {
-    pub label: String,
-    pub confidence: f64,
+    pub probs: BTreeMap<String, f64>,
     pub reason: String,
     pub model: String,
 }
@@ -82,7 +82,7 @@ mod tests {
         let cache = FileCache::new(dir.path());
         let key = FileCache::key("m", "u", "sys", "n", "r");
         assert!(cache.get(&key).is_none());
-        let c = Cached { label: "go".into(), confidence: 0.7, reason: "ok".into(), model: "m".into() };
+        let c = Cached { probs: BTreeMap::from([("go".to_string(), 0.7)]), reason: "ok".into(), model: "m".into() };
         cache.put(&key, &c).unwrap();
         assert_eq!(cache.get(&key).unwrap(), c);
     }

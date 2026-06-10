@@ -36,13 +36,6 @@ pub fn default_decision(node: &LlmNode<'_>, why: &str) -> Decision {
     }
 }
 
-/// 把 LLM 给的 label 映射成 Decision（goto = node.labels[label]，缺失则回退 default）。
-pub fn decision_from_answer(node: &LlmNode<'_>, label: &str, confidence: f64, reason: &str, cached: bool) -> Decision {
-    let goto = node.labels.get(label).cloned().unwrap_or_else(|| node.default.to_string());
-    let tag = if cached { "LLM(cached)" } else { "LLM" };
-    Decision { goto, label: label.to_string(), confidence, rationale: format!("{tag}: {reason}") }
-}
-
 /// label 分布 → goto 分布：label→labels[label]（未知→default）、同 goto 合并、残余补 default。
 /// 前置：probs 已清洗（Σ ≤ 1）。产出 Σ = 1，按 goto 名排序（确定性）。
 pub fn dist_to_gotos(node: &LlmNode<'_>, probs: &BTreeMap<String, f64>) -> Vec<(String, f64)> {
@@ -77,16 +70,37 @@ pub fn decision_from_dist(node: &LlmNode<'_>, probs: &BTreeMap<String, f64>, rat
     Decision { goto, label, confidence, rationale: rationale.to_string() }
 }
 
-/// 测试用 stub：node_id -> label（"ERROR" 模拟失败 → 回退 default）。
+/// 测试用 stub：node_id -> 答案。普通 label → {label: 0.9}（残余 0.1 → default）；
+/// "ERROR"/未命中 → 回退 default；"a:0.5,b:0.3" 语法 → 显式多 label 分布。
 pub struct StubLlm {
     pub answers: HashMap<String, String>,
 }
 impl StubLlm {
+    fn probs_for(&self, node_id: &str, node: &LlmNode<'_>) -> Option<BTreeMap<String, f64>> {
+        let ans = self.answers.get(node_id)?;
+        if ans == "ERROR" {
+            return None;
+        }
+        if ans.contains(':') {
+            let mut m = BTreeMap::new();
+            for pair in ans.split(',') {
+                let (l, p) = pair.split_once(':')?;
+                if node.labels.contains_key(l) {
+                    m.insert(l.to_string(), p.trim().parse::<f64>().ok()?);
+                }
+            }
+            return if m.is_empty() { None } else { Some(m) };
+        }
+        if node.labels.contains_key(ans) {
+            Some(BTreeMap::from([(ans.clone(), 0.9)]))
+        } else {
+            None
+        }
+    }
     pub fn eval(&self, node_id: &str, node: &LlmNode<'_>, _ctx: &Context) -> Result<Decision> {
-        match self.answers.get(node_id) {
-            Some(l) if l == "ERROR" => Ok(default_decision(node, "LLM stub error")),
-            Some(l) if node.labels.contains_key(l) => Ok(decision_from_answer(node, l, 0.9, "stub", false)),
-            _ => Ok(default_decision(node, "LLM stub no-answer")),
+        match self.probs_for(node_id, node) {
+            Some(p) => Ok(decision_from_dist(node, &p, "LLM: stub")),
+            None => Ok(default_decision(node, "LLM stub error/no-answer")),
         }
     }
 }
@@ -103,6 +117,18 @@ impl LlmEvaluator {
             LlmEvaluator::OpenAi(c) => c.eval(node_id, node, ctx).await,
             LlmEvaluator::Disabled => Ok(default_decision(node, "LLM disabled")),
             LlmEvaluator::Stub(s) => s.eval(node_id, node, ctx),
+        }
+    }
+
+    /// 统一分布出口：goto 分布（Σ=1）+ rationale。
+    pub async fn eval_llm_dist(&self, node_id: &str, node: &LlmNode<'_>, ctx: &Context) -> Result<(Vec<(String, f64)>, String)> {
+        match self {
+            LlmEvaluator::OpenAi(c) => c.eval_dist(node_id, node, ctx).await,
+            LlmEvaluator::Disabled => Ok((vec![(node.default.to_string(), 1.0)], "LLM disabled: default".into())),
+            LlmEvaluator::Stub(s) => Ok(match s.probs_for(node_id, node) {
+                Some(p) => (dist_to_gotos(node, &p), "stub".into()),
+                None => (vec![(node.default.to_string(), 1.0)], "stub default".into()),
+            }),
         }
     }
 }

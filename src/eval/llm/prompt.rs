@@ -2,8 +2,9 @@ use crate::eval::llm::LlmNode;
 use crate::features::context::Context;
 use crate::{Error, Result};
 use serde::Deserialize;
+use std::collections::BTreeMap;
 
-pub const SYSTEM_PROMPT: &str = "You are a financial-analysis classifier. Choose exactly one label from the allowed list. Respond ONLY with a JSON object: {\"label\": <one of the allowed labels>, \"confidence\": <number 0..1>, \"reason\": <short string>}.";
+pub const SYSTEM_PROMPT: &str = "You are a financial-analysis classifier. Assign a probability between 0 and 1 to EVERY allowed label; probabilities should sum to 1. Respond ONLY with a JSON object: {\"probs\": {<label>: <number 0..1>, ...}, \"reason\": <short string>}.";
 
 /// 渲染 user message。必须确定性（它是缓存键的一部分）：label 排序、价格定宽、inputs 按声明顺序。
 pub fn render_user(node: &LlmNode<'_>, ctx: &Context) -> String {
@@ -46,21 +47,35 @@ pub fn render_user(node: &LlmNode<'_>, ctx: &Context) -> String {
 
 #[derive(Debug, Deserialize)]
 pub struct LlmAnswer {
-    pub label: String,
-    #[serde(default)]
-    pub confidence: f64,
+    pub probs: BTreeMap<String, f64>,
     #[serde(default)]
     pub reason: String,
 }
 
-/// 解析 LLM content（应为 JSON），并校验 label ∈ allowed。
+/// 解析+清洗：丢未知 label；p NaN→0、clamp[0,1]、0 丢弃；Σ>1 整体归一；清洗后空/全零 → Err。
+/// 产出 Σ ≤ 1（残余由消费方归 default）。
 pub fn parse_answer(content: &str, allowed: &std::collections::HashMap<String, String>) -> Result<LlmAnswer> {
-    let ans: LlmAnswer = serde_json::from_str(content.trim())
+    let raw: LlmAnswer = serde_json::from_str(content.trim())
         .map_err(|e| Error::Eval(format!("LLM output not valid JSON: {e}")))?;
-    if !allowed.contains_key(&ans.label) {
-        return Err(Error::Eval(format!("LLM label '{}' not in allowed labels", ans.label)));
+    let mut probs: BTreeMap<String, f64> = BTreeMap::new();
+    for (k, v) in raw.probs {
+        if allowed.contains_key(&k) {
+            let p = if v.is_nan() { 0.0 } else { v.clamp(0.0, 1.0) };
+            if p > 0.0 {
+                probs.insert(k, p);
+            }
+        }
     }
-    Ok(ans)
+    let sum: f64 = probs.values().sum();
+    if probs.is_empty() || sum <= 0.0 {
+        return Err(Error::Eval("LLM probs empty or all-zero after cleaning".into()));
+    }
+    if sum > 1.0 {
+        for v in probs.values_mut() {
+            *v /= sum;
+        }
+    }
+    Ok(LlmAnswer { probs, reason: raw.reason })
 }
 
 #[cfg(test)]
@@ -106,11 +121,21 @@ mod tests {
     }
 
     #[test]
-    fn parse_answer_valid_invalid_and_label_check() {
-        let allowed = HashMap::from([("go".to_string(), "x".to_string())]);
-        let ok = parse_answer("{\"label\":\"go\",\"confidence\":0.8,\"reason\":\"r\"}", &allowed).unwrap();
-        assert_eq!(ok.label, "go");
+    fn parse_answer_cleans_normalizes_and_rejects() {
+        let allowed = HashMap::from([("go".to_string(), "x".to_string()), ("hold".to_string(), "y".to_string())]);
+        // 合法分布，Σ≤1 保留
+        let ok = parse_answer("{\"probs\":{\"go\":0.6,\"hold\":0.3},\"reason\":\"r\"}", &allowed).unwrap();
+        assert!((ok.probs["go"] - 0.6).abs() < 1e-9);
+        assert!((ok.probs["hold"] - 0.3).abs() < 1e-9);
+        // Σ>1 → 归一
+        let n = parse_answer("{\"probs\":{\"go\":0.8,\"hold\":0.4}}", &allowed).unwrap();
+        let sum: f64 = n.probs.values().sum();
+        assert!((sum - 1.0).abs() < 1e-9);
+        // 未知 label 丢弃（剩余合法）
+        let u = parse_answer("{\"probs\":{\"go\":0.5,\"nope\":0.5}}", &allowed).unwrap();
+        assert_eq!(u.probs.len(), 1);
+        // 非 JSON / 全未知 → Err
         assert!(parse_answer("not json", &allowed).is_err());
-        assert!(parse_answer("{\"label\":\"nope\"}", &allowed).is_err());
+        assert!(parse_answer("{\"probs\":{\"nope\":1.0}}", &allowed).is_err());
     }
 }
