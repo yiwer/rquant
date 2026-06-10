@@ -102,11 +102,12 @@ async fn eval_point_soft(
     fw: usize,
     window: usize,
     llm: &LlmEvaluator,
-) -> Result<Option<SoftScore>> {
+) -> Result<(SoftTrace, Option<SoftScore>)> {
     let t = primary[i].time;
     let ctx = build_context(primary, context, news, t, window);
     let soft = traverse_soft(tree, &ctx, llm).await?;
-    Ok(score_soft(&soft, tree, primary, i, fw, costs))
+    let score = score_soft(&soft, tree, primary, i, fw, costs);
+    Ok((soft, score))
 }
 
 /// 软遍历回测：与 `run` 同构，每点用 traverse_soft + score_soft，聚合成 SoftReport。
@@ -134,20 +135,29 @@ pub async fn run_soft(cfg: &BacktestConfig, llm: &LlmEvaluator) -> Result<SoftRe
             eprintln!("  note: no --holidays provided; A-share holidays may be reported as missing trading days");
         }
     }
-    if cfg.traces_path.is_some() {
-        eprintln!("[rquant] note: --traces is not written in --soft mode yet (SoftReport carries expected_net only)");
-    }
     let costs = CostModel { round_trip_bps: cfg.cost_bps };
     let fw = tree.meta.forward_window;
     let start = cfg.warmup.min(primary.len());
-    let results: Vec<Option<SoftScore>> = stream::iter(start..primary.len())
+    let results: Vec<(SoftTrace, Option<SoftScore>)> = stream::iter(start..primary.len())
         .map(|i| eval_point_soft(i, &primary, &context, &news, &tree, &costs, fw, cfg.window, llm))
         .buffered(cfg.concurrency.max(1))
-        .collect::<Vec<Result<Option<SoftScore>>>>()
+        .collect::<Vec<Result<(SoftTrace, Option<SoftScore>)>>>()
         .await
         .into_iter()
         .collect::<Result<Vec<_>>>()?;
-    let metrics = soft_metrics(&results, &primary[start..]);
+    let scores: Vec<Option<SoftScore>> = results.iter().map(|(_, s)| *s).collect();
+    let metrics = soft_metrics(&scores, &primary[start..]);
+    if let Some(tp) = &cfg.traces_path {
+        let records: Vec<SoftStepRecord> = results
+            .iter()
+            .map(|(tr, s)| SoftStepRecord {
+                t: tr.t,
+                leaf_probs: tr.leaf_probs.clone(),
+                expected_net: s.map(|x| x.expected_net),
+            })
+            .collect();
+        crate::report::write_soft_traces_jsonl(&records, tp)?;
+    }
     let report = SoftReport {
         tree_name: tree.meta.name.clone(),
         forward_window: fw,

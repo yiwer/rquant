@@ -193,6 +193,43 @@ async fn soft_mode_yields_positive_engaged_edge() {
 }
 
 #[tokio::test]
+async fn soft_traces_written_when_path_given() {
+    // Reuse the same fixtures as soft_mode_yields_positive_engaged_edge
+    // (LLM tree with quant gate -> LLM judge -> leaf_long, uptrend data, Stub ev),
+    // but set traces_path to a tempfile .jsonl.
+    let tree_f = write_file(&llm_tree_yaml(), ".yaml");
+    let primary_f = write_file(&gen_primary_csv(), ".csv");
+    let context_f = write_file(&gen_context_csv(), ".csv");
+    let out_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+    let traces_f = tempfile::Builder::new().suffix(".jsonl").tempfile().unwrap();
+
+    let cfg = BacktestConfig {
+        tree_path: tree_f.path().to_path_buf(),
+        primary_path: primary_f.path().to_path_buf(),
+        context_path: context_f.path().to_path_buf(),
+        news_path: None,
+        out_path: out_f.path().to_path_buf(),
+        traces_path: Some(traces_f.path().to_path_buf()),
+        cost_bps: 10.0,
+        warmup: 5,
+        window: 100,
+        concurrency: 4,
+        holidays_path: None,
+    };
+
+    let ev = LlmEvaluator::Stub(StubLlm {
+        answers: HashMap::from([("judge".to_string(), "go".to_string())]),
+    });
+
+    let report = rquant::backtest::soft::run_soft(&cfg, &ev).await.unwrap();
+    let content = std::fs::read_to_string(traces_f.path()).unwrap();
+    let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert_eq!(lines.len(), report.soft.total_decisions, "one line per decision point");
+    let first: rquant::backtest::soft::SoftStepRecord = serde_json::from_str(lines[0]).unwrap();
+    assert!(!first.leaf_probs.is_empty(), "each record carries a leaf distribution");
+}
+
+#[tokio::test]
 async fn report_html_renders_with_curve() {
     let tree_f = write_file(&tree_yaml(), ".yaml");
     let primary_f = write_file(&gen_primary_csv(), ".csv");

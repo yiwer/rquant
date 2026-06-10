@@ -56,6 +56,8 @@ cargo run --release -- backtest --tree examples/trend_tree.yaml \
 （含 LLM `default` 子树里的 LLM 节点），LLM 调用比硬模式多（有缓存兜底）。LLM 的 confidence
 是"伪概率"、未做校准，叶子分布请谨慎解读。
 
+软模式也支持 `--traces <file>`：写出逐点 JSONL（每决策点 `{t, leaf_probs, expected_net}`，未计分点 `expected_net` 为 null），可用于离线分析软遍历的叶子分布（report 软曲线消费为后续）。
+
 ### 软量化谓词（`strength`）
 
 软模式下，量化分支可选 `strength`（标量 DSL 表达式，clamp[0,1]）表达"命中强度"。
