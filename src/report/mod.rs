@@ -1,6 +1,6 @@
 use crate::backtest::gaps::GapReport;
 use crate::backtest::metrics::Metrics;
-use crate::backtest::soft::SoftMetrics;
+use crate::backtest::soft::{SoftMetrics, SoftStepRecord};
 use crate::engine::trace::Trace;
 use crate::Result;
 use serde::{Deserialize, Serialize};
@@ -29,6 +29,15 @@ pub fn write_traces_jsonl(traces: &[Trace], path: &Path) -> Result<()> {
     let mut f = std::fs::File::create(path)?;
     for t in traces {
         let line = serde_json::to_string(t)?;
+        writeln!(f, "{line}")?;
+    }
+    Ok(())
+}
+
+pub fn write_soft_traces_jsonl(records: &[SoftStepRecord], path: &Path) -> Result<()> {
+    let mut f = std::fs::File::create(path)?;
+    for r in records {
+        let line = serde_json::to_string(r)?;
         writeln!(f, "{line}")?;
     }
     Ok(())
@@ -141,5 +150,25 @@ mod tests {
         let back: Trace = serde_json::from_str(&json).unwrap();
         assert_eq!(back.leaf, "x");
         assert_eq!(back.stance, Stance::Long);
+    }
+
+    #[test]
+    fn soft_traces_jsonl_one_line_per_record() {
+        use crate::backtest::soft::SoftStepRecord;
+        use chrono::NaiveDate;
+        use std::collections::BTreeMap;
+        let t = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap().and_hms_opt(9, 45, 0).unwrap();
+        let mut lp = BTreeMap::new();
+        lp.insert("x".to_string(), 1.0);
+        let recs = vec![
+            SoftStepRecord { t, leaf_probs: lp.clone(), expected_net: Some(0.1) },
+            SoftStepRecord { t, leaf_probs: lp, expected_net: None },
+        ];
+        let f = tempfile::NamedTempFile::new().unwrap();
+        write_soft_traces_jsonl(&recs, f.path()).unwrap();
+        let content = std::fs::read_to_string(f.path()).unwrap();
+        assert_eq!(content.lines().count(), 2);
+        let first: SoftStepRecord = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+        assert_eq!(first.expected_net, Some(0.1));
     }
 }

@@ -12,8 +12,10 @@ use crate::report::{write_soft_report, SoftReport};
 use crate::tree::loader::{load_tree_file, Tree};
 use crate::tree::schema::Stance;
 use crate::Result;
+use chrono::NaiveDateTime;
 use futures::stream::{self, StreamExt};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy)]
 pub struct SoftScore {
@@ -53,6 +55,14 @@ pub struct SoftMetrics {
     pub engaged: SignalStat,
     pub buy_and_hold: f64,
     pub overlap_warning: String,
+}
+
+/// 软模式逐点 trace 记录：决策点时间、叶子分布、期望净收益（未计分点为 None）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SoftStepRecord {
+    pub t: NaiveDateTime,
+    pub leaf_probs: BTreeMap<String, f64>,
+    pub expected_net: Option<f64>,
 }
 
 /// 聚合软度量：engaged = 在 engaged>0 的已评分点上对 expected_net 做 SignalStat。
@@ -218,5 +228,24 @@ leaves:
         assert_eq!(m.total_decisions, 4);
         assert_eq!(m.scored, 3);
         assert_eq!(m.engaged.count, 2);
+    }
+
+    #[test]
+    fn soft_step_record_round_trips() {
+        use std::collections::BTreeMap;
+        let mut lp = BTreeMap::new();
+        lp.insert("leaf_l".to_string(), 0.7);
+        lp.insert("leaf_f".to_string(), 0.3);
+        let t = chrono::NaiveDate::from_ymd_opt(2024, 1, 2).unwrap().and_hms_opt(9, 45, 0).unwrap();
+        let rec = SoftStepRecord { t, leaf_probs: lp, expected_net: Some(0.05) };
+        let json = serde_json::to_string(&rec).unwrap();
+        let back: SoftStepRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.t, t);
+        assert_eq!(back.leaf_probs.len(), 2);
+        assert_eq!(back.expected_net, Some(0.05));
+        // None 也往返
+        let rec2 = SoftStepRecord { t, leaf_probs: BTreeMap::new(), expected_net: None };
+        let back2: SoftStepRecord = serde_json::from_str(&serde_json::to_string(&rec2).unwrap()).unwrap();
+        assert_eq!(back2.expected_net, None);
     }
 }
