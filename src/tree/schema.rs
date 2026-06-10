@@ -52,6 +52,10 @@ pub(crate) enum NodeSpec {
 #[derive(Debug, Deserialize)]
 pub(crate) struct LeafSpec {
     pub(crate) stance: Stance,
+    #[serde(default)]
+    pub(crate) weight: Option<f64>,
+    #[serde(default)]
+    pub(crate) horizon: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -57,7 +57,14 @@ async fn eval_point(
     let t = primary[i].time;
     let ctx = build_context(primary, context, news, t, window);
     let trace = crate::engine::traversal::traverse(tree, &ctx, llm).await?;
-    let fr = forward_return(primary, i, fw, trace.stance, costs);
+    let fr = match tree.leaves.get(&trace.leaf) {
+        Some(l) => forward_return(primary, i, l.horizon, trace.stance, costs).map(|f| ForwardResult {
+            gross: f.gross * l.weight,
+            net: f.net * l.weight,
+            t1_executable: f.t1_executable,
+        }),
+        None => forward_return(primary, i, fw, trace.stance, costs), // 防御（validate 保证不可达）
+    };
     Ok((trace, fr))
 }
 

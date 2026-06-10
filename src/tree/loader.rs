@@ -104,11 +104,15 @@ pub enum Node {
     },
 }
 
-/// 决策树叶子节点，持有最终 stance。
+/// 决策树叶子节点，持有最终 stance 及打分参数。
 #[derive(Debug, Clone)]
 pub struct Leaf {
     /// 对应的交易方向（须在 `meta.stances` 中声明）。
     pub stance: Stance,
+    /// 仓位大小 ∈ (0,1]，默认 1.0
+    pub weight: f64,
+    /// 该叶前瞻评分窗口，默认 meta.forward_window
+    pub horizon: usize,
 }
 
 /// 加载并验证后的运行时决策树。
@@ -170,7 +174,19 @@ pub fn load_tree_str(src: &str) -> Result<Tree> {
                 l.stance
             )));
         }
-        leaves.insert(id.clone(), Leaf { stance: l.stance });
+        let weight = l.weight.unwrap_or(1.0);
+        if !(weight > 0.0 && weight <= 1.0) {
+            return Err(Error::Tree(format!(
+                "leaf '{id}' weight must be in (0,1], got {weight}"
+            )));
+        }
+        let horizon = l.horizon.unwrap_or(spec.meta.forward_window);
+        if horizon == 0 {
+            return Err(Error::Tree(format!(
+                "leaf '{id}' horizon must be >= 1"
+            )));
+        }
+        leaves.insert(id.clone(), Leaf { stance: l.stance, weight, horizon });
     }
 
     let mut nodes = HashMap::new();
@@ -554,6 +570,41 @@ leaves:
         // `when` referencing undefined name → load-time error (left-shift).
         let unknown = ok.replace("momp and mom > th", "nope > 0");
         assert!(load_tree_str(&unknown).is_err());
+    }
+
+    #[test]
+    fn leaf_weight_and_horizon_validated_and_defaulted() {
+        // Explicit weight=0.5 and horizon=8 are read correctly.
+        let ok = r#"
+meta: { name: t, forward_window: 3, stances: [long, flat] }
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "close > 0", goto: leaf_l, label: up } ]
+    default: { goto: leaf_f, label: flat }
+leaves:
+  leaf_l: { stance: long, weight: 0.5, horizon: 8 }
+  leaf_f: { stance: flat }
+"#;
+        let tree = load_tree_str(ok).unwrap();
+        let l = tree.leaves.get("leaf_l").unwrap();
+        assert!((l.weight - 0.5).abs() < 1e-12);
+        assert_eq!(l.horizon, 8);
+        // Defaults: weight=1.0, horizon=forward_window (3).
+        let lf = tree.leaves.get("leaf_f").unwrap();
+        assert!((lf.weight - 1.0).abs() < 1e-12);
+        assert_eq!(lf.horizon, 3);
+
+        // weight=0.0 → Err
+        let w0 = ok.replace("weight: 0.5", "weight: 0.0");
+        assert!(load_tree_str(&w0).is_err());
+        // weight=1.5 → Err
+        let w15 = ok.replace("weight: 0.5", "weight: 1.5");
+        assert!(load_tree_str(&w15).is_err());
+        // horizon=0 → Err
+        let h0 = ok.replace("horizon: 8", "horizon: 0");
+        assert!(load_tree_str(&h0).is_err());
     }
 
     #[test]

@@ -32,29 +32,31 @@ pub fn score_soft(
     tree: &Tree,
     primary: &[Bar],
     i: usize,
-    fw: usize,
     costs: &CostModel,
 ) -> Option<SoftScore> {
     let mut expected_net = 0.0;
     let mut engaged = 0.0;
     let mut exposure = 0.0;
     let mut t1 = false;
+    let mut max_h = 0usize;
     for (leaf_id, &p) in &soft.leaf_probs {
-        let stance = tree.leaves.get(leaf_id)?.stance;
-        let fr = forward_return(primary, i, fw, stance, costs)?;
-        expected_net += p * fr.net;
-        exposure += p * match stance {
+        let leaf = tree.leaves.get(leaf_id)?;
+        let fr = forward_return(primary, i, leaf.horizon, leaf.stance, costs)?;
+        let w = leaf.weight;
+        expected_net += p * w * fr.net;
+        exposure += p * w * match leaf.stance {
             Stance::Long => 1.0,
             Stance::Short => -1.0,
             Stance::Flat => 0.0,
         };
-        if !matches!(stance, Stance::Flat) {
-            engaged += p;
+        if !matches!(leaf.stance, Stance::Flat) {
+            engaged += p * w;
         }
         t1 |= fr.t1_executable;
+        max_h = max_h.max(leaf.horizon);
     }
-    // 净仓位口径：只交易净额 E，成本计在 |E| 上（r=裸收益；Long 与逐腿循环用同一 i/fw 边界检查，故此处必 Some——若 forward_return 边界逻辑改为按 stance 区分，此假设需重审）
-    let r = forward_return(primary, i, fw, Stance::Long, costs)?.gross;
+    // 净仓位口径：r 取分布内最大 horizon（最长腿；max_h 必属已过边界检查的集合 → 必 Some）
+    let r = forward_return(primary, i, max_h, Stance::Long, costs)?.gross;
     let position_net = if exposure == 0.0 {
         0.0
     } else {
@@ -120,14 +122,13 @@ async fn eval_point_soft(
     news: &[NewsRecord],
     tree: &Tree,
     costs: &CostModel,
-    fw: usize,
     window: usize,
     llm: &LlmEvaluator,
 ) -> Result<(SoftTrace, Option<SoftScore>)> {
     let t = primary[i].time;
     let ctx = build_context(primary, context, news, t, window);
     let soft = traverse_soft(tree, &ctx, llm).await?;
-    let score = score_soft(&soft, tree, primary, i, fw, costs);
+    let score = score_soft(&soft, tree, primary, i, costs);
     Ok((soft, score))
 }
 
@@ -160,7 +161,7 @@ pub async fn run_soft(cfg: &BacktestConfig, llm: &LlmEvaluator) -> Result<SoftRe
     let fw = tree.meta.forward_window;
     let start = cfg.warmup.min(primary.len());
     let results: Vec<(SoftTrace, Option<SoftScore>)> = stream::iter(start..primary.len())
-        .map(|i| eval_point_soft(i, &primary, &context, &news, &tree, &costs, fw, cfg.window, llm))
+        .map(|i| eval_point_soft(i, &primary, &context, &news, &tree, &costs, cfg.window, llm))
         .buffered(cfg.concurrency.max(1))
         .collect::<Vec<Result<(SoftTrace, Option<SoftScore>)>>>()
         .await
@@ -242,7 +243,7 @@ leaves:
         lp.insert("leaf_l".to_string(), 0.5);
         lp.insert("leaf_f".to_string(), 0.5);
         let soft = SoftTrace { t: primary[0].time, leaf_probs: lp };
-        let s = score_soft(&soft, &tree, &primary, 0, 2, &costs).unwrap();
+        let s = score_soft(&soft, &tree, &primary, 0, &costs).unwrap();
         // long net = 11/10-1-0.001 = 0.099; flat = 0; expected = 0.5*0.099
         assert!((s.expected_net - 0.0495).abs() < 1e-9);
         assert!((s.engaged - 0.5).abs() < 1e-9);
@@ -257,7 +258,7 @@ leaves:
         let mut lp = BTreeMap::new();
         lp.insert("leaf_l".to_string(), 1.0);
         let soft = SoftTrace { t: primary[0].time, leaf_probs: lp };
-        assert!(score_soft(&soft, &tree, &primary, 1, 2, &costs).is_none());
+        assert!(score_soft(&soft, &tree, &primary, 1, &costs).is_none());
     }
 
     #[test]
@@ -288,7 +289,7 @@ leaves:
         lp.insert("leaf_l".to_string(), 0.5);
         lp.insert("leaf_f".to_string(), 0.5);
         let soft = SoftTrace { t: primary[0].time, leaf_probs: lp };
-        let s = score_soft(&soft, &tree, &primary, 0, 2, &costs).unwrap();
+        let s = score_soft(&soft, &tree, &primary, 0, &costs).unwrap();
         // long/flat 下净仓位 ≡ 逐腿期望（成本线性）
         assert!((s.position_net - s.expected_net).abs() < 1e-12);
         assert!((s.exposure - 0.5).abs() < 1e-9);
@@ -321,7 +322,7 @@ leaves:
         lp.insert("leaf_l".to_string(), 0.6);
         lp.insert("leaf_s".to_string(), 0.4);
         let soft = SoftTrace { t: primary[0].time, leaf_probs: lp };
-        let s = score_soft(&soft, &tree, &primary, 0, 2, &costs).unwrap();
+        let s = score_soft(&soft, &tree, &primary, 0, &costs).unwrap();
         // r = 11/10 - 1 = 0.1, rate = 0.001
         // E = 0.6 - 0.4 = 0.2；position_net = 0.2*0.1 - 0.001*0.2 = 0.0198
         assert!((s.exposure - 0.2).abs() < 1e-9);
@@ -342,9 +343,68 @@ leaves:
         let mut lp = BTreeMap::new();
         lp.insert("leaf_f".to_string(), 1.0);
         let soft = SoftTrace { t: primary[0].time, leaf_probs: lp };
-        let s = score_soft(&soft, &tree, &primary, 0, 2, &costs).unwrap();
+        let s = score_soft(&soft, &tree, &primary, 0, &costs).unwrap();
         assert_eq!(s.exposure, 0.0);
         assert_eq!(s.position_net, 0.0);
+    }
+
+    #[test]
+    fn leaf_weight_scales_soft_score() {
+        const TREE_W: &str = r#"
+meta: { name: t, forward_window: 2, stances: [long, flat] }
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "close > 0", goto: leaf_l, label: up } ]
+    default: { goto: leaf_f, label: flat }
+leaves:
+  leaf_l: { stance: long, weight: 0.5 }
+  leaf_f: { stance: flat }
+"#;
+        let tree = load_tree_str(TREE_W).unwrap();
+        let primary = vec![
+            bar("2024-01-02 14:45:00", 9.0, 9.5),
+            bar("2024-01-02 15:00:00", 10.0, 10.2),
+            bar("2024-01-03 09:45:00", 10.2, 11.0),
+        ];
+        let costs = CostModel { round_trip_bps: 10.0 };
+        let mut lp = BTreeMap::new();
+        lp.insert("leaf_l".to_string(), 1.0);
+        let soft = SoftTrace { t: primary[0].time, leaf_probs: lp };
+        let s = score_soft(&soft, &tree, &primary, 0, &costs).unwrap();
+        // net_long = 0.099；w=0.5 → expected 0.0495；exposure/engaged = 0.5
+        assert!((s.expected_net - 0.0495).abs() < 1e-9);
+        assert!((s.exposure - 0.5).abs() < 1e-9);
+        assert!((s.engaged - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn leaf_horizon_overrides_global_window() {
+        const TREE_H: &str = r#"
+meta: { name: t, forward_window: 16, stances: [long, flat] }
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "close > 0", goto: leaf_l, label: up } ]
+    default: { goto: leaf_f, label: flat }
+leaves:
+  leaf_l: { stance: long, horizon: 2 }
+  leaf_f: { stance: flat, horizon: 2 }
+"#;
+        let tree = load_tree_str(TREE_H).unwrap();
+        let primary = vec![
+            bar("2024-01-02 14:45:00", 9.0, 9.5),
+            bar("2024-01-02 15:00:00", 10.0, 10.2),
+            bar("2024-01-03 09:45:00", 10.2, 11.0),
+        ];
+        let costs = CostModel { round_trip_bps: 10.0 };
+        let mut lp = BTreeMap::new();
+        lp.insert("leaf_l".to_string(), 1.0);
+        let soft = SoftTrace { t: primary[0].time, leaf_probs: lp };
+        // 全局 fw=16 在 3 根 bar 下必越界；leaf horizon=2 仍可计分
+        assert!(score_soft(&soft, &tree, &primary, 0, &costs).is_some());
     }
 
     #[test]
