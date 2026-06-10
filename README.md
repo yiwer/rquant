@@ -111,3 +111,5 @@ cargo run --release -- report --report report.json --out report.html \
 
 软模式报告：`rquant report --soft --report soft_report.json --traces soft_traces.jsonl --out soft.html`
 渲染累计期望收益曲线、expected_net 直方图、各叶平均概率条形、headline。软模式**不需 `--primary`**（expected_net 已在 traces 里）。
+
+软报告还含**叶子概率堆叠面积图**（质量随时间在叶子间的转移；Σ=1 恒满幅，固定调色板+图例）。

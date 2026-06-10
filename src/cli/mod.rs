@@ -133,14 +133,18 @@ pub async fn main() -> anyhow::Result<()> {
                 if primary.is_some() {
                     eprintln!("[rquant] --primary ignored in --soft report (expected_net is in traces)");
                 }
-                let (series, avg) = match &traces {
+                let (series, avg, stack) = match &traces {
                     Some(tp) => {
                         let content = std::fs::read_to_string(tp)?;
                         let mut recs = Vec::new();
                         for line in content.lines().filter(|l| !l.trim().is_empty()) {
                             recs.push(serde_json::from_str::<crate::backtest::soft::SoftStepRecord>(line)?);
                         }
-                        (crate::report::curve::derive_soft_series(&recs), crate::report::curve::avg_leaf_probs(&recs))
+                        (
+                            crate::report::curve::derive_soft_series(&recs),
+                            crate::report::curve::avg_leaf_probs(&recs),
+                            Some(crate::report::curve::leaf_prob_stack(&recs)),
+                        )
                     }
                     None => (
                         crate::report::curve::EquitySeries {
@@ -149,9 +153,10 @@ pub async fn main() -> anyhow::Result<()> {
                             skipped: 0,
                         },
                         vec![],
+                        None,
                     ),
                 };
-                let html = crate::report::viz::render_soft_html(&rep, &series, &avg);
+                let html = crate::report::viz::render_soft_html(&rep, &series, &avg, stack.as_ref());
                 std::fs::write(&out, html)?;
                 println!("wrote soft HTML report to {}", out.display());
             } else {

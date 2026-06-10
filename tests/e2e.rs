@@ -308,11 +308,13 @@ async fn soft_report_html_renders() {
         .collect();
     let series = rquant::report::curve::derive_soft_series(&recs);
     let avg = rquant::report::curve::avg_leaf_probs(&recs);
-    let html = rquant::report::viz::render_soft_html(&report, &series, &avg);
+    let stack = rquant::report::curve::leaf_prob_stack(&recs);
+    let html = rquant::report::viz::render_soft_html(&report, &series, &avg, Some(&stack));
     assert!(html.contains("<!doctype html>"));
     assert!(html.contains("<polyline"));
     assert!(html.contains(&report.soft.overlap_warning));
     assert!(!series.points.is_empty());
+    assert!(html.contains("<polygon"), "stacked area chart present");
 }
 
 fn strength_tree_yaml() -> String {

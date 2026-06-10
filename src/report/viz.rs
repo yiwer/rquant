@@ -1,5 +1,5 @@
 use crate::report::{Report, SoftReport};
-use crate::report::curve::{EquitySeries, Histogram};
+use crate::report::curve::{EquitySeries, Histogram, StackSeries};
 use std::fmt::Write;
 
 const W: u32 = 640;
@@ -85,6 +85,41 @@ pub fn histogram_svg(hist: &Histogram, title: &str) -> String {
     s
 }
 
+const PALETTE: [&str; 6] = ["#1565c0", "#2e7d32", "#c62828", "#f9a825", "#6a1b9a", "#00838f"];
+
+/// 叶子概率堆叠面积图：y 域固定 [0,1]，每层 polygon（上=本层累计、下=前层累计），图例置顶。
+pub fn stacked_area_chart(stack: &StackSeries, title: &str) -> String {
+    let pad = 30.0;
+    let mut s = String::new();
+    let _ = write!(s, "<svg width=\"{W}\" height=\"{H}\" xmlns=\"http://www.w3.org/2000/svg\">");
+    let _ = write!(s, "<text x=\"8\" y=\"16\" font-size=\"13\">{title}</text>");
+    if stack.rows.is_empty() || stack.names.is_empty() {
+        let _ = write!(s, "<text x=\"8\" y=\"{}\">no data</text></svg>", H / 2);
+        return s;
+    }
+    let n = stack.rows.len();
+    let px = |i: usize| pad + i as f64 / (n.max(2) - 1) as f64 * (W as f64 - 2.0 * pad);
+    let py = |v: f64| ny(v, 0.0, 1.0, pad);
+    for (k, name) in stack.names.iter().enumerate() {
+        let color = PALETTE[k % PALETTE.len()];
+        let mut pts = String::new();
+        for (i, row) in stack.rows.iter().enumerate() {
+            let _ = write!(pts, "{:.1},{:.1} ", px(i), py(row[k]));
+        }
+        for (i, row) in stack.rows.iter().enumerate().rev() {
+            let lower = if k == 0 { 0.0 } else { row[k - 1] };
+            let _ = write!(pts, "{:.1},{:.1} ", px(i), py(lower));
+        }
+        let _ = write!(s, "<polygon points=\"{}\" fill=\"{}\" fill-opacity=\"0.8\"/>", pts.trim_end(), color);
+        // 图例
+        let lx = pad + k as f64 * 100.0;
+        let _ = write!(s, "<rect x=\"{:.0}\" y=\"22\" width=\"10\" height=\"10\" fill=\"{}\"/>", lx, color);
+        let _ = write!(s, "<text x=\"{:.0}\" y=\"31\" font-size=\"10\">{}</text>", lx + 14.0, name);
+    }
+    let _ = write!(s, "</svg>");
+    s
+}
+
 /// 拼装自包含 HTML 报告。
 pub fn render_html(report: &Report, series: Option<&EquitySeries>) -> String {
     let m = &report.metrics;
@@ -126,7 +161,7 @@ pub fn render_html(report: &Report, series: Option<&EquitySeries>) -> String {
 }
 
 /// 软模式报告 HTML：累计期望收益曲线 + expected_net 直方图 + 各叶平均概率条形 + headline。
-pub fn render_soft_html(report: &SoftReport, series: &EquitySeries, avg_leaf: &[(String, f64)]) -> String {
+pub fn render_soft_html(report: &SoftReport, series: &EquitySeries, avg_leaf: &[(String, f64)], stack: Option<&StackSeries>) -> String {
     let m = &report.soft;
     let mut s = String::new();
     let _ = write!(s, "<!doctype html><html><head><meta charset=\"utf-8\"><title>rquant soft report: {}</title>", report.tree_name);
@@ -152,6 +187,9 @@ pub fn render_soft_html(report: &SoftReport, series: &EquitySeries, avg_leaf: &[
         let _ = write!(s, "<p>{} 点未计入曲线（未计分）</p>", series.skipped);
     }
     let _ = write!(s, "{}", bar_chart(avg_leaf, "各叶平均概率"));
+    if let Some(st) = stack {
+        let _ = write!(s, "{}", stacked_area_chart(st, "叶子概率随时间（堆叠，Σ=1）"));
+    }
     let _ = write!(s, "</body></html>");
     s
 }
@@ -224,13 +262,32 @@ mod tests {
             skipped: 0,
         };
         let avg = vec![("leaf_l".to_string(), 0.7), ("leaf_f".to_string(), 0.3)];
-        let a = render_soft_html(&report, &series, &avg);
-        let b = render_soft_html(&report, &series, &avg);
+        let st = crate::report::curve::StackSeries {
+            names: vec!["leaf_l".to_string()],
+            rows: vec![vec![1.0]],
+        };
+        let a = render_soft_html(&report, &series, &avg, Some(&st));
+        let b = render_soft_html(&report, &series, &avg, Some(&st));
         assert_eq!(a, b);
         assert!(a.contains("<!doctype html>"));
         assert!(a.contains("softviz"));
         assert!(a.contains("<polyline"));
         assert!(a.contains("<rect"));
         assert!(a.contains("OVLAP"));
+        assert!(a.contains("<polygon"));
+    }
+
+    #[test]
+    fn stacked_area_chart_has_polygons_and_legend() {
+        use crate::report::curve::StackSeries;
+        let st = StackSeries {
+            names: vec!["leaf_a".to_string(), "leaf_b".to_string()],
+            rows: vec![vec![0.3, 1.0], vec![0.6, 1.0], vec![0.5, 1.0]],
+        };
+        let svg = stacked_area_chart(&st, "t");
+        assert!(svg.contains("<polygon"));
+        assert!(svg.contains("leaf_a"));
+        assert!(svg.contains("leaf_b"));
+        assert_eq!(svg, stacked_area_chart(&st, "t")); // 确定性
     }
 }
