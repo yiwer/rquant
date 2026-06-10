@@ -204,7 +204,7 @@ mod tests {
 
     fn sample_report() -> Report {
         let metrics = compute_metrics(&[], &[]);
-        Report { tree_name: "viz".into(), forward_window: 8, cost_bps: 10.0, metrics, gaps: GapReport::default() }
+        Report { tree_name: "viz".into(), forward_window: 8, cost_bps: 10.0, metrics, gaps: GapReport::default(), walk_forward: None }
     }
 
     #[test]
@@ -254,7 +254,7 @@ mod tests {
             buy_and_hold: 0.05,
             overlap_warning: "OVLAP".into(),
         };
-        let report = SoftReport { tree_name: "softviz".into(), forward_window: 4, cost_bps: 10.0, soft };
+        let report = SoftReport { tree_name: "softviz".into(), forward_window: 4, cost_bps: 10.0, soft, walk_forward: None };
         let t = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap().and_hms_opt(9, 45, 0).unwrap();
         let series = EquitySeries {
             points: vec![SeriesPoint { t, net: 0.1, cum: 0.1 }, SeriesPoint { t, net: 0.2, cum: 0.3 }],

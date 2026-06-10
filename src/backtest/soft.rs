@@ -168,6 +168,18 @@ pub async fn run_soft(cfg: &BacktestConfig, llm: &LlmEvaluator) -> Result<SoftRe
         .collect::<Result<Vec<_>>>()?;
     let scores: Vec<Option<SoftScore>> = results.iter().map(|(_, s)| *s).collect();
     let metrics = soft_metrics(&scores, &primary[start..]);
+    let walk_forward = if cfg.folds >= 2 {
+        let nets: Vec<Option<f64>> = results
+            .iter()
+            .map(|(_, s)| match s {
+                Some(x) if x.engaged > 0.0 => Some(x.expected_net),
+                _ => None,
+            })
+            .collect();
+        Some(crate::backtest::walkforward::walk_forward(&nets, &primary[start..], cfg.folds))
+    } else {
+        None
+    };
     if let Some(tp) = &cfg.traces_path {
         let records: Vec<SoftStepRecord> = results
             .iter()
@@ -184,6 +196,7 @@ pub async fn run_soft(cfg: &BacktestConfig, llm: &LlmEvaluator) -> Result<SoftRe
         forward_window: fw,
         cost_bps: cfg.cost_bps,
         soft: metrics,
+        walk_forward,
     };
     write_soft_report(&report, &cfg.out_path)?;
     Ok(report)

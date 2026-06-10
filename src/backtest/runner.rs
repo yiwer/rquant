@@ -8,6 +8,7 @@ use crate::eval::llm::LlmEvaluator;
 use crate::features::context::build_context;
 use crate::report::Report;
 use crate::tree::loader::Tree;
+use crate::tree::schema::Stance;
 use crate::Result;
 use futures::stream::{self, StreamExt};
 use std::path::PathBuf;
@@ -25,6 +26,7 @@ pub struct BacktestConfig {
     pub window: usize,
     pub concurrency: usize,
     pub holidays_path: Option<PathBuf>,
+    pub folds: usize,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -86,12 +88,25 @@ pub async fn run(cfg: &BacktestConfig, llm: &LlmEvaluator) -> Result<Report> {
     let traces: Vec<Trace> = results.iter().map(|(t, _)| t.clone()).collect();
     // buy&hold 基准跨与信号相同的"过预热"窗口（不含 warmup 前缀），同口径对比
     let metrics = compute_metrics(&results, &primary[start..]);
+    let walk_forward = if cfg.folds >= 2 {
+        let nets: Vec<Option<f64>> = results
+            .iter()
+            .map(|(tr, fr)| match fr {
+                Some(f) if tr.stance != Stance::Flat => Some(f.net),
+                _ => None,
+            })
+            .collect();
+        Some(crate::backtest::walkforward::walk_forward(&nets, &primary[start..], cfg.folds))
+    } else {
+        None
+    };
     let report = Report {
         tree_name: tree.meta.name.clone(),
         forward_window: fw,
         cost_bps: cfg.cost_bps,
         metrics,
         gaps,
+        walk_forward,
     };
     crate::report::write_report(&report, &cfg.out_path)?;
     if let Some(tp) = &cfg.traces_path {

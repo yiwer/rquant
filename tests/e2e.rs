@@ -76,6 +76,7 @@ async fn end_to_end_uptrend_yields_positive_long_edge() {
         window: 100,
         concurrency: 4,
         holidays_path: None,
+        folds: 0,
     };
 
     let report = run(&cfg, &LlmEvaluator::Disabled).await.unwrap();
@@ -138,6 +139,7 @@ async fn run_llm_e2e(ev: &LlmEvaluator) -> rquant::report::Report {
         window: 100,
         concurrency: 4,
         holidays_path: None,
+        folds: 0,
     };
     run(&cfg, ev).await.unwrap()
 }
@@ -173,6 +175,7 @@ async fn soft_mode_yields_positive_engaged_edge() {
         window: 100,
         concurrency: 4,
         holidays_path: None,
+        folds: 0,
     };
 
     let ev = LlmEvaluator::Stub(StubLlm {
@@ -217,6 +220,7 @@ async fn soft_traces_written_when_path_given() {
         window: 100,
         concurrency: 4,
         holidays_path: None,
+        folds: 0,
     };
 
     let ev = LlmEvaluator::Stub(StubLlm {
@@ -251,6 +255,7 @@ async fn report_html_renders_with_curve() {
         window: 100,
         concurrency: 4,
         holidays_path: None,
+        folds: 0,
     };
 
     let _report = run(&cfg, &LlmEvaluator::Disabled).await.unwrap();
@@ -293,6 +298,7 @@ async fn soft_report_html_renders() {
         window: 100,
         concurrency: 4,
         holidays_path: None,
+        folds: 0,
     };
 
     let ev = LlmEvaluator::Stub(StubLlm {
@@ -356,6 +362,7 @@ async fn soft_quant_strength_engages() {
         window: 100,
         concurrency: 4,
         holidays_path: None,
+        folds: 0,
     };
 
     let report = run_soft(&cfg, &LlmEvaluator::Disabled).await.unwrap();

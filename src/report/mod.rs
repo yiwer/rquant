@@ -1,6 +1,7 @@
 use crate::backtest::gaps::GapReport;
 use crate::backtest::metrics::Metrics;
 use crate::backtest::soft::{SoftMetrics, SoftStepRecord};
+use crate::backtest::walkforward::WalkForward;
 use crate::engine::trace::Trace;
 use crate::Result;
 use serde::{Deserialize, Serialize};
@@ -17,6 +18,8 @@ pub struct Report {
     pub cost_bps: f64,
     pub metrics: Metrics,
     pub gaps: GapReport,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub walk_forward: Option<WalkForward>,
 }
 
 pub fn write_report(report: &Report, path: &Path) -> Result<()> {
@@ -67,6 +70,15 @@ pub fn print_summary(report: &Report) {
         report.gaps.missing_trading_days.len(),
         report.gaps.partial_days.len()
     );
+    if let Some(wf) = &report.walk_forward {
+        for (i, f) in wf.folds.iter().enumerate() {
+            println!(
+                "wf {}/{} [{} → {}]: n={} mean={:.4} hit={:.1}% | bh={:.4}",
+                i + 1, wf.folds.len(), f.from, f.to, f.stat.count, f.stat.mean_net, f.stat.hit_rate * 100.0, f.buy_and_hold
+            );
+        }
+        println!("wf summary: positive {}/{}, worst mean={:.4}", wf.positive_folds, wf.folds.len(), wf.worst_mean_net);
+    }
     println!("[warn] {}", m.overlap_warning);
 }
 
@@ -76,6 +88,8 @@ pub struct SoftReport {
     pub forward_window: usize,
     pub cost_bps: f64,
     pub soft: SoftMetrics,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub walk_forward: Option<WalkForward>,
 }
 
 pub fn write_soft_report(report: &SoftReport, path: &Path) -> Result<()> {
@@ -98,6 +112,15 @@ pub fn print_soft_summary(report: &SoftReport) {
         m.position.count, m.position.mean_net, m.position.hit_rate * 100.0, m.position.t_stat
     );
     println!("buy&hold={:.4}", m.buy_and_hold);
+    if let Some(wf) = &report.walk_forward {
+        for (i, f) in wf.folds.iter().enumerate() {
+            println!(
+                "wf {}/{} [{} → {}]: n={} mean={:.4} hit={:.1}% | bh={:.4}",
+                i + 1, wf.folds.len(), f.from, f.to, f.stat.count, f.stat.mean_net, f.stat.hit_rate * 100.0, f.buy_and_hold
+            );
+        }
+        println!("wf summary: positive {}/{}, worst mean={:.4}", wf.positive_folds, wf.folds.len(), wf.worst_mean_net);
+    }
     println!("[warn] {}", m.overlap_warning);
 }
 
@@ -109,7 +132,7 @@ mod tests {
     #[test]
     fn report_serializes_to_json() {
         let metrics = compute_metrics(&[], &[]);
-        let report = Report { tree_name: "t".into(), forward_window: 16, cost_bps: 10.0, metrics, gaps: GapReport::default() };
+        let report = Report { tree_name: "t".into(), forward_window: 16, cost_bps: 10.0, metrics, gaps: GapReport::default(), walk_forward: None };
         let json = serde_json::to_string(&report).unwrap();
         assert!(json.contains("\"tree_name\":\"t\""));
         assert!(json.contains("overlap_warning"));
@@ -135,7 +158,7 @@ mod tests {
     #[test]
     fn report_round_trips_json() {
         let metrics = compute_metrics(&[], &[]);
-        let report = Report { tree_name: "rt".into(), forward_window: 8, cost_bps: 5.0, metrics, gaps: GapReport::default() };
+        let report = Report { tree_name: "rt".into(), forward_window: 8, cost_bps: 5.0, metrics, gaps: GapReport::default(), walk_forward: None };
         let json = serde_json::to_string(&report).unwrap();
         let back: Report = serde_json::from_str(&json).unwrap();
         assert_eq!(back.tree_name, "rt");
@@ -154,6 +177,16 @@ mod tests {
         let back: Trace = serde_json::from_str(&json).unwrap();
         assert_eq!(back.leaf, "x");
         assert_eq!(back.stance, Stance::Long);
+    }
+
+    #[test]
+    fn walk_forward_field_is_optional_and_compatible() {
+        let metrics = compute_metrics(&[], &[]);
+        let report = Report { tree_name: "wf".into(), forward_window: 8, cost_bps: 5.0, metrics, gaps: GapReport::default(), walk_forward: None };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(!json.contains("walk_forward"), "None must not serialize");
+        let back: Report = serde_json::from_str(&json).unwrap(); // 旧 JSON（无键）可反序列化
+        assert!(back.walk_forward.is_none());
     }
 
     #[test]
