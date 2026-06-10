@@ -20,6 +20,35 @@ pub fn eval_scalar(expr: &Expr, ctx: &Context) -> Result<f64> {
     as_scalar(&eval(expr, ctx)?)
 }
 
+/// Fuzzy evaluation of boolean expressions → [0,1] truth value (soft quantization strength: "auto" use).
+/// Comparisons: sigmoid((lhs-rhs)/denom), denom = scale·max(|lhs|,|rhs|); denom≈0 → 0.5.
+/// and=min, or=max, not=1-x (Gödel); ==/!= stay hard; non-boolean nodes → Err.
+pub fn eval_fuzzy(expr: &Expr, ctx: &Context, scale: f64) -> Result<f64> {
+    match expr {
+        Expr::Binary(op, l, r) => match op {
+            BinaryOp::And => Ok(eval_fuzzy(l, ctx, scale)?.min(eval_fuzzy(r, ctx, scale)?)),
+            BinaryOp::Or => Ok(eval_fuzzy(l, ctx, scale)?.max(eval_fuzzy(r, ctx, scale)?)),
+            BinaryOp::Gt | BinaryOp::Ge => fuzzy_cmp(l, r, ctx, scale, 1.0),
+            BinaryOp::Lt | BinaryOp::Le => fuzzy_cmp(l, r, ctx, scale, -1.0),
+            BinaryOp::Eq | BinaryOp::Ne => Ok(if as_bool(&eval(expr, ctx)?)? { 1.0 } else { 0.0 }),
+            _ => Err(Error::Eval("fuzzy: expected boolean expression".into())),
+        },
+        Expr::Unary(UnaryOp::Not, e) => Ok(1.0 - eval_fuzzy(e, ctx, scale)?),
+        _ => Err(Error::Eval("fuzzy: expected boolean expression".into())),
+    }
+}
+
+fn fuzzy_cmp(l: &Expr, r: &Expr, ctx: &Context, scale: f64, sign: f64) -> Result<f64> {
+    let lv = as_scalar(&eval(l, ctx)?)?;
+    let rv = as_scalar(&eval(r, ctx)?)?;
+    let margin = (lv - rv) * sign;
+    let denom = scale * lv.abs().max(rv.abs());
+    if denom <= 1e-12 {
+        return Ok(0.5);
+    }
+    Ok(1.0 / (1.0 + (-margin / denom).exp()))
+}
+
 pub fn eval(expr: &Expr, ctx: &Context) -> Result<Value> {
     match expr {
         Expr::Number(n) => Ok(Value::Scalar(*n)),
@@ -253,5 +282,32 @@ mod tests {
             Value::Scalar(x) => assert!(x > 0.99),
             o => panic!("{o:?}"),
         }
+    }
+
+    #[test]
+    fn fuzzy_comparison_and_combinators() {
+        let ctx = ctx_from_closes(&[1.0]);
+        let f = |src: &str| eval_fuzzy(&parse_str(src).unwrap(), &ctx, 0.02).unwrap();
+        // 相等 → 0.5
+        assert!((f("10 > 10") - 0.5).abs() < 1e-9);
+        // above → >0.5 且单调；below → <0.5
+        assert!(f("10.2 > 10") > 0.5);
+        assert!(f("12 > 10") > f("10.2 > 10"));
+        assert!(f("9.8 > 10") < 0.5);
+        // 镜像
+        assert!((f("10 < 10") - 0.5).abs() < 1e-9);
+        assert!(f("9.8 < 10") > 0.5);
+        // and=min / or=max / not=1-x
+        let a = f("12 > 10");
+        assert!((f("12 > 10 and 10 > 10") - 0.5).abs() < 1e-9);
+        assert!((f("9.8 > 10 or 12 > 10") - a).abs() < 1e-9);
+        assert!((f("not (10 > 10)") - 0.5).abs() < 1e-9);
+        // == 保持硬
+        assert!((f("10 == 10") - 1.0).abs() < 1e-9);
+        assert!((f("10 == 11") - 0.0).abs() < 1e-9);
+        // 双方≈0 → 0.5（无信息）
+        assert!((f("0 > 0") - 0.5).abs() < 1e-9);
+        // 非布尔 → Err
+        assert!(eval_fuzzy(&parse_str("close").unwrap(), &ctx, 0.02).is_err());
     }
 }
