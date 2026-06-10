@@ -5,7 +5,7 @@ pub mod prompt;
 use crate::eval::Decision;
 use crate::features::context::Context;
 use crate::Result;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
 /// traverse 传入的 LLM 节点借用视图。
@@ -41,6 +41,40 @@ pub fn decision_from_answer(node: &LlmNode<'_>, label: &str, confidence: f64, re
     let goto = node.labels.get(label).cloned().unwrap_or_else(|| node.default.to_string());
     let tag = if cached { "LLM(cached)" } else { "LLM" };
     Decision { goto, label: label.to_string(), confidence, rationale: format!("{tag}: {reason}") }
+}
+
+/// label 分布 → goto 分布：label→labels[label]（未知→default）、同 goto 合并、残余补 default。
+/// 前置：probs 已清洗（Σ ≤ 1）。产出 Σ = 1，按 goto 名排序（确定性）。
+pub fn dist_to_gotos(node: &LlmNode<'_>, probs: &BTreeMap<String, f64>) -> Vec<(String, f64)> {
+    let mut acc: BTreeMap<String, f64> = BTreeMap::new();
+    let mut sum = 0.0;
+    for (label, &p) in probs {
+        if p > 0.0 {
+            let goto = node.labels.get(label).cloned().unwrap_or_else(|| node.default.to_string());
+            *acc.entry(goto).or_insert(0.0) += p;
+            sum += p;
+        }
+    }
+    let rem = 1.0 - sum;
+    if rem > 0.0 {
+        *acc.entry(node.default.to_string()).or_insert(0.0) += rem;
+    }
+    acc.into_iter().collect()
+}
+
+/// 硬模式派生：在 (label, p) + ("default", 残余) 上取 argmax（并列取字典序小，BTreeMap 序保证）。
+pub fn decision_from_dist(node: &LlmNode<'_>, probs: &BTreeMap<String, f64>, rationale: &str) -> Decision {
+    let mut candidates: BTreeMap<String, f64> = probs.clone();
+    let sum: f64 = probs.values().sum();
+    let rem = 1.0 - sum;
+    if rem > 0.0 {
+        *candidates.entry("default".to_string()).or_insert(0.0) += rem;
+    }
+    let (label, confidence) = candidates
+        .iter()
+        .fold(("default".to_string(), 0.0), |best, (k, &v)| if v > best.1 { (k.clone(), v) } else { best });
+    let goto = node.labels.get(&label).cloned().unwrap_or_else(|| node.default.to_string());
+    Decision { goto, label, confidence, rationale: rationale.to_string() }
 }
 
 /// 测试用 stub：node_id -> label（"ERROR" 模拟失败 → 回退 default）。
@@ -123,5 +157,43 @@ mod tests {
         let ev = LlmEvaluator::Stub(StubLlm { answers: HashMap::from([("n".to_string(), "go".to_string())]) });
         let d = ev.eval_llm("n", &node, &ctx()).await.unwrap();
         assert_eq!(d.goto, "leaf_l");
+    }
+
+    #[test]
+    fn dist_to_gotos_maps_merges_and_fills_default() {
+        use std::collections::BTreeMap;
+        let lbl = HashMap::from([
+            ("a".to_string(), "leaf_x".to_string()),
+            ("b".to_string(), "leaf_x".to_string()),  // 同 goto，应合并
+            ("c".to_string(), "leaf_y".to_string()),
+        ]);
+        let node = LlmNode { inputs: &[], prompt: "q", labels: &lbl, default: "leaf_f" };
+        let probs = BTreeMap::from([("a".to_string(), 0.3), ("b".to_string(), 0.2), ("c".to_string(), 0.1)]);
+        let dist = dist_to_gotos(&node, &probs);
+        // leaf_x: 0.3+0.2=0.5, leaf_y: 0.1, 残余 0.4 → leaf_f；BTreeMap 序：leaf_f, leaf_x, leaf_y
+        assert_eq!(dist.len(), 3);
+        let m: std::collections::HashMap<_, _> = dist.iter().cloned().collect();
+        assert!((m["leaf_x"] - 0.5).abs() < 1e-9);
+        assert!((m["leaf_y"] - 0.1).abs() < 1e-9);
+        assert!((m["leaf_f"] - 0.4).abs() < 1e-9);
+        let sum: f64 = dist.iter().map(|(_, w)| w).sum();
+        assert!((sum - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn decision_from_dist_argmax_and_default_remainder() {
+        use std::collections::BTreeMap;
+        let lbl = labels(); // {"go" → "leaf_l"}
+        let node = LlmNode { inputs: &[], prompt: "q", labels: &lbl, default: "leaf_f" };
+        // go=0.9 胜出
+        let d = decision_from_dist(&node, &BTreeMap::from([("go".to_string(), 0.9)]), "r");
+        assert_eq!(d.goto, "leaf_l");
+        assert_eq!(d.label, "go");
+        assert!((d.confidence - 0.9).abs() < 1e-9);
+        // go=0.3 → 残余 0.7 给 default 胜出
+        let d2 = decision_from_dist(&node, &BTreeMap::from([("go".to_string(), 0.3)]), "r");
+        assert_eq!(d2.goto, "leaf_f");
+        assert_eq!(d2.label, "default");
+        assert!((d2.confidence - 0.7).abs() < 1e-9);
     }
 }
