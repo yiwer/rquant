@@ -59,12 +59,24 @@ pub(crate) struct LeafSpec {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct RiskSpec {
+    #[serde(default)]
+    pub(crate) stop_loss: Option<f64>,
+    #[serde(default)]
+    pub(crate) take_profit: Option<f64>,
+    #[serde(default)]
+    pub(crate) max_hold_bars: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct TreeSpec {
     pub(crate) meta: Meta,
     #[serde(default)]
     pub(crate) params: HashMap<String, f64>,
     #[serde(default)]
     pub(crate) factors: serde_yaml::Mapping,
+    #[serde(default)]
+    pub(crate) risk: Option<RiskSpec>,
     pub(crate) root: String,
     pub(crate) nodes: HashMap<String, NodeSpec>,
     pub(crate) leaves: HashMap<String, LeafSpec>,

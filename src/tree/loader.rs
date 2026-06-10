@@ -120,6 +120,17 @@ pub struct Leaf {
     pub horizon: usize,
 }
 
+/// 风险管理块：止损、止盈、最大持仓时间。
+#[derive(Debug, Clone)]
+pub struct Risk {
+    /// 止损幅度，必须 > 0（可选）。
+    pub stop_loss: Option<f64>,
+    /// 止盈幅度，必须 > 0（可选）。
+    pub take_profit: Option<f64>,
+    /// 最大持仓 bar 数，必须 >= 1（可选）。
+    pub max_hold_bars: Option<usize>,
+}
+
 /// 加载并验证后的运行时决策树。
 ///
 /// 验证保证：DAG（无环）、所有节点从 root 可达、
@@ -128,6 +139,8 @@ pub struct Leaf {
 pub struct Tree {
     /// 树级元信息（名称、前瞻窗口、允许的 stance 集合）。
     pub meta: Meta,
+    /// 风险管理块（可选）。
+    pub risk: Option<Risk>,
     /// 根节点 ID（必须为节点，不得为叶子）。
     pub root: String,
     /// 所有中间节点，键为节点 ID。
@@ -268,8 +281,37 @@ pub fn load_tree_str(src: &str) -> Result<Tree> {
         }
     }
 
+    let risk = if let Some(r) = spec.risk {
+        let stop_loss = r.stop_loss;
+        let take_profit = r.take_profit;
+        let max_hold_bars = r.max_hold_bars;
+
+        // Validate: stop_loss and take_profit must be > 0 if present
+        if let Some(sl) = stop_loss
+            && sl <= 0.0
+        {
+            return Err(Error::Tree(format!("stop_loss must be > 0, got {sl}")));
+        }
+        if let Some(tp) = take_profit
+            && tp <= 0.0
+        {
+            return Err(Error::Tree(format!("take_profit must be > 0, got {tp}")));
+        }
+        // Validate: max_hold_bars must be >= 1 if present
+        if let Some(mh) = max_hold_bars
+            && mh < 1
+        {
+            return Err(Error::Tree(format!("max_hold_bars must be >= 1, got {mh}")));
+        }
+
+        Some(Risk { stop_loss, take_profit, max_hold_bars })
+    } else {
+        None
+    };
+
     let tree = Tree {
         meta: spec.meta.clone(),
+        risk,
         root: spec.root.clone(),
         nodes,
         leaves,
@@ -683,5 +725,30 @@ leaves:
         assert!(load_tree_str(&yaml("entry_price")).is_err());
         assert!(load_tree_str(&yaml("bars_held")).is_err());
         assert!(load_tree_str(&yaml("unreal_pnl")).is_err());
+    }
+
+    #[test]
+    fn risk_block_parsed_and_validated() {
+        let yaml = |risk: &str| format!(r#"
+meta: {{ name: t, forward_window: 3, stances: [long, flat] }}
+{risk}
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ {{ when: "close > 1", goto: leaf_l, label: up }} ]
+    default: {{ goto: leaf_f, label: flat }}
+leaves:
+  leaf_l: {{ stance: long }}
+  leaf_f: {{ stance: flat }}
+"#);
+        let t = load_tree_str(&yaml("risk: { stop_loss: 0.05, max_hold_bars: 60 }")).unwrap();
+        let r = t.risk.as_ref().unwrap();
+        assert!((r.stop_loss.unwrap() - 0.05).abs() < 1e-12);
+        assert_eq!(r.max_hold_bars, Some(60));
+        assert!(r.take_profit.is_none());
+        assert!(load_tree_str(&yaml("")).unwrap().risk.is_none());
+        assert!(load_tree_str(&yaml("risk: { stop_loss: -0.1 }")).is_err());
+        assert!(load_tree_str(&yaml("risk: { max_hold_bars: 0 }")).is_err());
     }
 }
