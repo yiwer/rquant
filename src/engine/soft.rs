@@ -230,4 +230,29 @@ leaves:
         let sum: f64 = st.leaf_probs.values().sum();
         assert!((sum - 1.0).abs() < 1e-9);
     }
+
+    const QUANT_AUTO_TREE: &str = r#"
+meta: { name: t, forward_window: 3, stances: [long, flat] }
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "close > sma(close,3)", strength: "auto", goto: leaf_l, label: up } ]
+    default: { goto: leaf_f, label: flat }
+leaves:
+  leaf_l: { stance: long }
+  leaf_f: { stance: flat }
+"#;
+
+    #[tokio::test]
+    async fn quant_auto_strength_splits_soft() {
+        let tree = load_tree_str(QUANT_AUTO_TREE).unwrap();
+        let st = traverse_soft(&tree, &ctx(&[1.0, 2.0, 3.0, 4.0, 5.0]), &LlmEvaluator::Disabled).await.unwrap();
+        // close=5 vs sma=4：margin 25%，scale 2% → 接近 1 但 <1；两叶都有质量、Σ=1
+        let l = st.leaf_probs["leaf_l"];
+        assert!(l > 0.5 && l < 1.0, "auto strength should soft-split, got {l}");
+        assert!(st.leaf_probs.contains_key("leaf_f"));
+        let sum: f64 = st.leaf_probs.values().sum();
+        assert!((sum - 1.0).abs() < 1e-9);
+    }
 }

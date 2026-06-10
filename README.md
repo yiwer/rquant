@@ -83,6 +83,10 @@ branches:
 `sigmoid(x)=1/(1+e^-x)` 是内置 DSL 函数；尺度（`margin/scale`）由作者按指标量纲选定。
 （见 `examples/strength_tree.yaml`。）
 
+`strength: "auto"`（或 `"auto(0.05)"` 自定尺度）= 对该支 `when` 做模糊求值：
+比较 → `sigmoid((lhs−rhs)/(scale·max(|lhs|,|rhs|)))`，`and`=min、`or`=max、`not`=1−x。
+适合**量纲相近的双边比较**（如 `close > sma(close,20)`）；对 `x > 0` 型比较相对尺度会饱和趋硬——这类请写显式 `strength` 公式。
+
 ## 取数（新浪 fetcher）
 
 从新浪财经拉 A股 K 线到本地 CSV（再喂给 backtest）：
