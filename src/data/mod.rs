@@ -8,3 +8,4 @@ pub mod news;
 pub mod sina;
 pub mod universe;
 pub mod tencent;
+pub mod adjust;
