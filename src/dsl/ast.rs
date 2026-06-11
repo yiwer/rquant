@@ -53,6 +53,8 @@ pub enum Expr {
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
     /// 函数调用（如 `sma(close, 20)`、`sigmoid(x)`）。
     Call(String, Vec<Expr>),
+    /// 因子缓存槽：loader 给每个因子体包一层；同一 Context 内首算后命中（dsl/eval.rs）。
+    Cached(u32, Box<Expr>),
 }
 
 /// 把表达式中的 Ident(name) 按 env 替换为对应子树（深拷贝）；params/factors 加载期内联用。
@@ -68,6 +70,7 @@ pub fn substitute(expr: &Expr, env: &HashMap<String, Expr>) -> Expr {
             Expr::Call(name.clone(), args.iter().map(|a| substitute(a, env)).collect())
         }
         Expr::Index(e, k) => Expr::Index(Box::new(substitute(e, env)), *k),
+        Expr::Cached(id, e) => Expr::Cached(*id, Box::new(substitute(e, env))),
     }
 }
 

@@ -35,6 +35,7 @@ pub fn eval_fuzzy(expr: &Expr, ctx: &Context, scale: f64) -> Result<f64> {
             _ => Err(Error::Eval("fuzzy: expected boolean expression".into())),
         },
         Expr::Unary(UnaryOp::Not, e) => Ok(1.0 - eval_fuzzy(e, ctx, scale)?),
+        Expr::Cached(_, e) => eval_fuzzy(e, ctx, scale),
         _ => Err(Error::Eval("fuzzy: expected boolean expression".into())),
     }
 }
@@ -105,6 +106,14 @@ pub fn eval(expr: &Expr, ctx: &Context) -> Result<Value> {
                 }
 
             })
+        }
+        Expr::Cached(id, inner) => {
+            if let Some(v) = ctx.eval_cache.borrow().get(id) {
+                return Ok(v.clone());
+            }
+            let v = eval(inner, ctx)?;
+            ctx.eval_cache.borrow_mut().insert(*id, v.clone());
+            Ok(v)
         }
         Expr::Call(name, args) => eval_call(name, args, ctx),
     }
@@ -236,6 +245,7 @@ fn eval_bool_series(expr: &Expr, ctx: &Context) -> Result<Vec<bool>> {
             )),
         },
         Expr::Unary(UnaryOp::Not, e) => Ok(eval_bool_series(e, ctx)?.into_iter().map(|x| !x).collect()),
+        Expr::Cached(_, e) => eval_bool_series(e, ctx),
         Expr::Call(name, args) if name == "crossover" || name == "crossunder" => {
             if args.len() != 2 {
                 return Err(Error::Eval(format!("{name} expects 2 args, got {}", args.len())));
@@ -391,7 +401,23 @@ mod tests {
             })
             .collect();
         let t = bars.last().unwrap().time;
-        Context { t, primary: Window { bars: bars.clone() }, context: Window { bars }, news: None, aux: std::collections::BTreeMap::new(), sim: crate::features::context::SimState::default() }
+        Context { t, primary: Window { bars: bars.clone() }, context: Window { bars }, news: None, aux: std::collections::BTreeMap::new(), sim: crate::features::context::SimState::default(), eval_cache: Default::default() }
+    }
+
+    #[test]
+    fn cached_expr_memoizes_per_context() {
+        let ctx = ctx_from_closes(&[1.0, 2.0, 3.0]);
+        let e = Expr::Cached(7, Box::new(parse_str("sma(close, 2)").unwrap()));
+        // 首次求值：真算，并写入缓存槽
+        let v1 = eval(&e, &ctx).unwrap();
+        assert!(matches!(v1, Value::Series(_)));
+        assert!(ctx.eval_cache.borrow().contains_key(&7));
+        // 改写缓存槽为哨兵 → 第二次求值必须命中缓存（返回哨兵而非重算）
+        ctx.eval_cache.borrow_mut().insert(7, Value::Scalar(42.0));
+        assert_eq!(eval(&e, &ctx).unwrap(), Value::Scalar(42.0));
+        // 不同槽位互不串扰
+        let e2 = Expr::Cached(8, Box::new(parse_str("close").unwrap()));
+        assert!(matches!(eval(&e2, &ctx).unwrap(), Value::Series(_)));
     }
 
     #[test]

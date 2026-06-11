@@ -48,7 +48,7 @@ fn check_no_unknown_idents(expr: &Expr, where_: &str) -> Result<()> {
             )))
         }
         Expr::Number(_) => Ok(()),
-        Expr::Unary(_, e) | Expr::Index(e, _) => check_no_unknown_idents(e, where_),
+        Expr::Unary(_, e) | Expr::Index(e, _) | Expr::Cached(_, e) => check_no_unknown_idents(e, where_),
         Expr::Binary(_, l, r) => {
             check_no_unknown_idents(l, where_)?;
             check_no_unknown_idents(r, where_)
@@ -877,6 +877,7 @@ leaves:
             news: None,
             aux: std::collections::BTreeMap::new(),
             sim: crate::features::context::SimState::default(),
+            eval_cache: Default::default(),
         }
     }
 

@@ -93,7 +93,7 @@ mod tests {
         let bars: Vec<Bar> = closes.iter().enumerate().map(|(i, &c)| Bar {
             time: base + chrono::Duration::minutes(i as i64 * 15), open: c, high: c, low: c, close: c, volume: 1.0,
         }).collect();
-        Context { t: base, primary: Window { bars: bars.clone() }, context: Window { bars }, news, aux: std::collections::BTreeMap::new(), sim: crate::features::context::SimState::default() }
+        Context { t: base, primary: Window { bars: bars.clone() }, context: Window { bars }, news, aux: std::collections::BTreeMap::new(), sim: crate::features::context::SimState::default(), eval_cache: Default::default() }
     }
 
     #[test]

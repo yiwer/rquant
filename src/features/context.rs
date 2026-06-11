@@ -45,6 +45,9 @@ pub struct Context {
     pub news: Option<NewsView>,
     pub aux: BTreeMap<String, AuxView>,
     pub sim: SimState,
+    /// 因子求值缓存（Expr::Cached 槽位 → 值）；每个决策点随 Context 新建。
+    /// 安全性：展开后的因子是 Context 的纯函数，eval 全程同步、借用不跨 await。
+    pub eval_cache: std::cell::RefCell<std::collections::HashMap<u32, crate::dsl::eval::Value>>,
 }
 
 fn trailing_visible(bars: &[Bar], t: NaiveDateTime, window: usize) -> Vec<Bar> {
@@ -86,6 +89,7 @@ pub fn build_context(
         news: news_view,
         aux: aux_views,
         sim: SimState::default(),
+        eval_cache: Default::default(),
     }
 }
 

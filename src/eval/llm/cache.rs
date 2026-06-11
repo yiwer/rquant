@@ -127,6 +127,7 @@ leaves:
             news: None,
             aux: BTreeMap::new(),
             sim: crate::features::context::SimState::default(),
+            eval_cache: Default::default(),
         };
 
         let render_key = |id: &str| match tree.nodes.get(id).unwrap() {

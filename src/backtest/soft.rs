@@ -239,6 +239,7 @@ mod tests {
             news: None,
             aux: BTreeMap::new(),
             sim: crate::features::context::SimState::default(),
+            eval_cache: Default::default(),
         }
     }
     const TREE: &str = r#"
@@ -462,6 +463,7 @@ leaves:
             news: None,
             aux: BTreeMap::new(),
             sim: crate::features::context::SimState::default(),
+            eval_cache: Default::default(),
         }
     }
 
