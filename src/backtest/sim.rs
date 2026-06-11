@@ -185,7 +185,7 @@ pub struct TripSnapshot {
     pub max_abs_pos: f64,
 }
 
-/// SimAccount 可序列化快照（entry_price NaN ↔ None：serde_json 不允许 NaN）。
+/// SimAccount 可序列化快照（entry_price 非有限(NaN/±Inf) ↔ None：serde_json 不允许非有限值）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountSnapshot {
     pub pos: f64,
@@ -203,7 +203,7 @@ impl SimAccount {
     pub fn snapshot(&self) -> AccountSnapshot {
         AccountSnapshot {
             pos: self.pos,
-            entry_price: if self.entry_price.is_nan() { None } else { Some(self.entry_price) },
+            entry_price: if self.entry_price.is_finite() { Some(self.entry_price) } else { None },
             bars_held: self.bars_held,
             nav: self.nav,
             peak_nav: self.peak_nav,
@@ -923,6 +923,10 @@ time,open,high,low,close,volume
         assert_eq!(r1.is_some(), r2.is_some());
         assert!((a1.nav - a2.nav).abs() < 1e-15 && (a1.pos - a2.pos).abs() < 1e-15);
         assert_eq!(a1.bars_held, a2.bars_held);
+        assert!((a1.turnover - a2.turnover).abs() < 1e-15);
+        assert!((a1.peak_nav - a2.peak_nav).abs() < 1e-15);
+        assert!((a1.max_drawdown - a2.max_drawdown).abs() < 1e-15);
+        assert_eq!(a1.last_increase_date, a2.last_increase_date);
         // 空仓账户：entry NaN → snapshot None → restore NaN
         let flat = SimAccount::default();
         let s = flat.snapshot();
