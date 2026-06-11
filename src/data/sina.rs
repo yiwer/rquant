@@ -13,13 +13,19 @@ struct SinaRow {
 }
 
 /// 解析新浪 getKLineData 返回的 JSON 数组 → 按 time 升序的 Bar 列表。
-/// 新浪字段均为字符串；day 形如 "2024-01-02 15:00:00"（intraday）。
+/// 新浪字段均为字符串；day 形如 "2024-01-02 15:00:00"（intraday）
+/// 或 "2024-01-02"（scale=240 日线）——后者按当日 15:00:00（收盘）记时间，
+/// 避免 00:00:00 让 time<=t 闸门在开盘前就"看到"当日收盘（未来函数）。
 pub fn parse_sina_klines(json: &str) -> Result<Vec<Bar>> {
     let rows: Vec<SinaRow> = serde_json::from_str(json.trim())
         .map_err(|e| Error::Data(format!("sina bad json: {e}")))?;
     let mut bars: Vec<Bar> = Vec::with_capacity(rows.len());
     for r in rows {
         let time = NaiveDateTime::parse_from_str(&r.day, "%Y-%m-%d %H:%M:%S")
+            .or_else(|_| {
+                chrono::NaiveDate::parse_from_str(&r.day, "%Y-%m-%d")
+                    .map(|d| d.and_hms_opt(15, 0, 0).expect("15:00:00 is valid"))
+            })
             .map_err(|e| Error::Data(format!("sina bad day '{}': {e}", r.day)))?;
         let num = |s: &str, field: &str| -> Result<f64> {
             s.parse::<f64>()
@@ -122,6 +128,25 @@ mod tests {
         assert_eq!(bars[0].volume, 900.0);
         assert_eq!(bars[1].close, 10.2);
         assert!(bars[0].time < bars[1].time);
+    }
+
+    #[test]
+    fn parses_daily_date_only_rows_as_1500() {
+        // scale=240（日线）的 day 无时间部分 → 解析为当日 15:00:00（收盘，避免 00:00 引入未来函数）
+        let json = r#"[
+          {"day":"2025-03-17","open":"6.750","high":"6.830","low":"6.740","close":"6.810","volume":"358619828"},
+          {"day":"2025-03-18","open":"6.830","high":"6.840","low":"6.770","close":"6.800","volume":"236952810"}
+        ]"#;
+        let bars = parse_sina_klines(json).unwrap();
+        assert_eq!(bars.len(), 2);
+        assert_eq!(
+            bars[0].time,
+            chrono::NaiveDate::from_ymd_opt(2025, 3, 17)
+                .unwrap()
+                .and_hms_opt(15, 0, 0)
+                .unwrap()
+        );
+        assert_eq!(bars[0].close, 6.81);
     }
 
     #[test]
