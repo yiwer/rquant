@@ -192,7 +192,10 @@ fn tail_align(a: &Value, b: &Value) -> Result<(Vec<f64>, Vec<f64>)> {
 }
 
 /// 布尔序列求值（count/barssince 的条件臂）：比较 → 逐位（任一侧 NaN → 该位 false），
-/// and/or/not → 逐位组合（尾对齐到公共长度），其余表达式形态 → Err。
+/// and/or/not → 逐位组合（尾对齐到公共长度），crossover/crossunder → 逐位事件序列，
+/// 其余表达式形态 → Err。
+/// 注意：此处的 crossover/crossunder 是逐位事件语义，与 eval_call 的标量 Bool 版
+///（只看末两位）是同名函数的两种刻意并存的语义——条件序列上下文 vs 普通 when 上下文。
 fn eval_bool_series(expr: &Expr, ctx: &Context) -> Result<Vec<bool>> {
     match expr {
         Expr::Binary(op, l, r) => match op {
@@ -227,7 +230,7 @@ fn eval_bool_series(expr: &Expr, ctx: &Context) -> Result<Vec<bool>> {
                     .collect())
             }
             _ => Err(Error::Eval(
-                "count/barssince: condition must be a comparison or boolean combination".into(),
+                "count/barssince: condition must be a comparison, boolean combination, or crossover/crossunder call".into(),
             )),
         },
         Expr::Unary(UnaryOp::Not, e) => Ok(eval_bool_series(e, ctx)?.into_iter().map(|x| !x).collect()),
@@ -251,7 +254,7 @@ fn eval_bool_series(expr: &Expr, ctx: &Context) -> Result<Vec<bool>> {
                 .collect())
         }
         _ => Err(Error::Eval(
-            "count/barssince: condition must be a comparison or boolean combination".into(),
+            "count/barssince: condition must be a comparison, boolean combination, or crossover/crossunder call".into(),
         )),
     }
 }
@@ -680,6 +683,8 @@ mod tests {
         assert_eq!(f("count(crossover(close, 2.5) and close > 0, 6) == 3"), Value::Bool(true));
         // barssince + crossover：最近一次上穿在 idx5（当前 bar）→ 0
         assert_eq!(f("barssince(crossover(close, 2.5)) == 0"), Value::Bool(true));
+        // 预热 NaN 段不产生事件：sma(close,3)=[N,N,2.0,2.67,2.33,2.67]，上穿仅 idx3、idx5 → 2
+        assert_eq!(f("count(crossover(sma(close,3), 2.5), 6) == 2"), Value::Bool(true));
     }
 
     #[test]
