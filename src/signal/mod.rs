@@ -371,6 +371,264 @@ pub async fn run_signal_single(
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// 组合清单引擎
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// 组合持仓持久化状态（JSON 落盘，人可读）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HoldingsState {
+    /// 协议版本 = 1。
+    pub version: u32,
+    /// 树名（防串树）。
+    pub tree_name: String,
+    /// 最后一次信号生成的时间（目标持仓的时间点）。
+    pub last_time: Option<NaiveDateTime>,
+    /// 当前目标持仓：symbol → weight（合计 ≤ 1.0）。
+    pub holdings: BTreeMap<String, f64>,
+}
+
+/// 交易指令动作。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum TradeAction {
+    /// 买入新头寸。
+    Buy,
+    /// 卖出全部头寸。
+    Sell,
+    /// 调整现有头寸。
+    Adjust,
+    /// 保持不变。
+    Hold,
+}
+
+/// 单笔交易指令。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TradeInstr {
+    /// 标的代码。
+    pub symbol: String,
+    /// 交易动作。
+    pub action: TradeAction,
+    /// 原权重（当前持仓）。
+    pub from_w: f64,
+    /// 目标权重。
+    pub to_w: f64,
+}
+
+/// 组合信号输出（目标组成 + 交易清单）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PortfolioSignal {
+    /// 信号生成时间。
+    pub t: NaiveDateTime,
+    /// 本轮新鲜标的数（至少有一根当期 bar）。
+    pub n_fresh: usize,
+    /// 入选目标：(symbol, weight) 列表。
+    pub targets: Vec<(String, f64)>,
+    /// 交易清单（按 symbol 字典序）。
+    pub trades: Vec<TradeInstr>,
+}
+
+/// 组合信号运行配置。
+#[derive(Debug, Clone)]
+pub struct SignalPortfolioConfig {
+    /// 决策树 YAML 文件路径。
+    pub tree_path: PathBuf,
+    /// Universe CSV 路径（symbol,primary[,context]，按 symbol 字典序）。
+    pub universe_path: PathBuf,
+    /// 入选数量（top-N）。
+    pub top: usize,
+    /// 特征工程窗口大小（单位：bars）。
+    pub window: usize,
+    /// 预热 bar 数（单位：bars，预热期不生成信号）。
+    pub warmup: usize,
+    /// 交易成本（单位：bp，万分比；清单不记账，保留一致性）。
+    pub cost_bps: f64,
+    /// 是否使用 soft 遍历（概率）。
+    pub soft: bool,
+    /// 辅助表路径列表。
+    pub aux_paths: Vec<(String, PathBuf)>,
+    /// Holdings state JSON 路径，读写均经 read/write_holdings_state。
+    pub state_path: PathBuf,
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Holdings State IO
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// 读取 holdings state 文件。
+/// - 不存在 → `Ok(None)`
+/// - 空/损坏文件 → `Err`（含 "corrupt"）
+/// - version ≠ 1 → `Err`
+/// - tree_name 不符 → `Err`（防串树）
+pub fn read_holdings_state(path: &Path, tree_name: &str) -> Result<Option<HoldingsState>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = std::fs::read_to_string(path)?;
+    let st: HoldingsState = serde_json::from_str(&raw).map_err(|e| {
+        Error::Data(format!(
+            "portfolio state corrupt: {e}（如需重建请删除该文件）"
+        ))
+    })?;
+    if st.version != STATE_VERSION {
+        return Err(Error::Data(format!(
+            "portfolio state version {} unsupported (expected {})（请删除 state 文件重建）",
+            st.version, STATE_VERSION
+        )));
+    }
+    if st.tree_name != tree_name {
+        return Err(Error::Data(format!(
+            "portfolio state tree_name '{}' does not match requested tree '{tree_name}'（state 与 --tree 不匹配：换 state 文件或删除重建）",
+            st.tree_name
+        )));
+    }
+    Ok(Some(st))
+}
+
+/// 将 holdings state 写入文件（JSON pretty，人可读）。
+pub fn write_holdings_state(path: &Path, st: &HoldingsState) -> Result<()> {
+    let json = serde_json::to_string_pretty(st)?;
+    std::fs::write(path, json)?;
+    Ok(())
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 组合信号主函数
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// 组合信号生成引擎。
+///
+/// 返回 `(信号, 更新后 state)`；落盘由调用方按 --commit 决定。
+pub async fn run_signal_portfolio(
+    cfg: &SignalPortfolioConfig,
+    llm: &LlmEvaluator,
+) -> Result<(PortfolioSignal, HoldingsState)> {
+    // ── 1. 加载树 + state ────────────────────────────────────────────────────
+    let tree = crate::tree::loader::load_tree_file(&cfg.tree_path)?;
+    let tree_name = tree.meta.name.clone();
+
+    let state_opt = read_holdings_state(&cfg.state_path, &tree_name)?;
+    let old_holdings = match state_opt {
+        Some(ref st) => st.holdings.clone(),
+        None => BTreeMap::new(),
+    };
+
+    // ── 2. 加载 universe + 行情数据 ──────────────────────────────────────────
+    let universe = crate::data::universe::read_universe_csv(&cfg.universe_path)?;
+
+    let mut aux_tables: BTreeMap<String, AuxTable> = BTreeMap::new();
+    for (name, p) in &cfg.aux_paths {
+        aux_tables.insert(name.clone(), crate::data::aux_table::read_aux_csv(p)?);
+    }
+
+    // 逐标的加载 bars（primary + context 均加载）
+    let mut primaries: Vec<Vec<crate::data::bar::Bar>> = Vec::with_capacity(universe.len());
+    let mut contexts: Vec<Vec<crate::data::bar::Bar>> = Vec::with_capacity(universe.len());
+    for entry in &universe {
+        primaries.push(crate::data::reader::read_bars_csv(&entry.primary)?);
+        contexts.push(crate::data::reader::read_bars_csv(&entry.context)?);
+    }
+
+    // ── 3. 时间线 ────────────────────────────────────────────────────────────
+    let timeline = crate::backtest::portfolio::build_timeline(&primaries);
+    if timeline.is_empty() {
+        return Err(Error::Data("empty timeline".into()));
+    }
+    let t_last = *timeline.last().unwrap();
+
+    // ── 4. 逐标的打分 ───────────────────────────────────────────────────────
+    let mut scores: Vec<(String, f64)> = Vec::new();
+    for (i, entry) in universe.iter().enumerate() {
+        if let Some(s) = crate::backtest::portfolio::score_symbol(
+            &primaries[i],
+            &contexts[i],
+            &aux_tables,
+            &tree,
+            llm,
+            cfg.soft,
+            t_last,
+            cfg.window,
+        )
+        .await?
+        {
+            scores.push((entry.symbol.clone(), s));
+        }
+    }
+    let n_fresh = scores.len();
+
+    // ── 5. select_top → 等权目标 ────────────────────────────────────────────
+    let selected = crate::backtest::portfolio::select_top(&scores, cfg.top);
+    let n_selected = selected.len();
+
+    let targets: Vec<(String, f64)> = if n_selected > 0 {
+        let eq_weight = 1.0 / n_selected as f64;
+        selected
+            .iter()
+            .map(|(symbol, _)| (symbol.clone(), eq_weight))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let targets_map: BTreeMap<String, f64> = targets.iter().cloned().collect();
+
+    // ── 6. 生成交易清单 ──────────────────────────────────────────────────────
+    // 并集 = old_holdings keys ∪ targets keys，遍历字典序
+    let mut all_symbols: Vec<String> = old_holdings
+        .keys()
+        .chain(targets_map.keys())
+        .cloned()
+        .collect();
+    all_symbols.sort();
+    all_symbols.dedup();
+
+    let mut trades: Vec<TradeInstr> = Vec::new();
+    for symbol in &all_symbols {
+        let from_w = old_holdings.get(symbol).copied().unwrap_or(0.0);
+        let to_w = targets_map.get(symbol).copied().unwrap_or(0.0);
+
+        let action = if (from_w - to_w).abs() < EPS {
+            TradeAction::Hold
+        } else if from_w < EPS && to_w > EPS {
+            TradeAction::Buy
+        } else if from_w > EPS && to_w < EPS {
+            TradeAction::Sell
+        } else {
+            TradeAction::Adjust
+        };
+
+        trades.push(TradeInstr {
+            symbol: symbol.clone(),
+            action,
+            from_w,
+            to_w,
+        });
+    }
+
+    // ── 7. 新鲜度检查 ────────────────────────────────────────────────────────
+    if n_fresh < universe.len() {
+        eprintln!(
+            "[rquant portfolio] freshness: {n_fresh}/{} symbols have current bars",
+            universe.len()
+        );
+    }
+
+    // ── 8. 组装输出 ──────────────────────────────────────────────────────────
+    let signal = PortfolioSignal {
+        t: t_last,
+        n_fresh,
+        targets,
+        trades,
+    };
+
+    let new_state = HoldingsState {
+        version: STATE_VERSION,
+        tree_name,
+        last_time: Some(t_last),
+        holdings: targets_map,
+    };
+
+    Ok((signal, new_state))
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // 测试
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -378,6 +636,7 @@ pub async fn run_signal_single(
 mod tests {
     use super::*;
     use crate::eval::llm::LlmEvaluator;
+    use chrono::NaiveDate;
     use std::io::Write;
 
     // ── 测试辅助 ──────────────────────────────────────────────────────────────
@@ -753,5 +1012,410 @@ risk:
         let path = tmp.path().join("nonexistent.json");
         let result = read_paper_state(&path, "any").unwrap();
         assert!(result.is_none(), "missing file must return None");
+    }
+
+    // ── Step 1: Portfolio 类型 + IO ────────────────────────────────────────────
+
+    #[test]
+    fn holdings_state_io_roundtrip() {
+        let st = HoldingsState {
+            version: 1,
+            tree_name: "test_tree".to_string(),
+            last_time: Some(NaiveDate::from_ymd_opt(2024, 1, 2).unwrap().and_hms_opt(10, 0, 0).unwrap()),
+            holdings: BTreeMap::from([
+                ("A".to_string(), 0.5),
+                ("B".to_string(), 0.5),
+            ]),
+        };
+        let f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+        write_holdings_state(f.path(), &st).unwrap();
+        let loaded = read_holdings_state(f.path(), "test_tree")
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded.version, 1);
+        assert_eq!(loaded.tree_name, "test_tree");
+        assert_eq!(loaded.holdings.get("A"), Some(&0.5));
+        assert_eq!(loaded.holdings.get("B"), Some(&0.5));
+    }
+
+    #[test]
+    fn holdings_state_version_mismatch() {
+        let st = HoldingsState {
+            version: 2,
+            tree_name: "test_tree".to_string(),
+            last_time: None,
+            holdings: BTreeMap::new(),
+        };
+        let f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+        write_holdings_state(f.path(), &st).unwrap();
+        let err = read_holdings_state(f.path(), "test_tree").unwrap_err();
+        assert!(
+            err.to_string().contains("version"),
+            "version mismatch must mention 'version', got: {err}"
+        );
+    }
+
+    #[test]
+    fn holdings_state_tree_name_mismatch() {
+        let st = HoldingsState {
+            version: 1,
+            tree_name: "tree_a".to_string(),
+            last_time: None,
+            holdings: BTreeMap::new(),
+        };
+        let f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+        write_holdings_state(f.path(), &st).unwrap();
+        let err = read_holdings_state(f.path(), "tree_b").unwrap_err();
+        assert!(
+            err.to_string().contains("tree_a") || err.to_string().contains("tree_b"),
+            "tree_name mismatch must mention names, got: {err}"
+        );
+    }
+
+    #[test]
+    fn missing_holdings_state_file_returns_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("nonexistent.json");
+        let result = read_holdings_state(&path, "any").unwrap();
+        assert!(result.is_none(), "missing file must return None");
+    }
+
+    // ── Step 2: Portfolio 信号生成 ──────────────────────────────────────────
+
+    /// 生成四叉树：根据 close 值路由到不同的叶子，均为 long。
+    /// - close < 10.15 → leaf_a（weight 0.9）
+    /// - 10.15 <= close < 10.25 → leaf_c（weight 0.8）
+    /// - 10.25 <= close < 10.35 → leaf_d（weight 0.7）
+    /// - close >= 10.35 → leaf_b（weight 0.1，最低得分）
+    fn four_way_tree() -> String {
+        r#"
+meta: { name: portfolio_test, forward_window: 1, stances: [long] }
+root: router
+nodes:
+  router:
+    type: quant
+    branches:
+      - when: "close < 10.15"
+        goto: leaf_a
+        label: score_a
+      - when: "close < 10.25"
+        goto: leaf_c
+        label: score_c
+      - when: "close < 10.35"
+        goto: leaf_d
+        label: score_d
+    default: { goto: leaf_b, label: score_b }
+leaves:
+  leaf_a: { stance: long, weight: 0.9 }
+  leaf_b: { stance: long, weight: 0.1 }
+  leaf_c: { stance: long, weight: 0.8 }
+  leaf_d: { stance: long, weight: 0.7 }
+"#
+        .to_string()
+    }
+
+    /// 生成一致权重树（所有标的 score = 0.5）。
+    fn uniform_tree() -> String {
+        r#"
+meta: { name: portfolio_test_uniform, forward_window: 1, stances: [long] }
+root: router
+nodes:
+  router:
+    type: quant
+    branches: []
+    default: { goto: leaf_long, label: uniform }
+leaves:
+  leaf_long: { stance: long, weight: 0.5 }
+"#
+        .to_string()
+    }
+
+    fn gen_bars_csv(_symbol: &str, start_day: u32, n_bars: usize, _last_close: f64) -> String {
+        let mut s = String::from("time,open,high,low,close,volume\n");
+        for i in 0..n_bars {
+            let price = 10.0 + i as f64 * 0.1;
+            let hour = 9 + (45 + i * 15) / 60;
+            let minute = (45 + i * 15) % 60;
+            s.push_str(&format!(
+                "2024-01-{:02} {:02}:{:02}:00,{p},{p},{p},{p},1000\n",
+                start_day,
+                hour,
+                minute,
+                p = price
+            ));
+        }
+        s
+    }
+
+
+    /// 四象限：旧持仓 {A:0.5, B:0.5} → 新目标 {A:1/3, C:1/3, D:1/3}（top=3）。
+    /// 预期 trades：A=Adjust(0.5→1/3)、B=Sell(0.5→0)、C=Buy(0→1/3)、D=Buy(0→1/3)。
+    /// 用四叉树根据 close 值路由：
+    /// - 数据 A：close < 10.15 → leaf_a（long 0.9）
+    /// - 数据 B：close >= 10.35 → leaf_b（flat 1.0 → score=0）
+    /// - 数据 C：10.15 <= close < 10.25 → leaf_c（long 0.8）
+    /// - 数据 D：10.25 <= close < 10.35 → leaf_d（long 0.7）
+    #[tokio::test]
+    async fn portfolio_four_quadrants() {
+        let tree_f = write_file(&four_way_tree(), ".yaml");
+
+        // 生成 A, B, C, D 的行情 CSV（都有数据，close 值不同以触发不同的路由）
+        // A: 10.0+0.1*i，最后 close≈10.7
+        let mut bars_a = String::from("time,open,high,low,close,volume\n");
+        for i in 0..8 {
+            let p = 10.0 + 0.05 * i as f64;
+            bars_a.push_str(&format!(
+                "2024-01-02 {:02}:00:00,{p},{p},{p},{p},1000\n",
+                9 + i
+            ));
+        }
+
+        // B: 10.35+ 以上（触发 default → leaf_b flat）
+        let mut bars_b = String::from("time,open,high,low,close,volume\n");
+        for i in 0..8 {
+            let p = 10.35 + 0.05 * i as f64;
+            bars_b.push_str(&format!(
+                "2024-01-02 {:02}:00:00,{p},{p},{p},{p},1000\n",
+                9 + i
+            ));
+        }
+
+        // C: 10.15..10.25（触发 leaf_c）
+        let mut bars_c = String::from("time,open,high,low,close,volume\n");
+        for i in 0..8 {
+            let p = 10.15 + 0.01 * i as f64;
+            bars_c.push_str(&format!(
+                "2024-01-02 {:02}:00:00,{p},{p},{p},{p},1000\n",
+                9 + i
+            ));
+        }
+
+        // D: 10.25..10.35（触发 leaf_d）
+        let mut bars_d = String::from("time,open,high,low,close,volume\n");
+        for i in 0..8 {
+            let p = 10.25 + 0.01 * i as f64;
+            bars_d.push_str(&format!(
+                "2024-01-02 {:02}:00:00,{p},{p},{p},{p},1000\n",
+                9 + i
+            ));
+        }
+
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let f_a = write_file(&bars_a, ".csv");
+        let f_b = write_file(&bars_b, ".csv");
+        let f_c = write_file(&bars_c, ".csv");
+        let f_d = write_file(&bars_d, ".csv");
+
+        let mut universe_content = String::from("symbol,primary\n");
+        universe_content.push_str(&format!("A,{}\n", f_a.path().to_string_lossy()));
+        universe_content.push_str(&format!("B,{}\n", f_b.path().to_string_lossy()));
+        universe_content.push_str(&format!("C,{}\n", f_c.path().to_string_lossy()));
+        universe_content.push_str(&format!("D,{}\n", f_d.path().to_string_lossy()));
+        let universe_f = write_file(&universe_content, ".csv");
+
+        let state_path = tmp_dir.path().join("state.json");
+
+        // 第一轮：初始化，应生成 {A, C, D} 为目标（top=3）
+        let cfg1 = SignalPortfolioConfig {
+            tree_path: tree_f.path().to_path_buf(),
+            universe_path: universe_f.path().to_path_buf(),
+            top: 3,
+            window: 100,
+            warmup: 0,
+            cost_bps: 0.0,
+            soft: false,
+            aux_paths: vec![],
+            state_path: state_path.clone(),
+        };
+
+        let (sig1, _state1) = run_signal_portfolio(&cfg1, &LlmEvaluator::Disabled)
+            .await
+            .unwrap();
+
+        // 验证初始信号
+        // 四个标的的得分：A=0.9, B=0.1, C=0.8, D=0.7（都为正）
+        // top=3 → 选中 A(0.9), C(0.8), D(0.7)，B(0.1) 落选
+        assert_eq!(sig1.n_fresh, 4); // 所有 4 个标的都有数据
+        assert_eq!(sig1.targets.len(), 3); // 入选 A, C, D（B 得分最低被过滤）
+        let targets_1: BTreeMap<String, f64> = sig1.targets.iter().cloned().collect();
+        assert!(targets_1.contains_key("A"));
+        assert!(targets_1.contains_key("C"));
+        assert!(targets_1.contains_key("D"));
+        assert!(!targets_1.contains_key("B"));
+        // 等权：每个 1/3
+        for v in targets_1.values() {
+            assert!((v - 1.0 / 3.0).abs() < EPS);
+        }
+
+        // 验证初始交易（从空旧持仓）
+        let trades_1: Vec<_> = sig1.trades.iter().filter(|t| t.action != TradeAction::Hold).collect();
+        assert_eq!(trades_1.len(), 3); // A, C, D 为 Buy（B 为 Hold）
+        for trade in &trades_1 {
+            assert_eq!(trade.from_w, 0.0);
+            assert!((trade.to_w - 1.0 / 3.0).abs() < EPS);
+            assert!(matches!(trade.action, TradeAction::Buy));
+        }
+
+        // 设置旧状态：{A:0.5, B:0.5}
+        let old_holdings = HoldingsState {
+            version: 1,
+            tree_name: "portfolio_test".to_string(),
+            last_time: sig1.t.into(),
+            holdings: BTreeMap::from([
+                ("A".to_string(), 0.5),
+                ("B".to_string(), 0.5),
+            ]),
+        };
+        write_holdings_state(&state_path, &old_holdings).unwrap();
+
+        // 第二轮：加载旧状态，生成新信号
+        let (sig2, _state2) = run_signal_portfolio(&cfg1, &LlmEvaluator::Disabled)
+            .await
+            .unwrap();
+
+        // 验证第二轮信号
+        assert_eq!(sig2.targets.len(), 3);
+        let _targets_2: BTreeMap<String, f64> = sig2.targets.iter().cloned().collect();
+
+        // 验证交易清单
+        let trades_map: BTreeMap<String, TradeInstr> =
+            sig2.trades.iter().map(|t| (t.symbol.clone(), t.clone())).collect();
+
+        // A: 0.5 → 1/3 = Adjust
+        let trade_a = &trades_map["A"];
+        assert_eq!(trade_a.from_w, 0.5);
+        assert!((trade_a.to_w - 1.0 / 3.0).abs() < EPS);
+        assert_eq!(trade_a.action, TradeAction::Adjust);
+
+        // B: 0.5 → 0 = Sell
+        let trade_b = &trades_map["B"];
+        assert_eq!(trade_b.from_w, 0.5);
+        assert_eq!(trade_b.to_w, 0.0);
+        assert_eq!(trade_b.action, TradeAction::Sell);
+
+        // C: 0 → 1/3 = Buy
+        let trade_c = &trades_map["C"];
+        assert_eq!(trade_c.from_w, 0.0);
+        assert!((trade_c.to_w - 1.0 / 3.0).abs() < EPS);
+        assert_eq!(trade_c.action, TradeAction::Buy);
+
+        // D: 0 → 1/3 = Buy
+        let trade_d = &trades_map["D"];
+        assert_eq!(trade_d.from_w, 0.0);
+        assert!((trade_d.to_w - 1.0 / 3.0).abs() < EPS);
+        assert_eq!(trade_d.action, TradeAction::Buy);
+
+        // 验证交易按 symbol 字典序
+        let symbols: Vec<_> = sig2.trades.iter().map(|t| t.symbol.as_str()).collect();
+        assert_eq!(symbols, vec!["A", "B", "C", "D"]);
+    }
+
+    /// 全 Hold：持仓与新目标完全一致 → 全部 Hold。
+    #[tokio::test]
+    async fn portfolio_all_hold() {
+        let tree_f = write_file(&uniform_tree(), ".yaml");
+
+        // 生成 A, B 的行情（都有数据，uniform_tree 都得分 0.5）
+        let bars_a = gen_bars_csv("A", 2, 8, 10.7);
+        let bars_b = gen_bars_csv("B", 2, 8, 10.7);
+
+        let f_a = write_file(&bars_a, ".csv");
+        let f_b = write_file(&bars_b, ".csv");
+
+        let mut universe_content = String::from("symbol,primary\n");
+        universe_content.push_str(&format!("A,{}\n", f_a.path().to_string_lossy()));
+        universe_content.push_str(&format!("B,{}\n", f_b.path().to_string_lossy()));
+        let universe_f = write_file(&universe_content, ".csv");
+
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let state_path = tmp_dir.path().join("state.json");
+
+        let cfg = SignalPortfolioConfig {
+            tree_path: tree_f.path().to_path_buf(),
+            universe_path: universe_f.path().to_string_lossy().to_string().into(),
+            top: 2,
+            window: 100,
+            warmup: 0,
+            cost_bps: 0.0,
+            soft: false,
+            aux_paths: vec![],
+            state_path: state_path.clone(),
+        };
+
+        // 第一轮：生成 {A:0.5, B:0.5} 目标
+        let (sig1, _state1) = run_signal_portfolio(&cfg, &LlmEvaluator::Disabled)
+            .await
+            .unwrap();
+
+        let targets_1: BTreeMap<String, f64> = sig1.targets.iter().cloned().collect();
+        assert_eq!(targets_1.len(), 2);
+
+        // 第二轮：设置旧状态 = 新目标
+        let old_state = HoldingsState {
+            version: 1,
+            tree_name: "portfolio_test_uniform".to_string(),
+            last_time: sig1.t.into(),
+            holdings: targets_1.clone(),
+        };
+        write_holdings_state(&state_path, &old_state).unwrap();
+
+        let (sig2, _state2) = run_signal_portfolio(&cfg, &LlmEvaluator::Disabled)
+            .await
+            .unwrap();
+
+        // 验证所有交易都是 Hold
+        for trade in &sig2.trades {
+            assert_eq!(trade.action, TradeAction::Hold, "trade for {} should be Hold", trade.symbol);
+        }
+    }
+
+    /// 新鲜度：一标的末 bar 时间早于 t_last → 不入候选（score None），n_fresh < universe.len()。
+    #[tokio::test]
+    async fn portfolio_freshness_check() {
+        let tree_f = write_file(&four_way_tree(), ".yaml");
+
+        // A, B, C 有数据，D 只有早期数据（不新鲜）
+        let bars_a = gen_bars_csv("A", 2, 8, 10.7);
+        let bars_b = gen_bars_csv("B", 2, 8, 10.7);
+        let bars_c = gen_bars_csv("C", 2, 8, 10.7);
+        // D 的末 bar 远早于其他标的
+        let bars_d = gen_bars_csv("D", 2, 1, 10.1);
+
+        let f_a = write_file(&bars_a, ".csv");
+        let f_b = write_file(&bars_b, ".csv");
+        let f_c = write_file(&bars_c, ".csv");
+        let f_d = write_file(&bars_d, ".csv");
+
+        let mut universe_content = String::from("symbol,primary\n");
+        universe_content.push_str(&format!("A,{}\n", f_a.path().to_string_lossy()));
+        universe_content.push_str(&format!("B,{}\n", f_b.path().to_string_lossy()));
+        universe_content.push_str(&format!("C,{}\n", f_c.path().to_string_lossy()));
+        universe_content.push_str(&format!("D,{}\n", f_d.path().to_string_lossy()));
+        let universe_f = write_file(&universe_content, ".csv");
+
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let state_path = tmp_dir.path().join("state.json");
+
+        let cfg = SignalPortfolioConfig {
+            tree_path: tree_f.path().to_path_buf(),
+            universe_path: universe_f.path().to_string_lossy().to_string().into(),
+            top: 3,
+            window: 100,
+            warmup: 0,
+            cost_bps: 0.0,
+            soft: false,
+            aux_paths: vec![],
+            state_path: state_path.clone(),
+        };
+
+        let (sig, _state) = run_signal_portfolio(&cfg, &LlmEvaluator::Disabled)
+            .await
+            .unwrap();
+
+        // n_fresh 应该 < 4（D 不新鲜，A, B 有 score，C 也有 score）
+        // 实际上 A, B, C 都会打分（各有末 bar），D 因不新鲜而不打分
+        // 所以 n_fresh = 3，targets 应该包含 A, C（B score 不正），不包含 D
+        assert_eq!(sig.n_fresh, 3, "fresh symbols should be 3 (A, B, C; not D)");
+        assert!(sig.targets.len() <= 3, "at most 3 targets selected");
     }
 }
