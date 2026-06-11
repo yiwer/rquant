@@ -5,26 +5,15 @@ use crate::{Error, Result};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-const RESERVED_IDENTS: [&str; 12] =
-    ["close", "open", "high", "low", "volume", "hour", "minute", "dow", "pos", "entry_price", "bars_held", "unreal_pnl"];
-const RESERVED_FNS: [&str; 17] = [
-    "sma",
-    "ema",
-    "wma",
-    "rsi",
-    "atr",
-    "slope",
-    "ref",
-    "highest",
-    "lowest",
-    "crossover",
-    "crossunder",
-    "macd_line",
-    "macd_signal",
-    "macd_hist",
-    "std",
-    "sigmoid",
-    "auto",
+const RESERVED_IDENTS: [&str; 14] = [
+    "close", "open", "high", "low", "volume", "hour", "minute", "dow",
+    "pos", "entry_price", "bars_held", "unreal_pnl",
+    "max_price_since_entry", "min_price_since_entry",
+];
+const RESERVED_FNS: [&str; 22] = [
+    "sma", "ema", "wma", "rsi", "atr", "slope", "ref", "highest", "lowest",
+    "crossover", "crossunder", "macd_line", "macd_signal", "macd_hist",
+    "std", "sigmoid", "auto", "abs", "max", "min", "count", "barssince",
 ];
 
 fn check_name(name: &str, env: &HashMap<String, Expr>) -> Result<()> {
@@ -59,7 +48,7 @@ fn check_no_unknown_idents(expr: &Expr, where_: &str) -> Result<()> {
             )))
         }
         Expr::Number(_) => Ok(()),
-        Expr::Unary(_, e) | Expr::Index(e, _) => check_no_unknown_idents(e, where_),
+        Expr::Unary(_, e) | Expr::Index(e, _) | Expr::Cached(_, e) => check_no_unknown_idents(e, where_),
         Expr::Binary(_, l, r) => {
             check_no_unknown_idents(l, where_)?;
             check_no_unknown_idents(r, where_)
@@ -107,7 +96,16 @@ pub enum Node {
         prompt: String,
         labels: HashMap<String, String>,
         default: String,
+        /// 缓存/求值作用域：judge 节点为 `judge:<名>`（共享判定 → 共享缓存键），内联节点 None（用节点 id）。
+        scope: Option<String>,
     },
+}
+
+/// 叶子权重：常量（加载期校验 (0,1]）或 DSL 表达式（决策时求值，NaN→0、clamp [0,1]）。
+#[derive(Debug, Clone)]
+pub enum Weight {
+    Const(f64),
+    Expr(Expr),
 }
 
 /// 决策树叶子节点，持有最终 stance 及打分参数。
@@ -115,10 +113,27 @@ pub enum Node {
 pub struct Leaf {
     /// 对应的交易方向（须在 `meta.stances` 中声明）。
     pub stance: Stance,
-    /// 仓位大小 ∈ (0,1]，默认 1.0
-    pub weight: f64,
+    /// 仓位大小：常量 ∈ (0,1]（默认 1.0），或 DSL 表达式（决策时 `weight_at` 求值）。
+    pub weight: Weight,
     /// 该叶前瞻评分窗口，默认 meta.forward_window
     pub horizon: usize,
+}
+
+impl Leaf {
+    /// 解析叶子权重：常量直接返回；表达式按 ctx 求值。
+    /// 求值失败/非有限值 → 0.0（弃权 = 不持仓），有限值 clamp 到 [0,1]。
+    /// 注意：catch-all → 0.0 针对的是**运行时数据弃权**（NaN 预热/空仓哨兵）；
+    /// 配置类错误（未知标识符、aux 格式错）已由加载期 check_no_unknown_idents 左移。
+    /// 唯一例外是 aux 表未挂载（加载期无法知晓挂载情况）——该失败也会被映射为 0 仓位。
+    pub fn weight_at(&self, ctx: &crate::features::context::Context) -> f64 {
+        match &self.weight {
+            Weight::Const(w) => *w,
+            Weight::Expr(e) => match crate::dsl::eval::eval_scalar(e, ctx) {
+                Ok(v) if v.is_finite() => v.clamp(0.0, 1.0),
+                _ => 0.0,
+            },
+        }
+    }
 }
 
 /// 风险管理块：止损、止盈、最大持仓时间。
@@ -182,7 +197,7 @@ pub fn load_tree_str_with_overrides(
         check_name(k, &env)?;
         env.insert(k.clone(), Expr::Number(*v));
     }
-    for (k, v) in &spec.factors {
+    for (slot, (k, v)) in (0_u32..).zip(&spec.factors) {
         let name = k
             .as_str()
             .ok_or_else(|| Error::Tree("factor name must be a string".into()))?;
@@ -194,6 +209,11 @@ pub fn load_tree_str_with_overrides(
             .map_err(|e| Error::Tree(format!("factor '{name}': {e}")))?;
         let e = substitute(&e, &env);
         check_no_unknown_idents(&e, &format!("factor '{name}'"))?;
+        // 包缓存槽：所有引用处共享同一槽位 → 每个 Context 只真算一次（params 是字面量，不包）。
+        // INVARIANT：槽位 id 必须全树唯一（本计数器是唯一分配点）——id 撞车会造成静默值串用。
+        // 布尔因子同样包裹：硬 when 多处引用照常命中；fuzzy strength 路径对 Cached 透传重算
+        //（fuzzy 真值依赖 scale，不消费 Value 缓存），正确性不受影响、只是该路径无缓存收益。
+        let e = Expr::Cached(slot, Box::new(e));
         env.insert(name.to_string(), e);
     }
 
@@ -205,12 +225,42 @@ pub fn load_tree_str_with_overrides(
                 l.stance
             )));
         }
-        let weight = l.weight.unwrap_or(1.0);
-        if !(weight > 0.0 && weight <= 1.0) {
-            return Err(Error::Tree(format!(
-                "leaf '{id}' weight must be in (0,1], got {weight}"
-            )));
-        }
+        let weight = match &l.weight {
+            None => Weight::Const(1.0),
+            Some(serde_yaml::Value::Number(n)) => {
+                let w = n
+                    .as_f64()
+                    .ok_or_else(|| Error::Tree(format!("leaf '{id}' weight must be a number")))?;
+                if !(w > 0.0 && w <= 1.0) {
+                    return Err(Error::Tree(format!(
+                        "leaf '{id}' weight must be in (0,1], got {w}"
+                    )));
+                }
+                Weight::Const(w)
+            }
+            Some(serde_yaml::Value::String(s)) => {
+                let e = parse_str(s).map_err(|e| Error::Tree(format!("leaf '{id}' weight: {e}")))?;
+                let e = substitute(&e, &env);
+                check_no_unknown_idents(&e, &format!("leaf '{id}' weight"))?;
+                // 带引号的纯数字（"0.5"，或 params 替换后坍缩成字面量的 "unit"）
+                // 按常量处理，套用与数值形式相同的 (0,1] 加载期校验——防止引号绕过范围检查
+                if let Expr::Number(w) = e {
+                    if !(w > 0.0 && w <= 1.0) {
+                        return Err(Error::Tree(format!(
+                            "leaf '{id}' weight must be in (0,1], got {w}"
+                        )));
+                    }
+                    Weight::Const(w)
+                } else {
+                    Weight::Expr(e)
+                }
+            }
+            Some(_) => {
+                return Err(Error::Tree(format!(
+                    "leaf '{id}' weight must be a number or a DSL expression string"
+                )))
+            }
+        };
         let horizon = l.horizon.unwrap_or(spec.meta.forward_window);
         if horizon == 0 {
             return Err(Error::Tree(format!(
@@ -275,21 +325,56 @@ pub fn load_tree_str_with_overrides(
                     },
                 );
             }
-            NodeSpec::Llm {
-                inputs,
-                prompt,
-                labels,
-                default,
-            } => {
-                nodes.insert(
-                    id.clone(),
-                    Node::Llm {
-                        inputs: inputs.clone(),
-                        prompt: prompt.clone(),
-                        labels: labels.clone(),
-                        default: default.clone(),
-                    },
-                );
+            NodeSpec::Llm { inputs, prompt, labels, judge, map, default } => {
+                let node = match judge {
+                    Some(jname) => {
+                        if !prompt.is_empty() || !labels.is_empty() || !inputs.is_empty() {
+                            return Err(Error::Tree(format!(
+                                "llm node '{id}': judge form must not also set prompt/labels/inputs"
+                            )));
+                        }
+                        let j = spec.judges.get(jname).ok_or_else(|| {
+                            Error::Tree(format!("llm node '{id}': unknown judge '{jname}'"))
+                        })?;
+                        if j.labels.is_empty() {
+                            return Err(Error::Tree(format!("judge '{jname}': labels must be non-empty")));
+                        }
+                        for k in map.keys() {
+                            if !j.labels.contains(k) {
+                                return Err(Error::Tree(format!(
+                                    "llm node '{id}': map key '{k}' not in judge '{jname}' labels"
+                                )));
+                            }
+                        }
+                        // 物化 label→goto：judge 的每个 label 都有落点（未映射 → 本节点 default）。
+                        // 物化后键集 = judge.labels，与共享同一 judge 的其它节点逐字节同渲染。
+                        let labels: HashMap<String, String> = j
+                            .labels
+                            .iter()
+                            .map(|l| (l.clone(), map.get(l).cloned().unwrap_or_else(|| default.clone())))
+                            .collect();
+                        Node::Llm {
+                            inputs: j.inputs.clone(),
+                            prompt: j.prompt.clone(),
+                            labels,
+                            default: default.clone(),
+                            scope: Some(format!("judge:{jname}")),
+                        }
+                    }
+                    None => {
+                        if !map.is_empty() {
+                            return Err(Error::Tree(format!("llm node '{id}': 'map' requires 'judge'")));
+                        }
+                        Node::Llm {
+                            inputs: inputs.clone(),
+                            prompt: prompt.clone(),
+                            labels: labels.clone(),
+                            default: default.clone(),
+                            scope: None,
+                        }
+                    }
+                };
+                nodes.insert(id.clone(), node);
             }
         }
     }
@@ -435,6 +520,115 @@ fn dfs_cycle(cur: &str, tree: &Tree, color: &mut HashMap<String, u8>) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const JUDGE_TREE: &str = r#"
+meta: { name: t, forward_window: 3, stances: [long, flat] }
+judges:
+  news_veto:
+    inputs: [news_score]
+    prompt: "消息面是否一票否决？"
+    labels: [veto, pass]
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "close > 1", goto: g1, label: up } ]
+    default: { goto: g2, label: dn }
+  g1:
+    type: llm
+    judge: news_veto
+    map: { veto: leaf_f, pass: leaf_l }
+    default: leaf_f
+  g2:
+    type: llm
+    judge: news_veto
+    map: { veto: leaf_f }
+    default: leaf_l
+leaves:
+  leaf_l: { stance: long }
+  leaf_f: { stance: flat }
+"#;
+
+    #[test]
+    fn judge_nodes_materialize_labels_and_scope() {
+        let tree = load_tree_str(JUDGE_TREE).unwrap();
+        let (g1, g2) = (tree.nodes.get("g1").unwrap(), tree.nodes.get("g2").unwrap());
+        match (g1, g2) {
+            (
+                Node::Llm { labels: l1, inputs: i1, prompt: p1, scope: s1, .. },
+                Node::Llm { labels: l2, prompt: p2, scope: s2, .. },
+            ) => {
+                // 物化：judge 的每个 label 都有落点；g2 未映射的 pass → 其 default(leaf_l)
+                assert_eq!(l1["veto"], "leaf_f");
+                assert_eq!(l1["pass"], "leaf_l");
+                assert_eq!(l2["veto"], "leaf_f");
+                assert_eq!(l2["pass"], "leaf_l");
+                // 键集一致（渲染串一致的前提）+ prompt/inputs 来自 judge + scope 一致
+                let mut k1: Vec<_> = l1.keys().collect();
+                let mut k2: Vec<_> = l2.keys().collect();
+                k1.sort(); k2.sort();
+                assert_eq!(k1, k2);
+                assert_eq!(p1, "消息面是否一票否决？");
+                assert_eq!(p2, p1);
+                assert_eq!(i1, &vec!["news_score".to_string()]);
+                assert_eq!(s1.as_deref(), Some("judge:news_veto"));
+                assert_eq!(s1, s2);
+            }
+            _ => panic!("expected llm nodes"),
+        }
+    }
+
+    #[test]
+    fn judge_node_with_empty_map_routes_all_to_default() {
+        let src = JUDGE_TREE.replace("map: { veto: leaf_f, pass: leaf_l }\n    default: leaf_f", "default: leaf_f");
+        let tree = load_tree_str(&src).unwrap();
+        match tree.nodes.get("g1").unwrap() {
+            Node::Llm { labels, .. } => {
+                assert_eq!(labels["veto"], "leaf_f");
+                assert_eq!(labels["pass"], "leaf_f");
+            }
+            _ => panic!("expected llm node"),
+        }
+    }
+
+    #[test]
+    fn judge_validation_rejects_bad_forms() {
+        // 未知 judge
+        assert!(load_tree_str(&JUDGE_TREE.replace("judge: news_veto", "judge: nope")).is_err());
+        // judge 形式不得再带 prompt
+        assert!(load_tree_str(&JUDGE_TREE.replace(
+            "    judge: news_veto\n    map: { veto: leaf_f, pass: leaf_l }",
+            "    judge: news_veto\n    prompt: \"x\"\n    map: { veto: leaf_f, pass: leaf_l }"
+        )).is_err());
+        // map 键不在 judge labels 内
+        assert!(load_tree_str(&JUDGE_TREE.replace("map: { veto: leaf_f, pass: leaf_l }", "map: { nope: leaf_f }")).is_err());
+        // map 不带 judge（改成内联形式 + 残留 map）
+        let inline_with_map = JUDGE_TREE.replace(
+            "    judge: news_veto\n    map: { veto: leaf_f, pass: leaf_l }",
+            "    prompt: \"q\"\n    labels: { veto: leaf_f }\n    map: { veto: leaf_f }");
+        assert!(load_tree_str(&inline_with_map).is_err());
+        // judge labels 为空
+        assert!(load_tree_str(&JUDGE_TREE.replace("labels: [veto, pass]", "labels: []")).is_err());
+        // 内联形式（无 judge）完全不受影响
+        let inline = r#"
+meta: { name: t, forward_window: 3, stances: [long, flat] }
+root: g1
+nodes:
+  g1:
+    type: llm
+    prompt: "q"
+    labels: { yes: leaf_l }
+    default: leaf_f
+leaves:
+  leaf_l: { stance: long }
+  leaf_f: { stance: flat }
+"#;
+        let t = load_tree_str(inline).unwrap();
+        match t.nodes.get("g1").unwrap() {
+            Node::Llm { scope, .. } => assert!(scope.is_none()),
+            _ => panic!(),
+        }
+    }
 
     const VALID: &str = r#"
 meta: { name: t, forward_window: 3, stances: [long, flat] }
@@ -678,11 +872,11 @@ leaves:
 "#;
         let tree = load_tree_str(ok).unwrap();
         let l = tree.leaves.get("leaf_l").unwrap();
-        assert!((l.weight - 0.5).abs() < 1e-12);
+        assert!(matches!(l.weight, Weight::Const(w) if (w - 0.5).abs() < 1e-12));
         assert_eq!(l.horizon, 8);
         // Defaults: weight=1.0, horizon=forward_window (3).
         let lf = tree.leaves.get("leaf_f").unwrap();
-        assert!((lf.weight - 1.0).abs() < 1e-12);
+        assert!(matches!(lf.weight, Weight::Const(w) if (w - 1.0).abs() < 1e-12));
         assert_eq!(lf.horizon, 3);
 
         // weight=0.0 → Err
@@ -694,6 +888,68 @@ leaves:
         // horizon=0 → Err
         let h0 = ok.replace("horizon: 8", "horizon: 0");
         assert!(load_tree_str(&h0).is_err());
+    }
+
+    /// 构建最小 Context 供 weight_at 测试（loader tests 此前不依赖 Context）。
+    fn mini_ctx() -> crate::features::context::Context {
+        use crate::data::bar::{Bar, Window};
+        let t = chrono::NaiveDate::from_ymd_opt(2024, 1, 2).unwrap().and_hms_opt(9, 45, 0).unwrap();
+        let bars = vec![Bar { time: t, open: 10.0, high: 10.0, low: 10.0, close: 10.0, volume: 1.0 }];
+        crate::features::context::Context {
+            t,
+            primary: Window { bars: bars.clone() },
+            context: Window { bars },
+            news: None,
+            aux: std::collections::BTreeMap::new(),
+            sim: crate::features::context::SimState::default(),
+            eval_cache: Default::default(),
+        }
+    }
+
+    #[test]
+    fn leaf_weight_expression_loads_and_evaluates() {
+        let ok = r#"
+meta: { name: t, forward_window: 3, stances: [long, flat] }
+params: { unit: 0.25 }
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "close > 0", goto: leaf_l, label: up } ]
+    default: { goto: leaf_f, label: flat }
+leaves:
+  leaf_l: { stance: long, weight: "min(1, pos + unit)" }
+  leaf_f: { stance: flat }
+"#;
+        let tree = load_tree_str(ok).unwrap();
+        let l = tree.leaves.get("leaf_l").unwrap();
+        assert!(matches!(l.weight, Weight::Expr(_)));
+        // 非 sim ctx：pos=0 → 0.25
+        let mut ctx = mini_ctx();
+        assert!((l.weight_at(&ctx) - 0.25).abs() < 1e-12);
+        // sim 注入 pos=0.5 → 0.75
+        ctx.sim.pos = 0.5;
+        assert!((l.weight_at(&ctx) - 0.75).abs() < 1e-12);
+        // clamp：pos=0.9 → min(1, 1.15) = 1.0
+        ctx.sim.pos = 0.9;
+        assert!((l.weight_at(&ctx) - 1.0).abs() < 1e-12);
+        // NaN → 0（弃权）：表达式引用空仓 entry_price
+        let nan_w = ok.replace("min(1, pos + unit)", "entry_price / 100");
+        let tree2 = load_tree_str(&nan_w).unwrap();
+        assert!((tree2.leaves["leaf_l"].weight_at(&mini_ctx()) - 0.0).abs() < 1e-12);
+        // 数值路径不变：Const + 旧校验
+        let tree3 = load_tree_str(&ok.replace(r#""min(1, pos + unit)""#, "0.5")).unwrap();
+        assert!(matches!(tree3.leaves["leaf_l"].weight, Weight::Const(w) if (w - 0.5).abs() < 1e-12));
+        // 未知标识符 / 坏语法 → 加载错
+        assert!(load_tree_str(&ok.replace("pos + unit", "nope + 1")).is_err());
+        assert!(load_tree_str(&ok.replace("min(1, pos + unit)", "min(1,")).is_err());
+        // 带引号的纯数字坍缩为 Const 并套用 (0,1] 校验——引号不能绕过范围检查
+        let quoted = load_tree_str(&ok.replace("min(1, pos + unit)", "0.5")).unwrap();
+        assert!(matches!(quoted.leaves["leaf_l"].weight, Weight::Const(w) if (w - 0.5).abs() < 1e-12));
+        assert!(load_tree_str(&ok.replace("min(1, pos + unit)", "1.5")).is_err());
+        // params 替换后坍缩成字面量的同理
+        let collapsed = load_tree_str(&ok.replace("min(1, pos + unit)", "unit")).unwrap();
+        assert!(matches!(collapsed.leaves["leaf_l"].weight, Weight::Const(w) if (w - 0.25).abs() < 1e-12));
     }
 
     #[test]
@@ -791,6 +1047,82 @@ leaves:
         assert!(load_tree_str(&yaml("entry_price")).is_err());
         assert!(load_tree_str(&yaml("bars_held")).is_err());
         assert!(load_tree_str(&yaml("unreal_pnl")).is_err());
+        assert!(load_tree_str(&yaml("max_price_since_entry")).is_err());
+        assert!(load_tree_str(&yaml("min_price_since_entry")).is_err());
+    }
+
+    #[test]
+    // 注意：本测试与下个测试用 Debug 渲染匹配 "Cached(N,"——若 Expr 的 Debug 派生格式变化会误红，
+    // 意图是断言「槽 0 被 ≥2 处共享、嵌套因子槽位互异」。
+    fn factors_are_wrapped_in_shared_cache_slots() {
+        let src = r#"
+meta: { name: t, forward_window: 3, stances: [long, flat] }
+factors:
+  atr_v: "atr(3)"
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "atr_v >= 0 and atr_v < 1000", goto: leaf_l, label: up } ]
+    default: { goto: leaf_f, label: flat }
+leaves:
+  leaf_l: { stance: long }
+  leaf_f: { stance: flat }
+"#;
+        let tree = load_tree_str(src).unwrap();
+        // 同名因子的两处引用共享同一槽位 id（Cached(0, ...) 出现 ≥2 次）
+        let rendered = format!("{:?}", tree.nodes.get("a").unwrap());
+        assert!(
+            rendered.matches("Cached(0,").count() >= 2,
+            "expected shared cache slot, got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn nested_factors_get_distinct_slots() {
+        let src = r#"
+meta: { name: t, forward_window: 3, stances: [long, flat] }
+factors:
+  base: "sma(close, 3)"
+  derived: "base + 1"
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "derived > 0 and base > 0", goto: leaf_l, label: up } ]
+    default: { goto: leaf_f, label: flat }
+leaves:
+  leaf_l: { stance: long }
+  leaf_f: { stance: flat }
+"#;
+        let tree = load_tree_str(src).unwrap();
+        let rendered = format!("{:?}", tree.nodes.get("a").unwrap());
+        // derived 包槽 1，其体内嵌 base 的槽 0；branch 里直接引用的 base 也是槽 0
+        assert!(rendered.contains("Cached(1,"), "derived slot missing: {rendered}");
+        assert!(rendered.matches("Cached(0,").count() >= 2, "base slot not shared: {rendered}");
+    }
+
+    #[test]
+    fn math_fns_are_reserved() {
+        let yaml = |factor: &str| format!(r#"
+meta: {{ name: t, forward_window: 3, stances: [long, flat] }}
+factors:
+  {factor}: "close - 1"
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ {{ when: "{factor} > 0", goto: leaf_l, label: up }} ]
+    default: {{ goto: leaf_f, label: flat }}
+leaves:
+  leaf_l: {{ stance: long }}
+  leaf_f: {{ stance: flat }}
+"#);
+        assert!(load_tree_str(&yaml("abs")).is_err());
+        assert!(load_tree_str(&yaml("max")).is_err());
+        assert!(load_tree_str(&yaml("min")).is_err());
+        assert!(load_tree_str(&yaml("count")).is_err());
+        assert!(load_tree_str(&yaml("barssince")).is_err());
     }
 
     #[test]
@@ -838,6 +1170,7 @@ leaves:
             news: None,
             aux: std::collections::BTreeMap::new(),
             sim: crate::features::context::SimState::default(),
+            eval_cache: Default::default(),
         }
     }
 

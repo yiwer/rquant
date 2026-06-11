@@ -81,6 +81,8 @@ aux CSV 格式要求：
 
 **低频序列**（如日线指数）与高频 primary（如 15m）挂载时，`build_context` 对每个决策点 `t` 取 `time ≤ t` 的所有行（最近已知值语义），不做重采样；DSL 中 `aux.idx.v[-1]` 即取该截断后的倒数第二行。
 
+aux CSV 的 `time` 列须打「数值可被知晓的时刻」（高周期聚合打周期收盘、公告打发布时刻），详见 [dsl-reference.md](dsl-reference.md) 「时间戳纪律」一节——打错戳引擎无法检测，lookahead 后果自负。
+
 如果 `--aux name=path.csv` 中 `name` 对应的表未被任何 DSL 表达式引用，它不会产生错误；如果 DSL 引用了未挂载的表名，运行时报错并给出提示文案：`aux table '<name>' not mounted (use --aux <name>=path.csv)`。
 
 **`--sim`**

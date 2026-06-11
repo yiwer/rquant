@@ -44,6 +44,10 @@ pub struct SimAccount {
     pub max_drawdown: f64,
     pub turnover: f64,
     pub last_increase_date: Option<NaiveDate>,
+    /// 入场以来所见 high 最大值，空仓 NaN（弃权纪律同 entry_price）。
+    pub max_price_since_entry: f64,
+    /// 入场以来所见 low 最小值，空仓 NaN（弃权纪律同 entry_price）。
+    pub min_price_since_entry: f64,
     trip: Option<OpenTrip>,
 }
 
@@ -58,6 +62,8 @@ impl Default for SimAccount {
             max_drawdown: 0.0,
             turnover: 0.0,
             last_increase_date: None,
+            max_price_since_entry: f64::NAN,
+            min_price_since_entry: f64::NAN,
             trip: None,
         }
     }
@@ -93,6 +99,8 @@ pub fn sim_step(
     acc: &mut SimAccount,
     prev_close: f64,
     open: f64,
+    high: f64,
+    low: f64,
     close: f64,
     exec_t: NaiveDateTime,
     target: f64,
@@ -131,6 +139,8 @@ pub fn sim_step(
                 acc.entry_price = open;
                 acc.bars_held = 0;
                 acc.last_increase_date = Some(exec_t.date());
+                acc.max_price_since_entry = f64::NAN;
+                acc.min_price_since_entry = f64::NAN;
             } else if target.abs() > old.abs() + EPS {
                 // 加仓：加权均价
                 acc.entry_price = (acc.entry_price * old.abs()
@@ -149,6 +159,19 @@ pub fn sim_step(
         if let Some(trip) = acc.trip.as_mut() {
             trip.max_abs_pos = trip.max_abs_pos.max(acc.pos.abs());
         }
+    }
+    // 持仓极值（含执行 bar 本身的 high/low）；空仓重置 NaN
+    if acc.pos.abs() > EPS {
+        if acc.max_price_since_entry.is_nan() {
+            acc.max_price_since_entry = high;
+            acc.min_price_since_entry = low;
+        } else {
+            acc.max_price_since_entry = acc.max_price_since_entry.max(high);
+            acc.min_price_since_entry = acc.min_price_since_entry.min(low);
+        }
+    } else {
+        acc.max_price_since_entry = f64::NAN;
+        acc.min_price_since_entry = f64::NAN;
     }
     acc.peak_nav = acc.peak_nav.max(acc.nav);
     acc.max_drawdown = acc.max_drawdown.max(1.0 - acc.nav / acc.peak_nav);
@@ -171,6 +194,8 @@ pub fn finalize(
     acc.pos = 0.0;
     acc.entry_price = f64::NAN;
     acc.bars_held = 0;
+    acc.max_price_since_entry = f64::NAN;
+    acc.min_price_since_entry = f64::NAN;
     acc.peak_nav = acc.peak_nav.max(acc.nav);
     acc.max_drawdown = acc.max_drawdown.max(1.0 - acc.nav / acc.peak_nav);
     closed
@@ -196,6 +221,13 @@ pub struct AccountSnapshot {
     pub max_drawdown: f64,
     pub turnover: f64,
     pub last_increase_date: Option<NaiveDate>,
+    /// 入场以来最高 high（非有限 ↔ None；旧 state 文件缺字段 → None → 恢复为 NaN，
+    /// 该回合内引用极值的条件弃权至下次开仓——树侧应保留固定止损兜底）。
+    #[serde(default)]
+    pub max_price_since_entry: Option<f64>,
+    /// 入场以来最低 low（纪律同上）。
+    #[serde(default)]
+    pub min_price_since_entry: Option<f64>,
     pub trip: Option<TripSnapshot>,
 }
 
@@ -210,6 +242,16 @@ impl SimAccount {
             max_drawdown: self.max_drawdown,
             turnover: self.turnover,
             last_increase_date: self.last_increase_date,
+            max_price_since_entry: if self.max_price_since_entry.is_finite() {
+                Some(self.max_price_since_entry)
+            } else {
+                None
+            },
+            min_price_since_entry: if self.min_price_since_entry.is_finite() {
+                Some(self.min_price_since_entry)
+            } else {
+                None
+            },
             trip: self.trip.as_ref().map(|t| TripSnapshot {
                 entry_t: t.entry_t,
                 entry_px: t.entry_px,
@@ -229,6 +271,8 @@ impl SimAccount {
             max_drawdown: s.max_drawdown,
             turnover: s.turnover,
             last_increase_date: s.last_increase_date,
+            max_price_since_entry: s.max_price_since_entry.unwrap_or(f64::NAN),
+            min_price_since_entry: s.min_price_since_entry.unwrap_or(f64::NAN),
             trip: s.trip.as_ref().map(|t| OpenTrip {
                 entry_t: t.entry_t,
                 entry_px: t.entry_px,
@@ -348,6 +392,8 @@ pub async fn run_sim(cfg: &BacktestConfig, llm: &LlmEvaluator, soft: bool) -> Re
             entry_price: acc.entry_price,
             bars_held: acc.bars_held,
             unreal_pnl,
+            max_price_since_entry: acc.max_price_since_entry,
+            min_price_since_entry: acc.min_price_since_entry,
         };
 
         // 风控覆盖（spec §3.2）：pos≠0 时按 stop→tp→max_hold 顺序检查
@@ -375,6 +421,8 @@ pub async fn run_sim(cfg: &BacktestConfig, llm: &LlmEvaluator, soft: bool) -> Re
             &mut acc,
             close_i,
             open_next,
+            primary[i + 1].high,
+            primary[i + 1].low,
             close_next,
             t_next,
             target,
@@ -468,14 +516,14 @@ async fn tree_target<'a>(
         let mut e = 0.0_f64;
         for (leaf_id, &p) in &soft_trace.leaf_probs {
             if let Some(leaf) = tree.leaves.get(leaf_id) {
-                e += p * leaf.weight * stance_dir(leaf.stance);
+                e += p * leaf.weight_at(ctx) * stance_dir(leaf.stance);
             }
         }
         Ok((e, "tree"))
     } else {
         let trace = traverse(tree, ctx, llm).await?;
         let target = tree.leaves.get(&trace.leaf).map_or(0.0, |l| {
-            stance_dir(l.stance) * l.weight
+            stance_dir(l.stance) * l.weight_at(ctx)
         });
         Ok((target, "tree"))
     }
@@ -525,6 +573,8 @@ mod tests {
             10.0,
             10.0,
             10.2,
+            10.0,
+            10.2,
             t("2024-01-02 10:00:00"),
             1.0,
             0.001,
@@ -539,6 +589,8 @@ mod tests {
             10.2,
             10.4,
             10.6,
+            10.4,
+            10.6,
             t("2024-01-03 10:00:00"),
             1.0,
             0.001,
@@ -551,6 +603,8 @@ mod tests {
             &mut acc,
             10.6,
             10.8,
+            10.8,
+            10.6,
             10.6,
             t("2024-01-04 10:00:00"),
             0.0,
@@ -588,6 +642,8 @@ mod tests {
             10.0,
             10.0,
             10.0,
+            10.0,
+            10.0,
             t("2024-01-02 10:00:00"),
             1.0,
             0.0,
@@ -595,6 +651,8 @@ mod tests {
         );
         let r = sim_step(
             &mut acc,
+            10.0,
+            10.0,
             10.0,
             10.0,
             10.0,
@@ -607,6 +665,8 @@ mod tests {
         assert_eq!(acc.pos, 1.0); // 被顺延
         let r2 = sim_step(
             &mut acc,
+            10.0,
+            10.0,
             10.0,
             10.0,
             10.0,
@@ -627,6 +687,8 @@ mod tests {
             10.0,
             10.0,
             10.0,
+            10.0,
+            10.0,
             t("2024-01-02 10:00:00"),
             1.0,
             0.0,
@@ -634,6 +696,8 @@ mod tests {
         );
         let closed = sim_step(
             &mut acc,
+            10.0,
+            10.0,
             10.0,
             10.0,
             10.0,
@@ -658,6 +722,8 @@ mod tests {
             10.0,
             10.0,
             10.0,
+            10.0,
+            10.0,
             t("2024-01-02 10:00:00"),
             0.5,
             0.0,
@@ -666,6 +732,8 @@ mod tests {
         sim_step(
             &mut acc,
             10.0,
+            12.0,
+            12.0,
             12.0,
             12.0,
             t("2024-01-03 10:00:00"),
@@ -679,6 +747,8 @@ mod tests {
             12.0,
             12.0,
             12.0,
+            12.0,
+            12.0,
             t("2024-01-04 10:00:00"),
             0.4,
             0.0,
@@ -686,6 +756,9 @@ mod tests {
         );
         assert_relative_eq!(acc.entry_price, 11.0); // 部分减仓 entry 不变
         assert_eq!(acc.pos, 0.4);
+        // 部分减仓不重置极值：max 来自加仓 bar（12），min 来自入场 bar（10）
+        assert_relative_eq!(acc.max_price_since_entry, 12.0);
+        assert_relative_eq!(acc.min_price_since_entry, 10.0);
     }
 
     #[test]
@@ -694,6 +767,8 @@ mod tests {
         sim_step(
             &mut acc,
             10.0,
+            10.0,
+            11.0,
             10.0,
             11.0,
             t("2024-01-02 10:00:00"),
@@ -829,6 +904,34 @@ time,open,high,low,close,volume
         f
     }
 
+    #[test]
+    fn extremes_track_high_low_since_entry() {
+        let mut acc = SimAccount::default();
+        assert!(acc.max_price_since_entry.is_nan());
+        // 入场执行 bar：high=10.5 low=9.9
+        sim_step(&mut acc, 10.0, 10.0, 10.5, 9.9, 10.2, t("2024-01-02 10:00:00"), 1.0, 0.0, "tree");
+        assert_relative_eq!(acc.max_price_since_entry, 10.5);
+        assert_relative_eq!(acc.min_price_since_entry, 9.9);
+        // 持仓 bar：high=11.0 创新高，low=10.2 不创新低
+        sim_step(&mut acc, 10.2, 10.4, 11.0, 10.2, 10.8, t("2024-01-03 10:00:00"), 1.0, 0.0, "tree");
+        assert_relative_eq!(acc.max_price_since_entry, 11.0);
+        assert_relative_eq!(acc.min_price_since_entry, 9.9);
+        // 平仓 → 极值重置 NaN
+        sim_step(&mut acc, 10.8, 10.9, 10.9, 10.5, 10.6, t("2024-01-04 10:00:00"), 0.0, 0.0, "tree");
+        assert!(acc.max_price_since_entry.is_nan());
+        assert!(acc.min_price_since_entry.is_nan());
+    }
+
+    #[test]
+    fn extremes_reset_on_flip() {
+        let mut acc = SimAccount::default();
+        sim_step(&mut acc, 10.0, 10.0, 10.5, 9.9, 10.0, t("2024-01-02 10:00:00"), 1.0, 0.0, "tree");
+        // 翻向：新回合极值只来自当前执行 bar（10.2/9.8），不继承旧回合的 10.5/9.9
+        sim_step(&mut acc, 10.0, 10.0, 10.2, 9.8, 10.0, t("2024-01-03 10:00:00"), -1.0, 0.0, "tree");
+        assert_relative_eq!(acc.max_price_since_entry, 10.2);
+        assert_relative_eq!(acc.min_price_since_entry, 9.8);
+    }
+
     #[tokio::test]
     async fn run_sim_enter_hold_exit_hard() {
         let tree_f = write_tree_yaml(ENTER_HOLD_EXIT_TREE);
@@ -907,19 +1010,23 @@ time,open,high,low,close,volume
 
     #[test]
     fn account_snapshot_roundtrip_preserves_everything() {
-        // 持仓中账户（含 open trip）
+        // 持仓中账户（含 open trip）：执行 bar high 10.6 / low 9.9 → 极值入账
         let mut acc = SimAccount::default();
-        sim_step(&mut acc, 10.0, 10.0, 10.5, t("2024-01-02 10:00:00"), 0.7, 0.001, "tree");
+        sim_step(&mut acc, 10.0, 10.0, 10.6, 9.9, 10.5, t("2024-01-02 10:00:00"), 0.7, 0.001, "tree");
         let snap = acc.snapshot();
         assert_eq!(snap.entry_price, Some(10.0));
+        assert_eq!(snap.max_price_since_entry, Some(10.6));
+        assert_eq!(snap.min_price_since_entry, Some(9.9));
         let json = serde_json::to_string(&snap).unwrap(); // NaN 不出现 → 序列化成功
         let back: AccountSnapshot = serde_json::from_str(&json).unwrap();
         let acc2 = SimAccount::restore(&back);
+        assert!((acc2.max_price_since_entry - 10.6).abs() < 1e-15);
+        assert!((acc2.min_price_since_entry - 9.9).abs() < 1e-15);
         // 恢复后继续走一步，与原账户走同一步结果一致
         let mut a1 = acc;
         let mut a2 = acc2;
-        let r1 = sim_step(&mut a1, 10.5, 10.6, 10.4, t("2024-01-03 10:00:00"), 0.0, 0.001, "tree");
-        let r2 = sim_step(&mut a2, 10.5, 10.6, 10.4, t("2024-01-03 10:00:00"), 0.0, 0.001, "tree");
+        let r1 = sim_step(&mut a1, 10.5, 10.6, 10.7, 10.3, 10.4, t("2024-01-03 10:00:00"), 0.0, 0.001, "tree");
+        let r2 = sim_step(&mut a2, 10.5, 10.6, 10.7, 10.3, 10.4, t("2024-01-03 10:00:00"), 0.0, 0.001, "tree");
         assert_eq!(r1.is_some(), r2.is_some());
         assert!((a1.nav - a2.nav).abs() < 1e-15 && (a1.pos - a2.pos).abs() < 1e-15);
         assert_eq!(a1.bars_held, a2.bars_held);
@@ -927,10 +1034,133 @@ time,open,high,low,close,volume
         assert!((a1.peak_nav - a2.peak_nav).abs() < 1e-15);
         assert!((a1.max_drawdown - a2.max_drawdown).abs() < 1e-15);
         assert_eq!(a1.last_increase_date, a2.last_increase_date);
-        // 空仓账户：entry NaN → snapshot None → restore NaN
+        // 平仓后两侧极值同步重置 NaN
+        assert!(a1.max_price_since_entry.is_nan() && a2.max_price_since_entry.is_nan());
+        assert!(a1.min_price_since_entry.is_nan() && a2.min_price_since_entry.is_nan());
+        // 空仓账户：entry/极值 NaN → snapshot None → restore NaN
         let flat = SimAccount::default();
         let s = flat.snapshot();
         assert!(s.entry_price.is_none() && s.trip.is_none());
+        assert!(s.max_price_since_entry.is_none() && s.min_price_since_entry.is_none());
         assert!(SimAccount::restore(&s).entry_price.is_nan());
+        assert!(SimAccount::restore(&s).max_price_since_entry.is_nan());
+    }
+
+    /// Chandelier 式跟踪止损树：回撤超 2% 即离场。
+    const CHANDELIER_TREE: &str = r#"
+meta: { name: chandelier, forward_window: 1, stances: [long, flat] }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - when: "pos == 0 and close > 0"
+        goto: leaf_long
+        label: enter
+      - when: "pos > 0 and close < max_price_since_entry * 0.98"
+        goto: leaf_flat
+        label: chandelier_exit
+      - when: "pos > 0"
+        goto: leaf_long
+        label: hold
+    default: { goto: leaf_flat, label: idle }
+leaves:
+  leaf_long: { stance: long }
+  leaf_flat: { stance: flat }
+"#;
+
+    /// 冲高后回撤：b1 执行入场（high 10.6），b2 收 10.3 < 10.6*0.98=10.388 → 决策离场，b3 执行。
+    fn write_chandelier_bars_csv() -> tempfile::NamedTempFile {
+        use std::io::Write as _;
+        let csv = "\
+time,open,high,low,close,volume
+2024-01-02 09:45:00,10.0,10.1,9.9,10.0,1000
+2024-01-02 10:00:00,10.0,10.6,9.9,10.5,1000
+2024-01-03 09:45:00,10.5,10.55,10.2,10.3,1000
+2024-01-03 10:00:00,10.3,10.35,10.1,10.2,1000
+";
+        let mut f = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+        write!(f, "{csv}").unwrap();
+        f.flush().unwrap();
+        f
+    }
+
+    #[tokio::test]
+    async fn run_sim_chandelier_exit_fires() {
+        let tree_f = write_tree_yaml(CHANDELIER_TREE);
+        let bars_f = write_chandelier_bars_csv();
+        let out_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+        let cfg = make_cfg(&tree_f, &bars_f, &out_f, None);
+        let report = run_sim(&cfg, &LlmEvaluator::Disabled, false).await.unwrap();
+        assert_eq!(report.n_round_trips, 1);
+        // 树内 chandelier 分支驱动的离场，reason 是 "tree"（风控块离场才是 stop/tp）
+        assert_eq!(report.trades[0].reason, "tree");
+        assert_relative_eq!(report.trades[0].exit_px, 10.3); // b3 开盘执行
+    }
+
+    /// Turtle 式金字塔：首仓 0.5，浮盈 1% 加到满仓；hold 用 weight:"pos" 维持现仓。
+    const PYRAMID_TREE: &str = r#"
+meta: { name: pyramid, forward_window: 1, stances: [long, flat] }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - when: "pos == 0 and close > 0"
+        goto: leaf_enter
+        label: enter
+      - when: "pos > 0 and pos < 1 and close > entry_price * 1.01"
+        goto: leaf_add
+        label: add_unit
+      - when: "pos > 0"
+        goto: leaf_hold
+        label: hold
+    default: { goto: leaf_flat, label: idle }
+leaves:
+  leaf_enter: { stance: long, weight: 0.5 }
+  leaf_add:   { stance: long, weight: "min(1, pos + 0.5)" }
+  leaf_hold:  { stance: long, weight: "pos" }
+  leaf_flat:  { stance: flat }
+"#;
+
+    /// 5 bar 跨 5 日：b0 决策入场→b1 执行 0.5；b1 持平→hold；b2 涨 2%→加仓→b3 执行 1.0。
+    fn write_pyramid_bars_csv() -> tempfile::NamedTempFile {
+        use std::io::Write as _;
+        let csv = "\
+time,open,high,low,close,volume
+2024-01-02 10:00:00,10.0,10.1,9.9,10.0,1000
+2024-01-03 10:00:00,10.0,10.1,9.9,10.0,1000
+2024-01-04 10:00:00,10.2,10.3,10.1,10.2,1000
+2024-01-05 10:00:00,10.2,10.4,10.1,10.3,1000
+2024-01-08 10:00:00,10.3,10.5,10.2,10.4,1000
+";
+        let mut f = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+        write!(f, "{csv}").unwrap();
+        f.flush().unwrap();
+        f
+    }
+
+    #[tokio::test]
+    async fn run_sim_pyramid_adds_units() {
+        let tree_f = write_tree_yaml(PYRAMID_TREE);
+        let bars_f = write_pyramid_bars_csv();
+        let out_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+        let traces_f = tempfile::Builder::new().suffix(".jsonl").tempfile().unwrap();
+        let cfg = make_cfg(&tree_f, &bars_f, &out_f, Some(&traces_f));
+        let report = run_sim(&cfg, &LlmEvaluator::Disabled, false).await.unwrap();
+        // 4 个决策点 target 阶梯：入场 0.5 → 维持 0.5 → 加仓 1.0 → 维持 1.0
+        let targets: Vec<f64> = std::fs::read_to_string(traces_f.path()).unwrap()
+            .lines().filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str::<SimStepRecord>(l).unwrap().target)
+            .collect();
+        assert_eq!(targets.len(), 4);
+        assert!((targets[0] - 0.5).abs() < 1e-9, "enter 0.5, got {}", targets[0]);
+        assert!((targets[1] - 0.5).abs() < 1e-9, "hold 0.5, got {}", targets[1]);
+        assert!((targets[2] - 1.0).abs() < 1e-9, "add to 1.0, got {}", targets[2]);
+        assert!((targets[3] - 1.0).abs() < 1e-9, "hold 1.0, got {}", targets[3]);
+        // 期末清算一个回合；回合记录首次入场价 10.0，高水位仓位 1.0（加满）
+        assert_eq!(report.n_round_trips, 1);
+        assert_relative_eq!(report.trades[0].entry_px, 10.0);
+        assert_relative_eq!(report.trades[0].max_abs_pos, 1.0);
     }
 }

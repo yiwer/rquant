@@ -92,7 +92,7 @@ async fn evaluate_score_hard(
         let fr = forward_return(data.primary, i, leaf.horizon, trace.stance, &data.costs)
             .or_else(|| forward_return(data.primary, i, fw, trace.stance, &data.costs));
         if let Some(f) = fr {
-            nets.push(f.net * leaf.weight);
+            nets.push(f.net * leaf.weight_at(&ctx));
         }
     }
 
@@ -117,7 +117,7 @@ async fn evaluate_score_soft(
         let t = data.primary[i].time;
         let ctx = build_context(data.primary, data.context, data.news, data.aux, t, data.window);
         let soft = crate::engine::soft::traverse_soft(tree, &ctx, llm).await?;
-        let score: Option<SoftScore> = score_soft(&soft, tree, data.primary, i, &data.costs);
+        let score: Option<SoftScore> = score_soft(&soft, tree, data.primary, i, &data.costs, &ctx);
 
         // Mirror run_soft walk_forward engaged filter: engaged > 0.0
         if let Some(s) = score
@@ -153,6 +153,8 @@ async fn evaluate_sim(
     for i in range.clone() {
         let close_i = data.primary[i].close;
         let open_next = data.primary[i + 1].open;
+        let high_next = data.primary[i + 1].high;
+        let low_next = data.primary[i + 1].low;
         let close_next = data.primary[i + 1].close;
         let t_next = data.primary[i + 1].time;
 
@@ -177,6 +179,8 @@ async fn evaluate_sim(
             entry_price: acc.entry_price,
             bars_held: acc.bars_held,
             unreal_pnl,
+            max_price_since_entry: acc.max_price_since_entry,
+            min_price_since_entry: acc.min_price_since_entry,
         };
 
         // Risk overlay (mirror run_sim §3.2): stop → tp → max_hold → tree
@@ -199,7 +203,7 @@ async fn evaluate_sim(
         };
 
         // Execute sim_step
-        sim_step(&mut acc, close_i, open_next, close_next, t_next, target, rate, reason);
+        sim_step(&mut acc, close_i, open_next, high_next, low_next, close_next, t_next, target, rate, reason);
 
         nav_series.push((data.primary[i].time, acc.nav));
     }
@@ -250,7 +254,7 @@ async fn tree_target_hard(
             Stance::Short => -1.0,
             Stance::Flat => 0.0,
         };
-        dir * l.weight
+        dir * l.weight_at(ctx)
     });
     Ok((target, "tree"))
 }

@@ -11,11 +11,22 @@ pub struct SimState {
     pub entry_price: f64,
     pub bars_held: usize,
     pub unreal_pnl: f64,
+    /// 入场以来所见 high 最大值，空仓 NaN（弃权纪律同 entry_price）。
+    pub max_price_since_entry: f64,
+    /// 入场以来所见 low 最小值，空仓 NaN（弃权纪律同 entry_price）。
+    pub min_price_since_entry: f64,
 }
 
 impl Default for SimState {
     fn default() -> Self {
-        Self { pos: 0.0, entry_price: f64::NAN, bars_held: 0, unreal_pnl: 0.0 }
+        Self {
+            pos: 0.0,
+            entry_price: f64::NAN,
+            bars_held: 0,
+            unreal_pnl: 0.0,
+            max_price_since_entry: f64::NAN,
+            min_price_since_entry: f64::NAN,
+        }
     }
 }
 
@@ -26,6 +37,7 @@ pub struct AuxView {
 }
 
 /// 决策时点上下文：节点能看到的全部信息（绝不含未来）。
+/// 注意：eval 发生后再 clone Context 会带走缓存快照——所有生产路径每个决策点新建 Context，不要在 eval 后克隆复用。
 #[derive(Debug, Clone)]
 pub struct Context {
     pub t: NaiveDateTime,
@@ -34,6 +46,10 @@ pub struct Context {
     pub news: Option<NewsView>,
     pub aux: BTreeMap<String, AuxView>,
     pub sim: SimState,
+    /// 因子求值缓存（Expr::Cached 槽位 → 值）；每个决策点随 Context 新建。
+    /// 安全性：展开后的因子是 Context 的纯函数，eval 全程同步、借用不跨 await。
+    /// INVARIANT：槽位 id 由 tree::loader 全树唯一分配；id 撞车 = 静默值串用。
+    pub eval_cache: std::cell::RefCell<std::collections::HashMap<u32, crate::dsl::eval::Value>>,
 }
 
 fn trailing_visible(bars: &[Bar], t: NaiveDateTime, window: usize) -> Vec<Bar> {
@@ -75,6 +91,7 @@ pub fn build_context(
         news: news_view,
         aux: aux_views,
         sim: SimState::default(),
+        eval_cache: Default::default(),
     }
 }
 

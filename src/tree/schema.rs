@@ -45,15 +45,28 @@ pub(crate) enum NodeSpec {
         prompt: String,
         #[serde(default)]
         labels: HashMap<String, String>,
+        #[serde(default)]
+        judge: Option<String>,
+        #[serde(default)]
+        map: HashMap<String, String>,
         default: String,
     },
+}
+
+/// 顶层命名判定：prompt+inputs+允许的 label 集合；llm 节点经 judge: 引用并各自映射落点。
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct JudgeSpec {
+    #[serde(default)]
+    pub(crate) inputs: Vec<String>,
+    pub(crate) prompt: String,
+    pub(crate) labels: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct LeafSpec {
     pub(crate) stance: Stance,
     #[serde(default)]
-    pub(crate) weight: Option<f64>,
+    pub(crate) weight: Option<serde_yaml::Value>,
     #[serde(default)]
     pub(crate) horizon: Option<usize>,
 }
@@ -77,6 +90,8 @@ pub(crate) struct TreeSpec {
     pub(crate) factors: serde_yaml::Mapping,
     #[serde(default)]
     pub(crate) risk: Option<RiskSpec>,
+    #[serde(default)]
+    pub(crate) judges: HashMap<String, JudgeSpec>,
     pub(crate) root: String,
     pub(crate) nodes: HashMap<String, NodeSpec>,
     pub(crate) leaves: HashMap<String, LeafSpec>,

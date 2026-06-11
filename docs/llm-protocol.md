@@ -91,7 +91,7 @@ return argmax(candidates)   # 并列时取 BTreeMap 字典序最小的 label
 **缓存键**（SHA-256 hex，64 字符）：
 
 ```
-sha256( model \0 base_url \0 system_prompt \0 node_id \0 rendered )
+sha256( model \0 base_url \0 system_prompt \0 scope \0 rendered )
 ```
 
 五个字段以 `\0` 分隔，共同决定缓存 key：
@@ -99,14 +99,14 @@ sha256( model \0 base_url \0 system_prompt \0 node_id \0 rendered )
 - `model`：`--llm-model` 参数
 - `base_url`：`--llm-base-url` 参数
 - `system_prompt`：`SYSTEM_PROMPT` 常量（代码内嵌）
-- `node_id`：树中的节点 id
+- `scope`：求值作用域——judge 节点为 `judge:<名>`（共享 judge 的所有节点共享同一缓存条目）；内联节点（无 `judge:`）为节点 id
 - `rendered`：`render_user` 的完整输出（含价格、labels、inputs）
 
 **keys⊆labels 守卫**：缓存命中时额外检查缓存中所有 key 均在当前 `node.labels` 中；不满足则跳过缓存重新调用（防止树修改后读到旧 label 的缓存）。
 
 **缓存存储**：每条记录写为一个 JSON 文件（`{key}.json`），包含 `probs`/`reason`/`model`。写入使用原子 rename（先写带 PID+计数器的临时文件，再 rename），并发写同一键安全。
 
-**自动失效**：修改 `--llm-model`、`--llm-base-url`、`system_prompt`、节点 id、或 prompt / input 字段任意一项，对应缓存自动失效（键变化）。可手动删除 `.rquant-cache/` 目录清空所有缓存。
+**自动失效**：修改 `--llm-model`、`--llm-base-url`、`system_prompt`、scope（节点 id 或 `judge:<名>`）、或 prompt / input 字段任意一项，对应缓存自动失效（键变化）。可手动删除 `.rquant-cache/` 目录清空所有缓存。注意：把既有内联 llm 节点迁移为 `judge:` 引用形式会改变其 scope（节点 id → `judge:<名>`）——旧缓存条目随之失效，下次运行重新发起调用（一次性成本，正确性不受影响）。
 
 ---
 

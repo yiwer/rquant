@@ -169,14 +169,14 @@ async fn compute_tree_target(
         let mut e = 0.0_f64;
         for (leaf_id, &p) in &soft_trace.leaf_probs {
             if let Some(leaf) = tree.leaves.get(leaf_id) {
-                e += p * leaf.weight * stance_dir(leaf.stance);
+                e += p * leaf.weight_at(ctx) * stance_dir(leaf.stance);
             }
         }
         Ok((e, "tree", None))
     } else {
         let trace = traverse(tree, ctx, llm).await?;
         let target = tree.leaves.get(&trace.leaf).map_or(0.0, |l| {
-            stance_dir(l.stance) * l.weight
+            stance_dir(l.stance) * l.weight_at(ctx)
         });
         Ok((target, "tree", Some(trace.leaf)))
     }
@@ -267,6 +267,8 @@ pub async fn run_signal_single(
 
         let close_i = primary[i].close;
         let open_next = primary[i + 1].open;
+        let high_next = primary[i + 1].high;
+        let low_next = primary[i + 1].low;
         let close_next = primary[i + 1].close;
         let t_next = primary[i + 1].time;
 
@@ -291,6 +293,8 @@ pub async fn run_signal_single(
             entry_price: acc.entry_price,
             bars_held: acc.bars_held,
             unreal_pnl,
+            max_price_since_entry: acc.max_price_since_entry,
+            min_price_since_entry: acc.min_price_since_entry,
         };
 
         // 风控覆盖（spec §3.2）：pos≠0 时按 stop→tp→max_hold 顺序检查
@@ -301,6 +305,8 @@ pub async fn run_signal_single(
             &mut acc,
             close_i,
             open_next,
+            high_next,
+            low_next,
             close_next,
             t_next,
             target,
@@ -336,6 +342,8 @@ pub async fn run_signal_single(
         entry_price: acc.entry_price,
         bars_held: acc.bars_held,
         unreal_pnl,
+        max_price_since_entry: acc.max_price_since_entry,
+        min_price_since_entry: acc.min_price_since_entry,
     };
 
     // 悬挂决策：风控覆盖优先，否则树目标（保留 leaf trace）

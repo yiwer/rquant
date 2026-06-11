@@ -153,7 +153,7 @@ mod tests {
 
     pub(super) fn ctx() -> Context {
         let t = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap().and_hms_opt(9, 45, 0).unwrap();
-        Context { t, primary: Window { bars: vec![] }, context: Window { bars: vec![] }, news: None, aux: std::collections::BTreeMap::new(), sim: crate::features::context::SimState::default() }
+        Context { t, primary: Window { bars: vec![] }, context: Window { bars: vec![] }, news: None, aux: std::collections::BTreeMap::new(), sim: crate::features::context::SimState::default(), eval_cache: Default::default() }
     }
     fn labels() -> HashMap<String, String> {
         HashMap::from([("go".to_string(), "leaf_l".to_string())])

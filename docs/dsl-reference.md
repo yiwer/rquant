@@ -27,11 +27,13 @@
 | `entry_price` | `Context.sim`（sim 模式） | 入场均价（标量）；空仓或非 sim 模式为 `NaN`，引用它的比较自动弃权（false） |
 | `bars_held` | `Context.sim`（sim 模式） | 当前持仓已持 bar 数（标量，从开仓收盘后的第 1 根起计）；非 sim 模式默认 `0.0` |
 | `unreal_pnl` | `Context.sim`（sim 模式） | 浮动损益率 `(close/entry_price−1)×sign(pos)`（标量）；空仓或非 sim 模式默认 `0.0` |
+| `max_price_since_entry` | `Context.sim`（sim 模式） | 入场以来（含入场执行 bar）最高 `high`（标量）；空仓/非 sim 为 NaN → 比较弃权。Chandelier：`close < max_price_since_entry - 3*atr(22)` |
+| `min_price_since_entry` | `Context.sim`（sim 模式） | 入场以来最低 `low`（标量）；空仓/非 sim 为 NaN → 比较弃权。MFE/MAE 自行推导：`max_price_since_entry/entry_price - 1` |
 | `aux.<表名>.<列名>` | 挂载的外部 aux 表 | `--aux <表名>=path.csv` 中 `<列名>` 对应的数值序列（time≤t 截断后的可见部分） |
 
-`resolve_series`（`eval.rs`）实现上述解析：前缀 `aux.` 存在时路由到对应 `AuxView`，前缀 `ctx.` 存在时路由到 `ctx.context`，否则路由到 `ctx.primary`。`hour`/`minute`/`dow` 与 `pos`/`entry_price`/`bars_held`/`unreal_pnl` 在 `eval` 的 `Ident` 臂中优先匹配，直接从 `ctx` 读取，不参与序列解析。
+`resolve_series`（`eval.rs`）实现上述解析：前缀 `aux.` 存在时路由到对应 `AuxView`，前缀 `ctx.` 存在时路由到 `ctx.context`，否则路由到 `ctx.primary`。`hour`/`minute`/`dow` 与 `pos`/`entry_price`/`bars_held`/`unreal_pnl`/`max_price_since_entry`/`min_price_since_entry` 在 `eval` 的 `Ident` 臂中优先匹配，直接从 `ctx` 读取，不参与序列解析。
 
-> **`entry_price` NaN 弃权**：空仓时 `entry_price = NaN`，与 NaN 的任何比较（`>`/`<`/`==`/`!=`）均返回 `false`。因此 `entry_price > 0` 在空仓时永远为 false，可安全用于分支条件而无需额外判空。
+> **`entry_price` NaN 弃权**：空仓时 `entry_price = NaN`，与 NaN 的任何比较（`>`/`<`/`==`/`!=`）均返回 `false`。因此 `entry_price > 0` 在空仓时永远为 false，可安全用于分支条件而无需额外判空。同理，`max_price_since_entry`/`min_price_since_entry` 在入场决策点（`pos` 尚为 0）亦为 NaN——首个有效值在入场执行 bar 收盘后、下一个决策点才可见。
 
 ```yaml
 # 示例：只在早盘（9:45–11:30）且非周五入场
@@ -116,6 +118,11 @@ BinaryOp::Ne => { let (a,b) = ...; !a.is_nan() && !b.is_nan() && a != b }
 | `lowest(series, n)` | series: Series, n: int | NaN | 最近 n 根最低值（**含当前 bar**）；NaN 行为同 highest | `lowest(low, 20)` |
 | `std(series, n)` | series: Series, n: int | NaN | 最近 n 根总体标准差（÷n） | `std(close, 20)` |
 | `sigmoid(x)` | x: Scalar | — | 1/(1+e^−x)，常用于 strength 表达式 | `sigmoid((close - sma(close,20)) / 0.5)` |
+| `abs(x)` | x: Scalar | — | 绝对值 | `abs(close - entry_price)` |
+| `max(a, b)` | a, b: Scalar | 任一 NaN → NaN | 较大值；**显式 NaN 传播**（不吃弃权） | `max(pos, 0.25)` |
+| `min(a, b)` | a, b: Scalar | 任一 NaN → NaN | 较小值；NaN 传播同 max | `min(1, pos + 0.25)` |
+| `count(cond, n)` | cond: 布尔表达式, n: int≥1 | 序列 < n → NaN | 末 n 位中 cond 为 true 的个数；cond **逐位**求值（见下节） | `count(close > ema(close,20), 10)` |
+| `barssince(cond)` | cond: 布尔表达式 | 从未 true → NaN | 距最近一次 cond=true 的 bar 数（当前 bar=0） | `barssince(crossover(close, sma(close,20)))` |
 
 > **陷阱：`highest`/`lowest` 窗口含当前 bar**。`close > highest(high, n)` 恒假（窗口最大值 ≥ 当前 high ≥ 当前 close，严格大于永不成立）。表达 Turtle"超过前 N 根高点"的突破语义必须先用 `ref` 移掉当前 bar：
 >
@@ -130,6 +137,32 @@ BinaryOp::Ne => { let (a,b) = ...; !a.is_nan() && !b.is_nan() && a != b }
 |---|---|---|---|
 | `crossover(a, b)` | a, b: Series | 上穿：前一根 a≤b 且本根 a>b；序列不足 2 根时 false | `crossover(close, sma(close,20))` |
 | `crossunder(a, b)` | a, b: Series | 下穿：前一根 a≥b 且本根 a<b；序列不足 2 根时 false | `crossunder(ema(close,5), ema(close,20))` |
+
+---
+
+## 事件计数与逐位条件（`count` / `barssince`）
+
+`count`/`barssince` 的条件参数不走「Series → 取末元素」归约，而是**逐位**求值成布尔序列：
+
+- 比较（`> < >= <= == !=`）：两侧序列**尾对齐**（取右端公共长度；标量广播），逐位比较；任一侧该位 NaN → 该位 false（NaN 弃权逐位生效）。
+- `and` / `or` / `not`：逐位组合。
+- `crossover(a, b)` / `crossunder(a, b)`：逐位事件序列——位 j 为 true 当且仅当前一位未越线且本位越线；首位与含 NaN 位恒 false。**注意与普通 `when` 上下文的标量版语义并存**：普通上下文里 crossover 只看末两位返回单个 Bool，条件序列上下文里它是整个窗口的事件序列。
+- 其余表达式形态（裸序列、算术结果）作为条件 → 求值报错。
+
+窗口纪律：布尔序列长度 < n（或 `barssince` 从未触发）→ 返回 NaN，外层比较自动弃权走 default。
+
+### 价格行为惯用法
+
+```yaml
+# 趋势强度：最近 10 根中至少 8 根收于 EMA20 上方
+when: "count(close > ema(close,20), 10) >= 8"
+# H2 计数近似：20 根内第 2 次上穿 EMA8
+when: "count(crossover(close, ema(close,8)), 20) == 2"
+# 突破后回踩不破：距突破 ≤5 根且未跌破前低
+when: "barssince(close > highest(ref(high,1), 20)) <= 5 and low > lowest(ref(low,1), 10)"
+# inside bar（无需 count，普通索引即可）
+when: "high < high[-1] and low > low[-1]"
+```
 
 ---
 
@@ -184,9 +217,11 @@ factors:
 
 引用一个 `params`/`factors` 名字等价于**在该位置直接写出对应的字面量或子表达式**。展开在加载时由 `substitute`（`dsl/ast.rs`）执行，运行时的 AST 中不存在任何因子名 Ident——编译后的树与手写展开版本完全等价。
 
-### 重复求值代价
+### 因子按决策点 memoize
 
-同一因子在多处引用时，**各引用处独立重新求值**，运行时无共享缓存。若因子包含代价较高的计算（如 `ema(close, 200)`），应尽量减少重复引用次数，或将多个引用合并到同一个更高层的因子表达式中。
+同一因子在多处引用时共享一个缓存槽（加载期由 loader 包裹 `Cached` 节点）：**每个决策点首个引用处真算一次，其余引用命中缓存**。语义与内联展开完全等价（因子是 Context 的纯函数），高频引用的重型因子（如 `atr(14)`、`ema(close,200)`）不再有重复求值代价。缓存随 Context 新建/销毁，不跨决策点、不跨标的。
+
+例外：`strength: "auto"` 的模糊求值路径对布尔因子透传重算（模糊真值依赖 scale，不消费缓存值），正确性不受影响——只是该路径上布尔因子无缓存收益；其内部嵌套的数值因子照常命中缓存。
 
 ### 有序引用规则
 
@@ -207,6 +242,24 @@ when: "close/close[-5] > aux.idx.v/aux.idx.v[-5]"
 ### time≤t 闸门
 
 `build_context` 对每个决策点 `t`，将 aux 表按 `time ≤ t` 截断，向 DSL 暴露截断后的可见切片。**不会泄露未来数据**。
+
+### 时间戳纪律（as-of join，防 lookahead）
+
+闸门是**含端点的 as-of join**：决策点 `t` 可见所有 `time ≤ t` 的行——与 primary bar 的可见性约定一致（时间戳为 `t` 的 bar 在 `t` 时刻其 close 已可见）。因此 aux 行时间戳必须满足同一纪律：
+
+> **行时间 = 该行数值完全确定（可被知晓）的时刻。**
+
+- **高周期重采样**（如用 4h K 线做日内 regime 过滤）：行必须打在**周期收盘时刻**。打在周期开始时刻 = 在该周期进行中就泄露其收盘值，lookahead 直接进来。
+- **公告 / 财务 / 舆情**：行时间 = 发布时刻（精确到日内则当日盘中即可见；只精确到日，按「当日收盘后写入」处理 → 次日起可见）。
+- **指数日线**：打收盘时刻（如 `2024-01-02 15:00:00`），不要打 `00:00:00`——后者会让当日开盘即可见当日收盘价。
+
+这与 `--sim` 的 SimState 注入、`build_context` 的 bar 闸门是同一条防未来函数纪律：**引擎只保证 `time ≤ t` 截断正确，时间戳本身的语义由数据制备方负责**。引擎无法检测打错戳的 aux 表——错误的时间戳产生的回测收益是假的。
+
+| 数据 | 错误打法 | 正确打法 |
+|---|---|---|
+| 4h bar (10:00–14:00) 的 ema20 | `10:00:00`（周期开始） | `14:00:00`（周期收盘） |
+| 1 月 5 日盘后年报 | `2024-01-05 00:00:00` | `2024-01-05 17:00:00`（或次日 00:00） |
+| 指数日线收盘价 | `2024-01-02 00:00:00` | `2024-01-02 15:00:00` |
 
 ### 低频序列的最近已知值
 

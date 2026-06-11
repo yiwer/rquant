@@ -88,6 +88,59 @@ mod tests {
         assert_eq!(cache.get(&key).unwrap(), c);
     }
 
+    /// 组合级不变量：共享 judge 的两个物化节点（map/default 不同）渲染串逐字节一致，
+    /// 配合相同 scope → 同一缓存键。锁定「判定复用 = 一次网络调用」的机制基础——
+    /// 若未来 render_user 误把 default 或 labels 的 value 渲染进 prompt，本测试变红。
+    #[test]
+    fn shared_judge_nodes_render_to_same_cache_key() {
+        use crate::data::bar::{Bar, Window};
+        use crate::eval::llm::prompt::render_user;
+        use crate::eval::llm::LlmNode;
+        use crate::tree::loader::{load_tree_str, Node};
+
+        let tree = load_tree_str(r#"
+meta: { name: t, forward_window: 3, stances: [long, flat, short] }
+judges:
+  veto:
+    prompt: "veto?"
+    labels: [bad, ok]
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "close > 100", goto: g_hi, label: hi } ]
+    default: { goto: g_lo, label: lo }
+  g_hi: { type: llm, judge: veto, map: { ok: leaf_l }, default: leaf_f }
+  g_lo: { type: llm, judge: veto, map: { ok: leaf_s }, default: leaf_l }
+leaves:
+  leaf_l: { stance: long }
+  leaf_s: { stance: short }
+  leaf_f: { stance: flat }
+"#).unwrap();
+
+        let t0 = chrono::NaiveDate::from_ymd_opt(2024, 1, 2).unwrap().and_hms_opt(9, 45, 0).unwrap();
+        let bars = vec![Bar { time: t0, open: 1.0, high: 1.0, low: 1.0, close: 1.0, volume: 1.0 }];
+        let ctx = crate::features::context::Context {
+            t: t0,
+            primary: Window { bars: bars.clone() },
+            context: Window { bars },
+            news: None,
+            aux: BTreeMap::new(),
+            sim: crate::features::context::SimState::default(),
+            eval_cache: Default::default(),
+        };
+
+        let render_key = |id: &str| match tree.nodes.get(id).unwrap() {
+            Node::Llm { inputs, prompt, labels, default, scope } => {
+                let ln = LlmNode { inputs, prompt, labels, default };
+                let rendered = render_user(&ln, &ctx);
+                FileCache::key("m", "https://a", "sys", scope.as_deref().unwrap(), &rendered)
+            }
+            _ => panic!("expected llm node"),
+        };
+        assert_eq!(render_key("g_hi"), render_key("g_lo"));
+    }
+
     // M6 — concurrent cache put: 8 threads each writing the same key with distinct reasons
     #[test]
     fn concurrent_put_same_key_survives() {

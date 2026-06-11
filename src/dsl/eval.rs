@@ -35,6 +35,7 @@ pub fn eval_fuzzy(expr: &Expr, ctx: &Context, scale: f64) -> Result<f64> {
             _ => Err(Error::Eval("fuzzy: expected boolean expression".into())),
         },
         Expr::Unary(UnaryOp::Not, e) => Ok(1.0 - eval_fuzzy(e, ctx, scale)?),
+        Expr::Cached(_, e) => eval_fuzzy(e, ctx, scale),
         _ => Err(Error::Eval("fuzzy: expected boolean expression".into())),
     }
 }
@@ -61,6 +62,8 @@ pub fn eval(expr: &Expr, ctx: &Context) -> Result<Value> {
             "entry_price" => Ok(Value::Scalar(ctx.sim.entry_price)),
             "bars_held" => Ok(Value::Scalar(ctx.sim.bars_held as f64)),
             "unreal_pnl" => Ok(Value::Scalar(ctx.sim.unreal_pnl)),
+            "max_price_since_entry" => Ok(Value::Scalar(ctx.sim.max_price_since_entry)),
+            "min_price_since_entry" => Ok(Value::Scalar(ctx.sim.min_price_since_entry)),
             _ => Ok(Value::Series(resolve_series(name, ctx)?)),
         },
         Expr::Index(inner, k) => {
@@ -103,6 +106,14 @@ pub fn eval(expr: &Expr, ctx: &Context) -> Result<Value> {
                 }
 
             })
+        }
+        Expr::Cached(id, inner) => {
+            if let Some(v) = ctx.eval_cache.borrow().get(id) {
+                return Ok(v.clone());
+            }
+            let v = eval(inner, ctx)?;
+            ctx.eval_cache.borrow_mut().insert(*id, v.clone());
+            Ok(v)
         }
         Expr::Call(name, args) => eval_call(name, args, ctx),
     }
@@ -177,7 +188,115 @@ fn need(args: &[Value], n: usize, name: &str) -> Result<()> {
     Ok(())
 }
 
+/// 把两个 Value 调成等长数值序列对（尾对齐）：双 Series 取右端公共长度；Scalar 广播；Bool → Err。
+fn tail_align(a: &Value, b: &Value) -> Result<(Vec<f64>, Vec<f64>)> {
+    match (a, b) {
+        (Value::Series(x), Value::Series(y)) => {
+            let m = x.len().min(y.len());
+            Ok((x[x.len() - m..].to_vec(), y[y.len() - m..].to_vec()))
+        }
+        (Value::Series(x), Value::Scalar(s)) => Ok((x.clone(), vec![*s; x.len()])),
+        (Value::Scalar(s), Value::Series(y)) => Ok((vec![*s; y.len()], y.clone())),
+        (Value::Scalar(p), Value::Scalar(q)) => Ok((vec![*p], vec![*q])),
+        _ => Err(Error::Eval("expected numeric operands in condition".into())),
+    }
+}
+
+/// 布尔序列求值（count/barssince 的条件臂）：比较 → 逐位（任一侧 NaN → 该位 false），
+/// and/or/not → 逐位组合（尾对齐到公共长度），crossover/crossunder → 逐位事件序列，
+/// 其余表达式形态 → Err。
+/// 注意：此处的 crossover/crossunder 是逐位事件语义，与 eval_call 的标量 Bool 版
+///（只看末两位）是同名函数的两种刻意并存的语义——条件序列上下文 vs 普通 when 上下文。
+fn eval_bool_series(expr: &Expr, ctx: &Context) -> Result<Vec<bool>> {
+    match expr {
+        Expr::Binary(op, l, r) => match op {
+            BinaryOp::And | BinaryOp::Or => {
+                let a = eval_bool_series(l, ctx)?;
+                let b = eval_bool_series(r, ctx)?;
+                let m = a.len().min(b.len());
+                let (a, b) = (&a[a.len() - m..], &b[b.len() - m..]);
+                Ok(a.iter()
+                    .zip(b)
+                    .map(|(&x, &y)| if matches!(op, BinaryOp::And) { x && y } else { x || y })
+                    .collect())
+            }
+            BinaryOp::Gt | BinaryOp::Lt | BinaryOp::Ge | BinaryOp::Le | BinaryOp::Eq | BinaryOp::Ne => {
+                let (a, b) = tail_align(&eval(l, ctx)?, &eval(r, ctx)?)?;
+                Ok(a.iter()
+                    .zip(&b)
+                    .map(|(&x, &y)| {
+                        if x.is_nan() || y.is_nan() {
+                            return false;
+                        }
+                        match op {
+                            BinaryOp::Gt => x > y,
+                            BinaryOp::Lt => x < y,
+                            BinaryOp::Ge => x >= y,
+                            BinaryOp::Le => x <= y,
+                            BinaryOp::Eq => x == y,
+                            BinaryOp::Ne => x != y,
+                            _ => unreachable!(),
+                        }
+                    })
+                    .collect())
+            }
+            _ => Err(Error::Eval(
+                "count/barssince: condition must be a comparison, boolean combination, or crossover/crossunder call".into(),
+            )),
+        },
+        Expr::Unary(UnaryOp::Not, e) => Ok(eval_bool_series(e, ctx)?.into_iter().map(|x| !x).collect()),
+        Expr::Cached(_, e) => eval_bool_series(e, ctx),
+        Expr::Call(name, args) if name == "crossover" || name == "crossunder" => {
+            if args.len() != 2 {
+                return Err(Error::Eval(format!("{name} expects 2 args, got {}", args.len())));
+            }
+            let (a, b) = tail_align(&eval(&args[0], ctx)?, &eval(&args[1], ctx)?)?;
+            let over = name == "crossover";
+            Ok((0..a.len())
+                .map(|j| {
+                    if j == 0 {
+                        return false;
+                    }
+                    let (p0, q0, p1, q1) = (a[j - 1], b[j - 1], a[j], b[j]);
+                    if p0.is_nan() || q0.is_nan() || p1.is_nan() || q1.is_nan() {
+                        return false;
+                    }
+                    if over { p0 <= q0 && p1 > q1 } else { p0 >= q0 && p1 < q1 }
+                })
+                .collect())
+        }
+        _ => Err(Error::Eval(
+            "count/barssince: condition must be a comparison, boolean combination, or crossover/crossunder call".into(),
+        )),
+    }
+}
+
 fn eval_call(name: &str, args: &[Expr], ctx: &Context) -> Result<Value> {
+    // count/barssince 的条件参数必须按原始 AST 逐位求值，不能走统一参数求值（那会归约成单 Bool）
+    match name {
+        "count" => {
+            if args.len() != 2 {
+                return Err(Error::Eval(format!("count expects 2 args, got {}", args.len())));
+            }
+            let cond = eval_bool_series(&args[0], ctx)?;
+            let n = as_usize(&eval(&args[1], ctx)?)?;
+            if n == 0 || cond.len() < n {
+                return Ok(Value::Scalar(f64::NAN)); // 窗口不足 → 弃权
+            }
+            return Ok(Value::Scalar(cond[cond.len() - n..].iter().filter(|&&b| b).count() as f64));
+        }
+        "barssince" => {
+            if args.len() != 1 {
+                return Err(Error::Eval(format!("barssince expects 1 arg, got {}", args.len())));
+            }
+            let cond = eval_bool_series(&args[0], ctx)?;
+            return Ok(Value::Scalar(match cond.iter().rposition(|&b| b) {
+                Some(j) => (cond.len() - 1 - j) as f64,
+                None => f64::NAN, // 可见窗口内从未触发 → 弃权
+            }));
+        }
+        _ => {}
+    }
     let vals: Result<Vec<Value>> = args.iter().map(|a| eval(a, ctx)).collect();
     let vals = vals?;
     match name {
@@ -242,6 +361,23 @@ fn eval_call(name: &str, args: &[Expr], ctx: &Context) -> Result<Value> {
             need(&vals, 1, name)?;
             Ok(Value::Scalar(1.0 / (1.0 + (-as_scalar(&vals[0])?).exp())))
         }
+        "abs" => {
+            need(&vals, 1, name)?;
+            Ok(Value::Scalar(as_scalar(&vals[0])?.abs()))
+        }
+        "max" | "min" => {
+            need(&vals, 2, name)?;
+            let (a, b) = (as_scalar(&vals[0])?, as_scalar(&vals[1])?);
+            // f64::max(NaN, x) 返回 x，会吞掉预热弃权 → 显式传播 NaN
+            let v = if a.is_nan() || b.is_nan() {
+                f64::NAN
+            } else if name == "max" {
+                a.max(b)
+            } else {
+                a.min(b)
+            };
+            Ok(Value::Scalar(v))
+        }
         _ => Err(Error::Eval(format!("unknown function: {name}"))),
     }
 }
@@ -265,7 +401,23 @@ mod tests {
             })
             .collect();
         let t = bars.last().unwrap().time;
-        Context { t, primary: Window { bars: bars.clone() }, context: Window { bars }, news: None, aux: std::collections::BTreeMap::new(), sim: crate::features::context::SimState::default() }
+        Context { t, primary: Window { bars: bars.clone() }, context: Window { bars }, news: None, aux: std::collections::BTreeMap::new(), sim: crate::features::context::SimState::default(), eval_cache: Default::default() }
+    }
+
+    #[test]
+    fn cached_expr_memoizes_per_context() {
+        let ctx = ctx_from_closes(&[1.0, 2.0, 3.0]);
+        let e = Expr::Cached(7, Box::new(parse_str("sma(close, 2)").unwrap()));
+        // 首次求值：真算，并写入缓存槽
+        let v1 = eval(&e, &ctx).unwrap();
+        assert!(matches!(v1, Value::Series(_)));
+        assert!(ctx.eval_cache.borrow().contains_key(&7));
+        // 改写缓存槽为哨兵 → 第二次求值必须命中缓存（返回哨兵而非重算）
+        ctx.eval_cache.borrow_mut().insert(7, Value::Scalar(42.0));
+        assert_eq!(eval(&e, &ctx).unwrap(), Value::Scalar(42.0));
+        // 不同槽位互不串扰
+        let e2 = Expr::Cached(8, Box::new(parse_str("close").unwrap()));
+        assert!(matches!(eval(&e2, &ctx).unwrap(), Value::Series(_)));
     }
 
     #[test]
@@ -478,6 +630,62 @@ mod tests {
     }
 
     #[test]
+    fn abs_min_max_eval() {
+        let ctx = ctx_from_closes(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+        let f = |src: &str| eval(&parse_str(src).unwrap(), &ctx).unwrap();
+        assert_eq!(f("abs(0 - 3) == 3"), Value::Bool(true));
+        assert_eq!(f("abs(close - 10) == 5"), Value::Bool(true));
+        assert_eq!(f("max(2, 3) == 3"), Value::Bool(true));
+        assert_eq!(f("min(2, 3) == 2"), Value::Bool(true));
+        // 序列参数经 as_scalar 归约取末元素
+        assert_eq!(f("max(close, 4.5) == 5"), Value::Bool(true));
+        // NaN 传播：预热期 sma 为 NaN → max/min 必须返回 NaN（弃权），不得吃掉 NaN
+        assert_eq!(f("max(sma(close, 10), 1) > 0"), Value::Bool(false));
+        assert_eq!(f("min(sma(close, 10), 1) < 99"), Value::Bool(false));
+        // abs 对 NaN 输入也应弃权（预热期 sma 为 NaN）
+        assert_eq!(f("abs(sma(close, 10)) > 0"), Value::Bool(false));
+        // 错参数量
+        assert!(eval(&parse_str("abs(1, 2)").unwrap(), &ctx).is_err());
+        assert!(eval(&parse_str("max(1)").unwrap(), &ctx).is_err());
+    }
+
+    #[test]
+    fn count_over_bool_series() {
+        let ctx = ctx_from_closes(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+        let f = |src: &str| eval(&parse_str(src).unwrap(), &ctx).unwrap();
+        // 末 3 位 [3>3,4>3,5>3] = [F,T,T] → 2
+        assert_eq!(f("count(close > 3, 3) == 2"), Value::Bool(true));
+        // 预热 NaN 逐位弃权：sma(close,3)=[N,N,2,3,4]，close>sma 逐位 [F,F,T,T,T] → 3
+        assert_eq!(f("count(close > sma(close,3), 5) == 3"), Value::Bool(true));
+        // and 逐位组合：close>2 且 close<5 → [F,F,T,T,F] 末 5 位 → 2
+        assert_eq!(f("count(close > 2 and close < 5, 5) == 2"), Value::Bool(true));
+        // not 逐位
+        assert_eq!(f("count(not (close > 3), 5) == 3"), Value::Bool(true));
+        // 尾对齐：ref(close,1)=[1,2,3,4] 与标量 2 广播 → [F,F,T,T]，n=4 → 2
+        assert_eq!(f("count(ref(close,1) > 2, 4) == 2"), Value::Bool(true));
+        // 序列不足 n → NaN 弃权（所有比较 false）
+        assert_eq!(f("count(close > 0, 99) > 0"), Value::Bool(false));
+        assert_eq!(f("count(close > 0, 99) == count(close > 0, 99)"), Value::Bool(false));
+        // 双标量条件 → 长度 1 布尔序列 → n>1 时弃权（语义锁定）
+        assert_eq!(f("count(highest(close,3) > lowest(close,3), 5) > 0"), Value::Bool(false));
+        // 条件不是布尔表达式 → Err
+        assert!(eval(&parse_str("count(close, 3)").unwrap(), &ctx).is_err());
+        // 错参数量 → Err
+        assert!(eval(&parse_str("count(close > 0)").unwrap(), &ctx).is_err());
+    }
+
+    #[test]
+    fn count_works_in_fuzzy_strength() {
+        let ctx = ctx_from_closes(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+        // count(close>3,3)=2，两侧相等 → 模糊真值 0.5
+        let v = eval_fuzzy(&parse_str("count(close > 3, 3) >= 2").unwrap(), &ctx, 0.02).unwrap();
+        assert!((v - 0.5).abs() < 1e-9);
+        // barssince 返回 Scalar，fuzzy 路径同样可用：close<2.5 → [T,T,F,F,F] → barssince=3，两侧相等 → 0.5
+        let v2 = eval_fuzzy(&parse_str("barssince(close < 2.5) >= 3").unwrap(), &ctx, 0.02).unwrap();
+        assert!((v2 - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
     fn sim_state_identifiers() {
         let mut ctx = ctx_from_closes(&[1.0]);
         let f = |src: &str, c: &Context| eval(&parse_str(src).unwrap(), c).unwrap();
@@ -487,8 +695,64 @@ mod tests {
         assert_eq!(f("unreal_pnl == 0", &ctx), Value::Bool(true));
         assert_eq!(f("entry_price > 0", &ctx), Value::Bool(false)); // NaN 弃权
         // 注入后可见
-        ctx.sim = crate::features::context::SimState { pos: 0.5, entry_price: 10.0, bars_held: 3, unreal_pnl: -0.02 };
+        ctx.sim = crate::features::context::SimState { pos: 0.5, entry_price: 10.0, bars_held: 3, unreal_pnl: -0.02, ..crate::features::context::SimState::default() };
         assert_eq!(f("pos > 0 and bars_held >= 3", &ctx), Value::Bool(true));
         assert_eq!(f("unreal_pnl < -0.01 and entry_price == 10", &ctx), Value::Bool(true));
+    }
+
+    #[test]
+    fn count_crossover_events() {
+        // closes 围绕 2.5 来回穿越：上穿发生在 idx 1、3、5
+        let ctx = ctx_from_closes(&[1.0, 3.0, 2.0, 3.0, 2.0, 3.0]);
+        let f = |src: &str| eval(&parse_str(src).unwrap(), &ctx).unwrap();
+        assert_eq!(f("count(crossover(close, 2.5), 6) == 3"), Value::Bool(true));
+        assert_eq!(f("count(crossunder(close, 2.5), 6) == 2"), Value::Bool(true));
+        // 与逐位 and 组合
+        assert_eq!(f("count(crossover(close, 2.5) and close > 0, 6) == 3"), Value::Bool(true));
+        // barssince + crossover：最近一次上穿在 idx5（当前 bar）→ 0
+        assert_eq!(f("barssince(crossover(close, 2.5)) == 0"), Value::Bool(true));
+        // 预热 NaN 段不产生事件：sma(close,3)=[N,N,2.0,2.67,2.33,2.67]，上穿仅 idx3、idx5 → 2
+        assert_eq!(f("count(crossover(sma(close,3), 2.5), 6) == 2"), Value::Bool(true));
+    }
+
+    #[test]
+    fn position_extreme_identifiers() {
+        let mut ctx = ctx_from_closes(&[10.4]);
+        let f = |src: &str, c: &Context| eval(&parse_str(src).unwrap(), c).unwrap();
+        // 空仓默认 NaN → 弃权
+        assert_eq!(f("max_price_since_entry > 0", &ctx), Value::Bool(false));
+        assert_eq!(f("min_price_since_entry > 0", &ctx), Value::Bool(false));
+        // 注入后可见：Chandelier 形态条件可表达
+        ctx.sim = crate::features::context::SimState {
+            pos: 1.0,
+            entry_price: 10.0,
+            bars_held: 3,
+            unreal_pnl: 0.04,
+            max_price_since_entry: 11.0,
+            min_price_since_entry: 9.9,
+        };
+        assert_eq!(f("max_price_since_entry == 11", &ctx), Value::Bool(true));
+        assert_eq!(f("min_price_since_entry == 9.9", &ctx), Value::Bool(true)); // 判别 max/min 不可接反
+        assert_eq!(f("close < max_price_since_entry - 0.5", &ctx), Value::Bool(true));
+        // MFE 推导：(11/10 - 1) = 0.1
+        assert_eq!(f("max_price_since_entry / entry_price - 1 > 0.09", &ctx), Value::Bool(true));
+    }
+
+    #[test]
+    fn barssince_last_true_distance() {
+        let ctx = ctx_from_closes(&[1.0, 5.0, 2.0, 3.0, 4.0]);
+        let f = |src: &str| eval(&parse_str(src).unwrap(), &ctx).unwrap();
+        // close>4 仅在 idx1（5.0）为 true → 距末位 3 根
+        assert_eq!(f("barssince(close > 4) == 3"), Value::Bool(true));
+        // 当前 bar 即 true → 0
+        assert_eq!(f("barssince(close > 3.5) == 0"), Value::Bool(true));
+        // 多次 true 且最近一次不在尾部：close<2.5 → [T,F,T,F,F]，最近 true 在 idx2 → 距离 2
+        // （若误用 position 从头找会得 4——本断言锁定 rposition 语义）
+        assert_eq!(f("barssince(close < 2.5) == 2"), Value::Bool(true));
+        // 从未 true → NaN 弃权
+        assert_eq!(f("barssince(close > 99) >= 0"), Value::Bool(false));
+        // 非布尔条件 / 错参数量 → Err
+        assert!(eval(&parse_str("barssince(close)").unwrap(), &ctx).is_err());
+        assert!(eval(&parse_str("barssince(close > 0, 1)").unwrap(), &ctx).is_err());
     }
 }

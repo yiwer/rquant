@@ -28,12 +28,14 @@ pub struct SoftScore {
 }
 
 /// 按叶子分布求期望净收益；任一叶子前瞻越界(None) → 整点 None。
+/// `ctx` 用于决策时求值叶子 weight 表达式（常量权重时内容不影响结果）。
 pub fn score_soft(
     soft: &SoftTrace,
     tree: &Tree,
     primary: &[Bar],
     i: usize,
     costs: &CostModel,
+    ctx: &crate::features::context::Context,
 ) -> Option<SoftScore> {
     let mut expected_net = 0.0;
     let mut engaged = 0.0;
@@ -43,7 +45,7 @@ pub fn score_soft(
     for (leaf_id, &p) in &soft.leaf_probs {
         let leaf = tree.leaves.get(leaf_id)?;
         let fr = forward_return(primary, i, leaf.horizon, leaf.stance, costs)?;
-        let w = leaf.weight;
+        let w = leaf.weight_at(ctx);
         expected_net += p * w * fr.net;
         exposure += p * w * match leaf.stance {
             Stance::Long => 1.0,
@@ -130,7 +132,7 @@ async fn eval_point_soft(
     let t = primary[i].time;
     let ctx = build_context(primary, context, news, aux, t, window);
     let soft = traverse_soft(tree, &ctx, llm).await?;
-    let score = score_soft(&soft, tree, primary, i, costs);
+    let score = score_soft(&soft, tree, primary, i, costs, &ctx);
     Ok((soft, score))
 }
 
@@ -212,6 +214,7 @@ pub async fn run_soft(cfg: &BacktestConfig, llm: &LlmEvaluator) -> Result<SoftRe
 #[cfg(test)]
 mod tests {
     use super::*;
+    use approx::assert_relative_eq;
     use crate::engine::soft::SoftTrace;
     use crate::tree::loader::load_tree_str;
     use chrono::NaiveDateTime;
@@ -221,6 +224,22 @@ mod tests {
         Bar {
             time: NaiveDateTime::parse_from_str(t, "%Y-%m-%d %H:%M:%S").unwrap(),
             open, high: open.max(close), low: open.min(close), close, volume: 1.0,
+        }
+    }
+
+    /// 最小 Context 供 score_soft 测试：这些树的 weight 都是常量，ctx 内容不影响结果。
+    fn mini_ctx() -> crate::features::context::Context {
+        use crate::data::bar::Window;
+        let t = NaiveDateTime::parse_from_str("2024-01-02 09:45:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let bars = vec![bar("2024-01-02 09:45:00", 10.0, 10.0)];
+        crate::features::context::Context {
+            t,
+            primary: Window { bars: bars.clone() },
+            context: Window { bars },
+            news: None,
+            aux: BTreeMap::new(),
+            sim: crate::features::context::SimState::default(),
+            eval_cache: Default::default(),
         }
     }
     const TREE: &str = r#"
@@ -249,7 +268,7 @@ leaves:
         lp.insert("leaf_l".to_string(), 0.5);
         lp.insert("leaf_f".to_string(), 0.5);
         let soft = SoftTrace { t: primary[0].time, leaf_probs: lp };
-        let s = score_soft(&soft, &tree, &primary, 0, &costs).unwrap();
+        let s = score_soft(&soft, &tree, &primary, 0, &costs, &mini_ctx()).unwrap();
         // long net = 11/10-1-0.001 = 0.099; flat = 0; expected = 0.5*0.099
         assert!((s.expected_net - 0.0495).abs() < 1e-9);
         assert!((s.engaged - 0.5).abs() < 1e-9);
@@ -264,7 +283,7 @@ leaves:
         let mut lp = BTreeMap::new();
         lp.insert("leaf_l".to_string(), 1.0);
         let soft = SoftTrace { t: primary[0].time, leaf_probs: lp };
-        assert!(score_soft(&soft, &tree, &primary, 1, &costs).is_none());
+        assert!(score_soft(&soft, &tree, &primary, 1, &costs, &mini_ctx()).is_none());
     }
 
     #[test]
@@ -295,7 +314,7 @@ leaves:
         lp.insert("leaf_l".to_string(), 0.5);
         lp.insert("leaf_f".to_string(), 0.5);
         let soft = SoftTrace { t: primary[0].time, leaf_probs: lp };
-        let s = score_soft(&soft, &tree, &primary, 0, &costs).unwrap();
+        let s = score_soft(&soft, &tree, &primary, 0, &costs, &mini_ctx()).unwrap();
         // long/flat 下净仓位 ≡ 逐腿期望（成本线性）
         assert!((s.position_net - s.expected_net).abs() < 1e-12);
         assert!((s.exposure - 0.5).abs() < 1e-9);
@@ -328,7 +347,7 @@ leaves:
         lp.insert("leaf_l".to_string(), 0.6);
         lp.insert("leaf_s".to_string(), 0.4);
         let soft = SoftTrace { t: primary[0].time, leaf_probs: lp };
-        let s = score_soft(&soft, &tree, &primary, 0, &costs).unwrap();
+        let s = score_soft(&soft, &tree, &primary, 0, &costs, &mini_ctx()).unwrap();
         // r = 11/10 - 1 = 0.1, rate = 0.001
         // E = 0.6 - 0.4 = 0.2；position_net = 0.2*0.1 - 0.001*0.2 = 0.0198
         assert!((s.exposure - 0.2).abs() < 1e-9);
@@ -349,7 +368,7 @@ leaves:
         let mut lp = BTreeMap::new();
         lp.insert("leaf_f".to_string(), 1.0);
         let soft = SoftTrace { t: primary[0].time, leaf_probs: lp };
-        let s = score_soft(&soft, &tree, &primary, 0, &costs).unwrap();
+        let s = score_soft(&soft, &tree, &primary, 0, &costs, &mini_ctx()).unwrap();
         assert_eq!(s.exposure, 0.0);
         assert_eq!(s.position_net, 0.0);
     }
@@ -378,7 +397,7 @@ leaves:
         let mut lp = BTreeMap::new();
         lp.insert("leaf_l".to_string(), 1.0);
         let soft = SoftTrace { t: primary[0].time, leaf_probs: lp };
-        let s = score_soft(&soft, &tree, &primary, 0, &costs).unwrap();
+        let s = score_soft(&soft, &tree, &primary, 0, &costs, &mini_ctx()).unwrap();
         // net_long = 0.099；w=0.5 → expected 0.0495；exposure/engaged = 0.5
         assert!((s.expected_net - 0.0495).abs() < 1e-9);
         assert!((s.exposure - 0.5).abs() < 1e-9);
@@ -410,7 +429,7 @@ leaves:
         lp.insert("leaf_l".to_string(), 1.0);
         let soft = SoftTrace { t: primary[0].time, leaf_probs: lp };
         // 全局 fw=16 在 3 根 bar 下必越界；leaf horizon=2 仍可计分
-        assert!(score_soft(&soft, &tree, &primary, 0, &costs).is_some());
+        assert!(score_soft(&soft, &tree, &primary, 0, &costs, &mini_ctx()).is_some());
     }
 
     #[test]
@@ -430,5 +449,71 @@ leaves:
         let rec2 = SoftStepRecord { t, leaf_probs: BTreeMap::new(), expected_net: None };
         let back2: SoftStepRecord = serde_json::from_str(&serde_json::to_string(&rec2).unwrap()).unwrap();
         assert_eq!(back2.expected_net, None);
+    }
+
+    /// 构造 close=10.0 的决策 ctx（weight_at 用 close/20=0.5；无 sim 状态依赖）。
+    fn ctx_close10() -> crate::features::context::Context {
+        use crate::data::bar::Window;
+        let t = NaiveDateTime::parse_from_str("2024-01-02 09:45:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let bars = vec![bar("2024-01-02 09:45:00", 10.0, 10.0)];
+        crate::features::context::Context {
+            t,
+            primary: Window { bars: bars.clone() },
+            context: Window { bars },
+            news: None,
+            aux: BTreeMap::new(),
+            sim: crate::features::context::SimState::default(),
+            eval_cache: Default::default(),
+        }
+    }
+
+    /// Expr weight 路径端到端：`weight = "min(1, close/20)"` 在 close=10 时求值为 0.5，
+    /// 期望净收益和 exposure 都是常量 weight=1.0 版本的一半。
+    #[test]
+    fn score_soft_expr_weight_scales_expectation() {
+        // 树：close>0 恒真 → leaf_l (long, weight = "min(1, close / 20)")
+        let tree_expr = load_tree_str(r#"
+meta: { name: t, forward_window: 1, stances: [long, flat] }
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "close > 0", goto: leaf_l, label: up } ]
+    default: { goto: leaf_f, label: flat }
+leaves:
+  leaf_l: { stance: long, weight: "min(1, close / 20)" }
+  leaf_f: { stance: flat }
+"#).unwrap();
+        // 对照树：weight 省略（默认 1.0）
+        let tree_const = load_tree_str(r#"
+meta: { name: t, forward_window: 1, stances: [long, flat] }
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "close > 0", goto: leaf_l, label: up } ]
+    default: { goto: leaf_f, label: flat }
+leaves:
+  leaf_l: { stance: long }
+  leaf_f: { stance: flat }
+"#).unwrap();
+        // 2 根 bar：i=0 决策（close=10.0），i=1 是前瞻（open/close=10.2）
+        let primary = vec![
+            bar("2024-01-02 14:45:00", 10.0, 10.0),
+            bar("2024-01-03 09:45:00", 10.2, 10.2),
+        ];
+        let costs = CostModel { round_trip_bps: 10.0 };
+        // 100% long 概率（close>0 恒真 → 全部压在 leaf_l）
+        let mut lp = BTreeMap::new();
+        lp.insert("leaf_l".to_string(), 1.0);
+        let soft = SoftTrace { t: primary[0].time, leaf_probs: lp };
+        // ctx 的 primary 末 close=10.0 → min(1, 10/20)=0.5
+        let ctx = ctx_close10();
+        let s_expr = score_soft(&soft, &tree_expr, &primary, 0, &costs, &ctx).unwrap();
+        let s_const = score_soft(&soft, &tree_const, &primary, 0, &costs, &ctx).unwrap();
+        // 常量 weight=1.0 → expr weight=0.5：期望和 exposure 各缩半
+        assert_relative_eq!(s_expr.expected_net, 0.5 * s_const.expected_net, epsilon = 1e-12);
+        assert_relative_eq!(s_expr.exposure,     0.5 * s_const.exposure,     epsilon = 1e-12);
+        assert_relative_eq!(s_expr.engaged,      0.5 * s_const.engaged,      epsilon = 1e-12);
     }
 }
