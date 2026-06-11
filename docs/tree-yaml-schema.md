@@ -149,7 +149,7 @@ nodes:
 
 共享 judge 的节点渲染串一致，且缓存/求值作用域（scope）统一为 `judge:<名>`（而非节点 id）。因此：
 
-- **每 bar 每 judge 至多触发一次 LLM 调用**（硬遍历：走到的唯一节点；软遍历：首次评估后结果复用）。
+- **每 bar 每 judge 至多一次网络请求**：硬遍历路径唯一，至多一次调用；软遍历下多个共享 judge 的节点会各自发起求值，但渲染串与缓存键（scope）完全一致——第二次起命中 `OpenAiLlm` 磁盘缓存，是磁盘读而非网络调用（去重发生在文件缓存层，遍历器内无内存级复用）。
 - 落点差异（不同 `map`）完全在本地 label→goto 映射层处理，不产生额外 LLM 调用或缓存条目。
 - `StubLlm` 测试时以 `judge:<名>` 为答案键，例如 `answers: HashMap::from([("judge:veto".to_string(), "ok".to_string())])` 可同时驱动所有引用 `veto` 的节点。
 
