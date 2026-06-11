@@ -1032,6 +1032,8 @@ leaves:
     }
 
     #[test]
+    // 注意：本测试与下个测试用 Debug 渲染匹配 "Cached(N,"——若 Expr 的 Debug 派生格式变化会误红，
+    // 意图是断言「槽 0 被 ≥2 处共享、嵌套因子槽位互异」。
     fn factors_are_wrapped_in_shared_cache_slots() {
         let src = r#"
 meta: { name: t, forward_window: 3, stances: [long, flat] }
