@@ -113,11 +113,13 @@ fn bare_window_call(e: &Expr, fname: &str) -> bool {
 fn l1_check(e: &Expr, where_: &str, out: &mut Vec<String>) {
     if let Expr::Binary(op, l, r) = e {
         let hit = match op {
-            BinaryOp::Gt | BinaryOp::Ge => {
+            // 仅严格比较：close >= highest(...) 在"收于窗口极值"时可满足，不是陷阱
+            BinaryOp::Gt => {
                 (is_bare_price_ident(l).is_some() && bare_window_call(r, "highest"))
                     || (bare_window_call(l, "lowest") && is_bare_price_ident(r).is_some())
             }
-            BinaryOp::Lt | BinaryOp::Le => {
+            // 仅严格比较：close <= lowest(...) 在"收于窗口极值"时可满足，不是陷阱
+            BinaryOp::Lt => {
                 (is_bare_price_ident(l).is_some() && bare_window_call(r, "lowest"))
                     || (bare_window_call(l, "highest") && is_bare_price_ident(r).is_some())
             }
@@ -130,19 +132,8 @@ fn l1_check(e: &Expr, where_: &str, out: &mut Vec<String>) {
             ));
         }
     }
-    // count/barssince/valuewhen 的条件参数是逐位语境，L1 不适用——不递归进入条件臂。
-    // 其余子节点（右侧参数、算术子树等）照常递归。
-    match e {
-        Expr::Call(name, args)
-            if matches!(name.as_str(), "count" | "barssince" | "valuewhen") && !args.is_empty() =>
-        {
-            // 跳过 args[0]（条件臂），仅递归其余参数
-            for a in &args[1..] {
-                l1_check(a, where_, out);
-            }
-        }
-        _ => walk_children(e, &mut |c| l1_check(c, where_, out)),
-    }
+    // 逐位上下文的恒假陷阱（close[j] > highest(滚动窗[j])）同样需要检出——统一递归全部子表达式。
+    walk_children(e, &mut |c| l1_check(c, where_, out));
 }
 
 /// L2：count/barssince/valuewhen 的条件长度类为 One → 必然弃权空转。
@@ -244,6 +235,11 @@ leaves:
             .len(),
             1
         );
+        // 逐位上下文同样恒假：每位 j 的滚动窗都含当前元素 → count 恒 0 空转
+        assert_eq!(
+            lint_tree(&load_tree_str(&yaml_one_branch("count(close > highest(high, 3), 5) >= 1")).unwrap()).len(),
+            1
+        );
     }
 
     #[test]
@@ -292,7 +288,7 @@ leaves:
             "count(close > ema(close, 5), 5) >= 3",
             "barssince(close < ema(close, 5)) <= 3",
             "count(crossover(close, ema(close, 5)), 5) >= 1",
-            "count(close >= highest(close, 2), 5) == 5", // Task1 后 highest 是序列
+            "count(close >= highest(close, 2), 5) == 5", // >= 创新高事件：Ge 不在 L1 算符集，恢复递归后依然零告警
         ];
         for w in ok {
             let t = load_tree_str(&yaml_one_branch(w)).unwrap();
