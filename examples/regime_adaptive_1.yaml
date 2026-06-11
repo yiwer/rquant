@@ -30,9 +30,10 @@
 #      ref(series, 1) 先去掉当前 bar,恢复 Turtle"前 N 根高/低点"原义。
 #   A2 成立:rsi(series, n);slope(series, n) 为 OLS 回归斜率,
 #      x=bar 序号,单位 = 输入单位/bar。签名表见 docs/dsl-reference.md。
-#   A3(v2):count/barssince 条件逐位求值;ema/sma/ref 在其中是滚动序列,
-#      但 highest/lowest 是标量(双标量条件 → 弃权)——所以失败突破用
-#      ref 标量形态(昨收 vs 前移通道顶)表达,不用 barssince(close>rng_hi)。
+#   A3(v2,DSL phase-1 后已过时半句):count/barssince 条件逐位求值;
+#      phase-1 起 highest/lowest/std/slope 也是滚动序列——barssince(close > rng_hi)
+#      现已合法可表达"N 根内曾突破"。本树的失败突破仍用 ref 标量形态
+#      (昨收 vs 前移通道顶,1-bar 形),升级成 barssince 形留待下轮 WFO 一并校准。
 #   A4(v2):weight 表达式决策时求值,clamp[0,1],弃权(NaN/求值失败)=0;
 #      risk: 块触发的离场 bar 完全旁路 weight 表达式;
 #      持仓状态量仅 --sim/signal 有真值,所有引用都裹在 pos 守卫分支后。
