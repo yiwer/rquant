@@ -231,6 +231,25 @@ fn eval_bool_series(expr: &Expr, ctx: &Context) -> Result<Vec<bool>> {
             )),
         },
         Expr::Unary(UnaryOp::Not, e) => Ok(eval_bool_series(e, ctx)?.into_iter().map(|x| !x).collect()),
+        Expr::Call(name, args) if name == "crossover" || name == "crossunder" => {
+            if args.len() != 2 {
+                return Err(Error::Eval(format!("{name} expects 2 args, got {}", args.len())));
+            }
+            let (a, b) = tail_align(&eval(&args[0], ctx)?, &eval(&args[1], ctx)?)?;
+            let over = name == "crossover";
+            Ok((0..a.len())
+                .map(|j| {
+                    if j == 0 {
+                        return false;
+                    }
+                    let (p0, q0, p1, q1) = (a[j - 1], b[j - 1], a[j], b[j]);
+                    if p0.is_nan() || q0.is_nan() || p1.is_nan() || q1.is_nan() {
+                        return false;
+                    }
+                    if over { p0 <= q0 && p1 > q1 } else { p0 >= q0 && p1 < q1 }
+                })
+                .collect())
+        }
         _ => Err(Error::Eval(
             "count/barssince: condition must be a comparison or boolean combination".into(),
         )),
@@ -648,6 +667,19 @@ mod tests {
         ctx.sim = crate::features::context::SimState { pos: 0.5, entry_price: 10.0, bars_held: 3, unreal_pnl: -0.02 };
         assert_eq!(f("pos > 0 and bars_held >= 3", &ctx), Value::Bool(true));
         assert_eq!(f("unreal_pnl < -0.01 and entry_price == 10", &ctx), Value::Bool(true));
+    }
+
+    #[test]
+    fn count_crossover_events() {
+        // closes 围绕 2.5 来回穿越：上穿发生在 idx 1、3、5
+        let ctx = ctx_from_closes(&[1.0, 3.0, 2.0, 3.0, 2.0, 3.0]);
+        let f = |src: &str| eval(&parse_str(src).unwrap(), &ctx).unwrap();
+        assert_eq!(f("count(crossover(close, 2.5), 6) == 3"), Value::Bool(true));
+        assert_eq!(f("count(crossunder(close, 2.5), 6) == 2"), Value::Bool(true));
+        // 与逐位 and 组合
+        assert_eq!(f("count(crossover(close, 2.5) and close > 0, 6) == 3"), Value::Bool(true));
+        // barssince + crossover：最近一次上穿在 idx5（当前 bar）→ 0
+        assert_eq!(f("barssince(crossover(close, 2.5)) == 0"), Value::Bool(true));
     }
 
     #[test]
