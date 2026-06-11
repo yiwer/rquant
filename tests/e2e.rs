@@ -1569,11 +1569,6 @@ leaves:
 // F-9 Task 5 e2e tests
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// Enter/hold/exit tree 与 gen_primary_csv (32 bar, 4 days × 8 bars) 相同的合成树。
-/// warmup=5, 全量 bars_replayed = 26 (i=5..30, loop 5..31, 共 26 根可记账决策 bar)。
-/// Day-1 前缀 = 前 16 bar (2 天 × 8, len=16)，loop warmup..len-1 = 5..15 → i=5..=14 (10 根)。
-/// Day-2 增量 = 从 state_1 跑全量 (len=32)，loop 5..31，跳过 i<=14，实际重放 i=15..=30 → 16 根。
-/// 断言：split==full 不变量（serde_json::Value 相等）+ 第二跑精确值 bars_replayed=16。
 fn signal_enter_hold_exit_tree() -> String {
     r#"
 meta: { name: sig_e2e, forward_window: 1, stances: [long, flat] }
@@ -1600,6 +1595,7 @@ leaves:
 }
 
 fn signal_gen_primary_csv() -> String {
+    // 4 天×8 根（非顶层 gen_primary_csv 的 5 天）：让 day-1 前缀恰切在 16 根
     // 32 bars: 4 days × 8 bars/day, 09:45 start, every 15 min
     let mut s = String::from("time,open,high,low,close,volume\n");
     let mut idx = 0usize;
@@ -1642,13 +1638,18 @@ fn make_single_cfg(
         news_path: None,
         aux_paths: vec![],
         window: 100,
-        warmup: 5,
+        warmup: 5, // warmup=5：32-bar 数据下 day-1 留 10 根可记账 bar，与断言数值对齐
         cost_bps: 10.0,
         soft: false,
         state_path: state_path.to_path_buf(),
     }
 }
 
+// Enter/hold/exit tree 与 gen_primary_csv (32 bar, 4 days × 8 bars) 相同的合成树。
+// warmup=5, 全量 bars_replayed = 26 (i=5..30, loop 5..31, 共 26 根可记账决策 bar)。
+// Day-1 前缀 = 前 16 bar (2 天 × 8, len=16)，loop warmup..len-1 = 5..15 → i=5..=14 (10 根)。
+// Day-2 增量 = 从 state_1 跑全量 (len=32)，loop 5..31，跳过 i<=14，实际重放 i=15..=30 → 16 根。
+// 断言：split==full 不变量（serde_json::Value 相等）+ 第二跑精确值 bars_replayed=16。
 // F-9 T5 — signal_two_day_paper_flow:
 // 合成 32-bar 上行数据 (4 days × 8 bars)，cut 前 16 bars 作"第一天"前缀。
 // Step A: 第一天（16 bar 前缀）→ state_day1（bars_replayed=10，i=5..14）

@@ -403,10 +403,10 @@ cargo run --release -- signal `
 
 ```
 schtasks /create /sc daily /st 15:30 /tn rquant-signal ^
-  /tr "cargo run --manifest-path E:\rust-app\rquant\Cargo.toml --release -- signal --tree examples/regime_adaptive_1.yaml --fetch sh600519 --scale 60 --adjust qfq --primary data\p.csv --state paper.json --commit --out signal.json"
+  /tr "cargo run --manifest-path C:\path\to\rquant\Cargo.toml --release -- signal --tree examples/regime_adaptive_1.yaml --fetch sh600519 --scale 60 --adjust qfq --primary data\p.csv --state paper.json --commit --out signal.json"
 ```
 
-A 股收盘时间 15:00，建议定时任务设为 15:30 确保数据已更新。可改用编译好的 `rquant.exe` 替换 `cargo run`，减少启动时间。
+将路径 `C:\path\to\rquant` 替换为你的仓库实际位置。A 股收盘时间 15:00，建议定时任务设为 15:30 确保数据已更新。可改用编译好的 `rquant.exe` 替换 `cargo run`，减少启动时间。
 
 ---
 

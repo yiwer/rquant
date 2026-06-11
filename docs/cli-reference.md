@@ -15,6 +15,8 @@ rquant <SUBCOMMAND>
   report      把回测产物（JSON + traces）渲染为自包含 HTML
   portfolio   横截面组合：同一棵树逐标的打分，持仓 top-N 等权
   factor      横截面因子检验：IC/RankIC、衰减阶梯、分层回测、相关性矩阵
+  signal      生成今日交易信号（单标的纸面盘 / 组合清单）
+  optimize    锚定扩展 Walk-Forward Optimization 参数网格寻优与泛化评估
 ```
 
 ---
