@@ -12,7 +12,7 @@ enum Shape {
 }
 
 /// 返回 Series 的内置函数（Task1 后含 highest/lowest/std/slope）。与 eval.rs 同步维护。
-const SERIES_FNS: [&str; 13] = [
+pub(super) const SERIES_FNS: [&str; 13] = [
     "sma", "ema", "wma", "rsi", "atr", "ref",
     "macd_line", "macd_signal", "macd_hist",
     "highest", "lowest", "std", "slope",
@@ -27,7 +27,7 @@ fn expr_shape(e: &Expr) -> Shape {
             _ => Shape::Series, // close/open/high/low/volume/aux.*/ctx.*
         },
         Expr::Index(..) => Shape::Scalar,
-        Expr::Unary(..) => Shape::Scalar,
+        Expr::Unary(..) => Shape::Scalar, // Neg→Scalar；Not 实为 Bool——两值 Shape 下并入 Scalar（有意为之，不影响 cond_len_class 正确性）
         Expr::Binary(..) => Shape::Scalar, // 算术/比较在标量语义下归约
         Expr::Call(name, _) => {
             if SERIES_FNS.contains(&name.as_str()) {
@@ -144,8 +144,7 @@ fn l2_check(e: &Expr, where_: &str, out: &mut Vec<String>) {
         && cond_len_class(&args[0]) == LenClass::One
     {
         out.push(format!(
-            "{where_}: {name}(...) 条件两侧均为标量形——逐位布尔序列长度 1，\
-             将恒弃权空转；至少一侧需要序列（close/ema(...)/ref(...) 等）"
+            "{where_}: {name}(...) 条件序列长度恒为 1（两侧均无序列形，或 and/or 任一臂退化）——将恒弃权空转；至少一侧需要序列（close/ema(...)/ref(...) 等）"
         ));
     }
     walk_children(e, &mut |c| l2_check(c, where_, out));
@@ -176,6 +175,7 @@ pub fn lint_tree(tree: &Tree) -> Vec<String> {
                 l1_check(&b.when, &where_, &mut out);
                 l2_check(&b.when, &where_, &mut out);
                 if let Some(Strength::Expr(se)) = &b.strength {
+                    // L1 仅针对 bool 条件；strength 是标量表达式，恒假陷阱不适用
                     l2_check(se, &format!("node '{id}' strength"), &mut out);
                 }
             }
@@ -309,6 +309,58 @@ leaves:
             let t = crate::tree::loader::load_tree_file(&p).unwrap();
             let w = lint_tree(&t);
             assert!(w.is_empty(), "{}: {w:?}", p.display());
+        }
+    }
+
+    /// SERIES_FNS 是 eval.rs 返回形态的影子表——本测试锁死两者同步：
+    /// 成员实际 eval 必须返回 Series；代表性非成员必须不返回 Series。表漂移即红。
+    #[test]
+    fn series_fns_shape_matches_eval_reality() {
+        use crate::data::bar::{Bar, Window};
+        use crate::dsl::eval::{eval, Value};
+        use crate::dsl::parser::parse_str;
+        use chrono::NaiveDate;
+        // 内联最小 ctx（不跨模块借 eval.rs 的测试工厂）：5 根含 OHLC 的 bar（atr 需要 high/low）
+        let bars: Vec<Bar> = (0..5)
+            .map(|i| {
+                let c = 1.0 + i as f64;
+                Bar {
+                    time: NaiveDate::from_ymd_opt(2024, 1, 2 + i).unwrap().and_hms_opt(10, 0, 0).unwrap(),
+                    open: c - 0.1,
+                    high: c + 0.2,
+                    low: c - 0.3,
+                    close: c,
+                    volume: 100.0,
+                }
+            })
+            .collect();
+        let ctx = crate::features::context::Context {
+            t: bars[4].time,
+            primary: Window { bars: bars.clone() },
+            context: Window { bars },
+            news: None,
+            aux: std::collections::BTreeMap::new(),
+            sim: crate::features::context::SimState::default(),
+            eval_cache: Default::default(),
+        };
+        // SERIES_FNS 全员逐个验证（与 lint 表逐项对应，新增成员必须两边同步）
+        let series_cases = [
+            "sma(close, 2)", "ema(close, 2)", "wma(close, 2)", "rsi(close, 3)",
+            "atr(2)", "ref(close, 1)",
+            "macd_line(close, 3, 5)", "macd_signal(close, 3, 5, 2)", "macd_hist(close, 3, 5, 2)",
+            "highest(close, 2)", "lowest(close, 2)", "std(close, 2)", "slope(close, 2)",
+        ];
+        assert_eq!(series_cases.len(), super::SERIES_FNS.len(), "测试用例数须与 SERIES_FNS 项数一致");
+        for src in series_cases {
+            match eval(&parse_str(src).unwrap(), &ctx).unwrap() {
+                Value::Series(_) => {}
+                other => panic!("SERIES_FNS member '{src}' returned {other:?}, not Series — sync SERIES_FNS in lint.rs"),
+            }
+        }
+        // 代表性非成员：不得返回 Series
+        for src in ["count(close > 1, 2)", "barssince(close > 1)", "valuewhen(close > 1, close)", "abs(slope(close, 2))", "sigmoid(close)"] {
+            let v = eval(&parse_str(src).unwrap(), &ctx).unwrap();
+            assert!(!matches!(v, Value::Series(_)), "'{src}' returned Series but is NOT in SERIES_FNS");
         }
     }
 }
