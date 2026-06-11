@@ -467,16 +467,15 @@ pub fn render_factor_html(report: &crate::factor::FactorReport) -> String {
 
     // ── 逐因子 spread 净值曲线 ──────────────────────────────────────────────
     let _ = write!(s, "<h2>Spread NAV (top layer minus bottom layer)</h2>");
-    // We don't store spread nav point-by-point in FactorReport; we render a synthetic
-    // single-point line using spread_total as an indicator.  Per spec the line_chart
-    // uses the spread_nav_points, which are internal to run_factor.  Since FactorReport
-    // only exposes aggregated scalars (spread_total, spread_ann, spread_sharpe), we
-    // render a two-point line chart [0 → spread_total] as a proxy indicator.
     for fs in &report.factors {
         if let Some(ls) = &fs.layers {
-            let pts = vec![(0.0_f64, 0.0_f64), (1.0_f64, ls.spread_total)];
-            let title = format!("{}: spread_total={:.4}", fs.name, ls.spread_total);
-            let _ = write!(s, "{}", line_chart(&pts, &title));
+            if ls.spread_nav.len() >= 2 {
+                let pts: Vec<(f64, f64)> = ls.spread_nav.iter().enumerate().map(|(i, (_, nav))| (i as f64, *nav)).collect();
+                let title = format!("{}: spread NAV curve", fs.name);
+                let _ = write!(s, "{}", line_chart(&pts, &title));
+            } else {
+                let _ = write!(s, "<p>{}: spread NAV series too short (length {})</p>", fs.name, ls.spread_nav.len());
+            }
         } else {
             let _ = write!(s, "<p>{}: no spread data</p>", fs.name);
         }
@@ -703,6 +702,14 @@ mod tests {
                 spread_ann: Some(0.18),
                 spread_sharpe: Some(1.5),
                 monotonicity: Some(0.95),
+                spread_nav: vec![
+                    (chrono::NaiveDate::from_ymd_opt(2024, 1, 2).unwrap().and_hms_opt(9, 30, 0).unwrap(), 1.0),
+                    (chrono::NaiveDate::from_ymd_opt(2024, 1, 2).unwrap().and_hms_opt(10, 0, 0).unwrap(), 1.05),
+                    (chrono::NaiveDate::from_ymd_opt(2024, 1, 2).unwrap().and_hms_opt(10, 30, 0).unwrap(), 1.12),
+                    (chrono::NaiveDate::from_ymd_opt(2024, 1, 2).unwrap().and_hms_opt(11, 0, 0).unwrap(), 1.15),
+                    (chrono::NaiveDate::from_ymd_opt(2024, 1, 3).unwrap().and_hms_opt(9, 30, 0).unwrap(), 1.20),
+                    (chrono::NaiveDate::from_ymd_opt(2024, 1, 3).unwrap().and_hms_opt(10, 0, 0).unwrap(), 1.35),
+                ],
             }),
         };
         let factors = if n_factors == 1 {

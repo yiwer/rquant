@@ -62,6 +62,7 @@ pub struct LayerStats {
     pub spread_ann: Option<f64>,
     pub spread_sharpe: Option<f64>,
     pub monotonicity: Option<f64>, // spearman(层序号, 层期均收益)
+    pub spread_nav: Vec<(chrono::NaiveDateTime, f64)>, // spread nav accumulation series
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -460,6 +461,7 @@ pub fn run_factor(cfg: &FactorConfig) -> Result<FactorReport> {
                 spread_ann,
                 spread_sharpe,
                 monotonicity,
+                spread_nav: spread_nav_points.clone(),
             })
         } else {
             None
