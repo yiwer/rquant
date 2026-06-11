@@ -3,6 +3,7 @@ use crate::backtest::runner::{run, BacktestConfig};
 use crate::eval::llm::client::OpenAiLlm;
 use crate::eval::llm::{LlmConfig, LlmEvaluator};
 use crate::factor::{FactorConfig, FactorSpecItem, run_factor, print_factor_summary};
+use crate::optimize::{OptimizeConfig, print_optimize_summary, run_optimize};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -129,6 +130,44 @@ enum Cmd {
         #[arg(long)]
         html: Option<PathBuf>,
     },
+    /// Walk-forward parameter optimization (grid x anchored-expanding IS -> OS)
+    Optimize {
+        #[arg(long)]
+        tree: PathBuf,
+        #[arg(long)]
+        primary: PathBuf,
+        #[arg(long)]
+        context: PathBuf,
+        #[arg(long)]
+        news: Option<PathBuf>,
+        /// Repeatable: --grid "name=start:stop:step" or "name=v1,v2,..."
+        #[arg(long = "grid", value_name = "NAME=VALUES")]
+        grid: Vec<String>,
+        #[arg(long, default_value_t = 5)]
+        folds: usize,
+        #[arg(long, default_value_t = false)]
+        sim: bool,
+        #[arg(long, default_value_t = false)]
+        soft: bool,
+        #[arg(long, default_value_t = 500)]
+        max_combos: usize,
+        #[arg(long, default_value_t = 100)]
+        warmup: usize,
+        #[arg(long, default_value_t = 100)]
+        window: usize,
+        #[arg(long, default_value_t = 10.0)]
+        cost_bps: f64,
+        #[arg(long = "aux", value_name = "NAME=PATH")]
+        aux: Vec<String>,
+        #[arg(long, default_value = "optimize_report.json")]
+        out: PathBuf,
+        #[arg(long, default_value = "")]
+        llm_model: String,
+        #[arg(long, default_value = "")]
+        llm_base_url: String,
+        #[arg(long, default_value = ".rquant-cache/llm")]
+        llm_cache_dir: PathBuf,
+    },
     /// Cross-sectional portfolio: run one tree across a universe, hold top-N equal-weight
     Portfolio {
         #[arg(long)]
@@ -213,6 +252,64 @@ pub async fn main() -> anyhow::Result<()> {
                 let report = run(&cfg, &llm).await?;
                 crate::report::print_summary(&report);
             }
+        }
+        Cmd::Optimize {
+            tree, primary, context, news, grid, folds, sim, soft, max_combos,
+            warmup, window, cost_bps, aux, out, llm_model, llm_base_url, llm_cache_dir,
+        } => {
+            if sim && soft {
+                return Err(anyhow::anyhow!(
+                    "--sim and --soft are mutually exclusive for optimize (sim target is undefined in soft-score mode)"
+                ));
+            }
+            let api_key = std::env::var("RQUANT_LLM_API_KEY").unwrap_or_default();
+            let llm = if llm_enabled(&llm_model, &llm_base_url, &api_key) {
+                let cfg = LlmConfig {
+                    base_url: llm_base_url,
+                    api_key,
+                    model: llm_model,
+                    timeout_secs: 60,
+                    max_retries: 2,
+                    cache_dir: llm_cache_dir,
+                };
+                LlmEvaluator::OpenAi(OpenAiLlm::new(cfg)?)
+            } else {
+                eprintln!("[rquant] LLM not configured (need --llm-model, --llm-base-url, env RQUANT_LLM_API_KEY); LLM nodes will take their default branch.");
+                LlmEvaluator::Disabled
+            };
+            let mut aux_paths: Vec<(String, PathBuf)> = Vec::new();
+            for spec in &aux {
+                let (n, p) = spec
+                    .split_once('=')
+                    .ok_or_else(|| anyhow::anyhow!("--aux expects NAME=PATH, got '{spec}'"))?;
+                if aux_paths.iter().any(|(en, _)| en == n) {
+                    return Err(anyhow::anyhow!("duplicate --aux name '{n}'"));
+                }
+                aux_paths.push((n.to_string(), PathBuf::from(p)));
+            }
+            if grid.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "--grid: at least one grid axis is required (use --grid 'name=start:stop:step')"
+                ));
+            }
+            let ocfg = OptimizeConfig {
+                tree_path: tree,
+                primary_path: primary,
+                context_path: context,
+                news_path: news,
+                aux_paths,
+                window,
+                warmup,
+                cost_bps,
+                folds,
+                sim,
+                soft,
+                grids: grid,
+                max_combos,
+                out_path: out,
+            };
+            let report = run_optimize(&ocfg, &llm).await?;
+            print_optimize_summary(&report);
         }
         Cmd::Factor { universe, factor, sample, horizon, layers, warmup, window, out, html } => {
             if factor.is_empty() {

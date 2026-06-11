@@ -9,10 +9,13 @@ use crate::data::bar::Bar;
 use crate::data::news::NewsRecord;
 use crate::eval::llm::LlmEvaluator;
 use crate::features::context::{build_context, SimState};
-use crate::tree::loader::Tree;
+use crate::tree::loader::{Node, Tree};
 use crate::tree::schema::Stance;
-use crate::Result;
+use crate::{Error, Result};
+use chrono::NaiveDateTime;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 /// 目标函数口径：打分硬 / 打分软 / 顺序模拟。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -250,6 +253,435 @@ async fn tree_target_hard(
         dir * l.weight
     });
     Ok((target, "tree"))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Report types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Per-combo IS score (stored for top-5 reporting).
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ComboScore {
+    pub params: BTreeMap<String, f64>,
+    pub objective: Option<f64>,
+}
+
+/// Per OS-fold result.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FoldResult {
+    /// OS fold index (1-based, i.e. 2nd fold onward when 0-based j=1..K−1).
+    pub fold: usize,
+    pub is_from: NaiveDateTime,
+    pub is_to: NaiveDateTime,
+    pub os_from: NaiveDateTime,
+    pub os_to: NaiveDateTime,
+    pub best_params: Option<BTreeMap<String, f64>>,
+    pub is_objective: Option<f64>,
+    pub os_objective: Option<f64>,
+    /// os/is degradation ratio; None when |is| <= 1e-12 or is < 0 or either is None.
+    pub degradation: Option<f64>,
+}
+
+/// Per-parameter best-value sequence across OS folds.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ParamDrift {
+    pub name: String,
+    /// One entry per OS fold (None when that fold had no best).
+    pub values: Vec<Option<f64>>,
+    /// Unique f64 bit-patterns among the Some values.
+    pub n_unique: usize,
+}
+
+/// Full optimize report (serialized to JSON).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OptimizeReport {
+    pub mode: String,
+    pub objective_name: String,
+    pub folds: usize,
+    pub n_combos: usize,
+    pub fold_results: Vec<FoldResult>,
+    pub os_mean_objective: Option<f64>,
+    pub full_sample_best: Option<ComboScore>,
+    pub drift: Vec<ParamDrift>,
+    /// IS top-5 per OS fold (each inner Vec len <= 5, descending IS objective).
+    pub is_top5: Vec<Vec<ComboScore>>,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OptimizeConfig
+// ─────────────────────────────────────────────────────────────────────────────
+
+pub struct OptimizeConfig {
+    pub tree_path: PathBuf,
+    pub primary_path: PathBuf,
+    pub context_path: PathBuf,
+    pub news_path: Option<PathBuf>,
+    pub aux_paths: Vec<(String, PathBuf)>,
+    pub window: usize,
+    pub warmup: usize,
+    pub cost_bps: f64,
+    pub folds: usize,
+    pub sim: bool,
+    pub soft: bool,
+    pub grids: Vec<String>,
+    pub max_combos: usize,
+    pub out_path: PathBuf,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// run_optimize
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Returns true iff any node in the tree is an LLM node.
+fn tree_has_llm_nodes(tree: &Tree) -> bool {
+    tree.nodes.values().any(|n| matches!(n, Node::Llm { .. }))
+}
+
+pub async fn run_optimize(cfg: &OptimizeConfig, llm: &LlmEvaluator) -> Result<OptimizeReport> {
+    // ── Step 1: parse grid, expand combos, probe-load, warn LLM ──────────────
+    let yaml_src = std::fs::read_to_string(&cfg.tree_path)?;
+
+    let axes: Vec<grid::GridAxis> = cfg
+        .grids
+        .iter()
+        .map(|s| grid::parse_grid_axis(s))
+        .collect::<Result<Vec<_>>>()?;
+
+    let combos = grid::expand_grid(&axes, cfg.max_combos)?;
+
+    // Probe-load with first combo to catch unknown param names early.
+    crate::tree::loader::load_tree_str_with_overrides(&yaml_src, &combos[0])?;
+
+    // Warn once if tree has LLM nodes (cost across many combos may be high).
+    {
+        let probe_tree = crate::tree::loader::load_tree_str(&yaml_src)?;
+        if tree_has_llm_nodes(&probe_tree) {
+            eprintln!(
+                "[rquant] optimize: tree has LLM nodes — costs may be high across {} combos × folds; LLM cache will be reused across combos.",
+                combos.len()
+            );
+        }
+    }
+
+    // ── Step 2: load data ─────────────────────────────────────────────────────
+    let primary = crate::data::reader::read_bars_csv(&cfg.primary_path)?;
+    let context = crate::data::reader::read_bars_csv(&cfg.context_path)?;
+    let news: Vec<NewsRecord> = match &cfg.news_path {
+        Some(p) => crate::data::news::read_news_csv(p)?,
+        None => Vec::new(),
+    };
+    let mut aux_tables: BTreeMap<String, AuxTable> = BTreeMap::new();
+    for (name, p) in &cfg.aux_paths {
+        aux_tables.insert(name.clone(), crate::data::aux_table::read_aux_csv(p)?);
+    }
+    let costs = CostModel { round_trip_bps: cfg.cost_bps };
+
+    // Determine eligible decision-index range.
+    // ScoreHard/ScoreSoft: warmup..len; Sim: warmup..len-1
+    let mode = if cfg.sim {
+        ObjectiveMode::Sim
+    } else if cfg.soft {
+        ObjectiveMode::ScoreSoft
+    } else {
+        ObjectiveMode::ScoreHard
+    };
+    let range_start = cfg.warmup.min(primary.len());
+    let range_end = if cfg.sim {
+        if primary.is_empty() {
+            0
+        } else {
+            primary.len() - 1
+        }
+    } else {
+        primary.len()
+    };
+
+    let n_points = range_end.saturating_sub(range_start);
+    let k = cfg.folds;
+
+    if k < 2 {
+        return Err(Error::Data(format!(
+            "optimize: --folds must be >= 2, got {k}"
+        )));
+    }
+    if n_points < k * 2 {
+        return Err(Error::Data(format!(
+            "optimize: only {n_points} eligible points (warmup..range_end) but need >= {} for {k} folds × 2",
+            k * 2
+        )));
+    }
+
+    // ── Step 3: fold boundaries — mirror walkforward index-split convention ───
+    // fold j: [range_start + j*n_points/k .. range_start + (j+1)*n_points/k)
+    let fold_starts: Vec<usize> = (0..=k)
+        .map(|j| range_start + j * n_points / k)
+        .collect();
+
+    let (mode_str, obj_name) = match mode {
+        ObjectiveMode::ScoreHard => ("score_hard", "active_mean_net"),
+        ObjectiveMode::ScoreSoft => ("score_soft", "engaged_mean_expected_net"),
+        ObjectiveMode::Sim => ("sim", "sharpe_or_total_return"),
+    };
+
+    let n_combos = combos.len();
+    // Number of evaluate calls: (K-1) IS evals per combo + (K-1) OS evals for best + 1 full-sample per combo
+    let os_fold_count = k - 1; // folds 1..K-1 (0-based)
+    let eval_count = n_combos * (os_fold_count * 2 + 1);
+    println!(
+        "[rquant] optimize: mode={mode_str} objective={obj_name} combos={n_combos} folds={k} eval_runs={eval_count}"
+    );
+
+    let data = EvalData {
+        primary: &primary,
+        context: &context,
+        news: &news,
+        aux: &aux_tables,
+        window: cfg.window,
+        costs,
+    };
+
+    // ── Step 4: per OS-fold loop ───────────────────────────────────────────────
+    // OS fold k (0-based j: 1..K): IS = fold_starts[0]..fold_starts[j], OS = fold_starts[j]..fold_starts[j+1]
+    let mut fold_results: Vec<FoldResult> = Vec::new();
+    let mut is_top5_all: Vec<Vec<ComboScore>> = Vec::new();
+    let mut best_per_fold: Vec<Option<BTreeMap<String, f64>>> = Vec::new();
+
+    for j in 1..k {
+        let is_start = fold_starts[0];
+        let is_end = fold_starts[j];
+        let os_start = fold_starts[j];
+        let os_end = fold_starts[j + 1];
+
+        let is_from = primary[is_start].time;
+        let is_to = primary[is_end - 1].time;
+        let os_from = primary[os_start].time;
+        let os_to = primary[os_end - 1].time;
+
+        // Evaluate all combos on IS range
+        let mut combo_scores: Vec<ComboScore> = Vec::with_capacity(n_combos);
+        for combo in &combos {
+            let tree = crate::tree::loader::load_tree_str_with_overrides(&yaml_src, combo)?;
+            let obj = evaluate(&tree, &data, llm, is_start..is_end, mode).await?;
+            combo_scores.push(ComboScore { params: combo.clone(), objective: obj });
+        }
+
+        // Find best combo: max objective (None → -∞); ties → grid-order first
+        let best_idx = combo_scores
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| {
+                let av = a.objective.unwrap_or(f64::NEG_INFINITY);
+                let bv = b.objective.unwrap_or(f64::NEG_INFINITY);
+                av.partial_cmp(&bv).unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|(i, _)| i);
+
+        let best_score = best_idx.map(|i| &combo_scores[i]);
+        let all_neg_inf = best_score
+            .map(|s| s.objective.is_none())
+            .unwrap_or(true)
+            || best_score
+                .map(|s| s.objective.unwrap_or(f64::NEG_INFINITY).is_infinite())
+                .unwrap_or(true);
+
+        let (best_params, is_objective) = if all_neg_inf {
+            (None, None)
+        } else {
+            let bs = best_score.unwrap();
+            (Some(bs.params.clone()), bs.objective)
+        };
+
+        // Evaluate best on OS range
+        let os_objective = if let Some(ref bp) = best_params {
+            let tree = crate::tree::loader::load_tree_str_with_overrides(&yaml_src, bp)?;
+            evaluate(&tree, &data, llm, os_start..os_end, mode).await?
+        } else {
+            None
+        };
+
+        // Degradation: os/is, only when is > 1e-12
+        let degradation = match (is_objective, os_objective) {
+            (Some(is_v), Some(os_v)) if is_v > 1e-12 => Some(os_v / is_v),
+            _ => None,
+        };
+
+        // Top-5: sort descending by IS objective (None → -∞)
+        let mut sorted = combo_scores.clone();
+        sorted.sort_by(|a, b| {
+            let av = a.objective.unwrap_or(f64::NEG_INFINITY);
+            let bv = b.objective.unwrap_or(f64::NEG_INFINITY);
+            bv.partial_cmp(&av).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let top5: Vec<ComboScore> = sorted.into_iter().take(5).collect();
+
+        fold_results.push(FoldResult {
+            fold: j + 1, // 1-based (first OS fold = fold 2)
+            is_from,
+            is_to,
+            os_from,
+            os_to,
+            best_params: best_params.clone(),
+            is_objective,
+            os_objective,
+            degradation,
+        });
+        is_top5_all.push(top5);
+        best_per_fold.push(best_params);
+    }
+
+    // ── Step 5: full-sample best ───────────────────────────────────────────────
+    let full_range = range_start..range_end;
+    let mut full_scores: Vec<ComboScore> = Vec::with_capacity(n_combos);
+    for combo in &combos {
+        let tree = crate::tree::loader::load_tree_str_with_overrides(&yaml_src, combo)?;
+        let obj = evaluate(&tree, &data, llm, full_range.clone(), mode).await?;
+        full_scores.push(ComboScore { params: combo.clone(), objective: obj });
+    }
+    let full_sample_best = full_scores
+        .iter()
+        .max_by(|a, b| {
+            let av = a.objective.unwrap_or(f64::NEG_INFINITY);
+            let bv = b.objective.unwrap_or(f64::NEG_INFINITY);
+            av.partial_cmp(&bv).unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .and_then(|s| {
+            if s.objective.unwrap_or(f64::NEG_INFINITY).is_finite() {
+                Some(s.clone())
+            } else {
+                None
+            }
+        });
+
+    // ── Step 6: drift ──────────────────────────────────────────────────────────
+    let param_names: Vec<String> = axes.iter().map(|a| a.name.clone()).collect();
+    let drift: Vec<ParamDrift> = param_names
+        .iter()
+        .map(|pname| {
+            let values: Vec<Option<f64>> =
+                best_per_fold.iter().map(|bp| bp.as_ref().and_then(|m| m.get(pname).copied())).collect();
+            let n_unique = {
+                let mut bits: Vec<u64> = values
+                    .iter()
+                    .filter_map(|v| v.map(|x| x.to_bits()))
+                    .collect();
+                bits.sort_unstable();
+                bits.dedup();
+                bits.len()
+            };
+            ParamDrift { name: pname.clone(), values, n_unique }
+        })
+        .collect();
+
+    // ── Step 7: os_mean_objective ─────────────────────────────────────────────
+    let os_some: Vec<f64> =
+        fold_results.iter().filter_map(|fr| fr.os_objective).collect();
+    let os_mean_objective = if os_some.is_empty() {
+        None
+    } else {
+        Some(os_some.iter().sum::<f64>() / os_some.len() as f64)
+    };
+
+    // ── Step 8: write JSON and return ─────────────────────────────────────────
+    let report = OptimizeReport {
+        mode: mode_str.to_string(),
+        objective_name: obj_name.to_string(),
+        folds: k,
+        n_combos,
+        fold_results,
+        os_mean_objective,
+        full_sample_best,
+        drift,
+        is_top5: is_top5_all,
+    };
+
+    let json = serde_json::to_string_pretty(&report)?;
+    std::fs::write(&cfg.out_path, json.as_bytes())?;
+
+    Ok(report)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// print_optimize_summary
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn fmt_opt(v: Option<f64>) -> String {
+    match v {
+        Some(x) => format!("{x:.6}"),
+        None => "—".to_string(),
+    }
+}
+
+fn fmt_params(p: &Option<BTreeMap<String, f64>>) -> String {
+    match p {
+        None => "—".to_string(),
+        Some(m) => m.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" "),
+    }
+}
+
+pub fn print_optimize_summary(report: &OptimizeReport) {
+    println!(
+        "\n=== optimize: mode={} objective={} combos={} folds={} ===",
+        report.mode, report.objective_name, report.n_combos, report.folds
+    );
+
+    // Fold table
+    println!(
+        "\n{:<6} {:<20} {:<20} {:<20} {:<20} {:<14} {:<14} {:<12} Best params",
+        "Fold", "IS from", "IS to", "OS from", "OS to", "IS obj", "OS obj", "Degrad"
+    );
+    println!("{}", "-".repeat(140));
+    for fr in &report.fold_results {
+        println!(
+            "{:<6} {:<20} {:<20} {:<20} {:<20} {:<14} {:<14} {:<12} {}",
+            fr.fold,
+            fr.is_from.format("%Y-%m-%d %H:%M"),
+            fr.is_to.format("%Y-%m-%d %H:%M"),
+            fr.os_from.format("%Y-%m-%d %H:%M"),
+            fr.os_to.format("%Y-%m-%d %H:%M"),
+            fmt_opt(fr.is_objective),
+            fmt_opt(fr.os_objective),
+            fmt_opt(fr.degradation),
+            fmt_params(&fr.best_params),
+        );
+    }
+
+    // Drift table
+    if !report.drift.is_empty() {
+        println!("\n--- Parameter drift (best-param per OS fold) ---");
+        println!("{:<20} {:<10} Values per fold", "Param", "n_unique");
+        println!("{}", "-".repeat(80));
+        for pd in &report.drift {
+            let vals: Vec<String> = pd.values.iter().map(|v| fmt_opt(*v)).collect();
+            println!("{:<20} {:<10} {}", pd.name, pd.n_unique, vals.join("  "));
+        }
+    }
+
+    // Full-sample vs OS mean
+    println!("\n--- Full-sample best vs OS-mean ---");
+    match &report.full_sample_best {
+        Some(fs) => println!(
+            "full-sample best: {} (obj={})",
+            fmt_params(&Some(fs.params.clone())),
+            fmt_opt(fs.objective)
+        ),
+        None => println!("full-sample best: —"),
+    }
+    println!("OS-mean objective: {}", fmt_opt(report.os_mean_objective));
+
+    // Per-fold IS top-5
+    for (j, top5) in report.is_top5.iter().enumerate() {
+        let fold_num = j + 2; // OS folds are 2-based
+        println!("\n--- Fold {fold_num} IS top-5 ---");
+        for (rank, cs) in top5.iter().enumerate() {
+            println!(
+                "  #{}: {} obj={}",
+                rank + 1,
+                fmt_params(&Some(cs.params.clone())),
+                fmt_opt(cs.objective)
+            );
+        }
+    }
+    println!();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
