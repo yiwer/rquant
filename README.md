@@ -140,6 +140,13 @@ cargo run --release -- backtest \
 平均持仓 bar:   18.2
 换手:           8.40
 Buy & Hold:    +9.01%
+年化收益  :     0.24
+年化波动  :     0.18
+Sharpe    :     1.31
+Sortino   :     2.07
+Calmar    :     0.80
+VaR95     : -0.0182
+CVaR95    : -0.0182
 ```
 
 **定位区别**

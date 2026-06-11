@@ -100,6 +100,15 @@ async fn end_to_end_uptrend_yields_positive_long_edge() {
     let content = std::fs::read_to_string(out_f.path()).unwrap();
     assert!(content.contains("e2e"));
     assert!(report.gaps.is_empty(), "synthetic data should have no gaps");
+    // F4 T3 — scoring e2e: t_stat field on active SignalStat is structurally accessible.
+    // With uptrend + long signals, mean_net > 0 → t_stat is Some (n > 1 and std > 0).
+    // We only assert structural access compiles and the field is Some or None without crashing.
+    let _t_stat: Option<f64> = report.metrics.active.t_stat;
+    // For this fixture (uptrend, multiple long signals, non-zero std) it should be Some.
+    assert!(
+        report.metrics.active.t_stat.is_some(),
+        "active t_stat should be Some for uptrend fixture with n>1 scored signals"
+    );
     // H6 — walk-forward folds shape check
     let wf = report.walk_forward.as_ref().unwrap();
     assert_eq!(wf.folds.len(), 3, "folds=3 should produce 3 fold entries");
@@ -630,6 +639,149 @@ leaves:
     );
 }
 
+// F4 T3 — risk_metrics_html_contains_sharpe: render_sim_html and render_portfolio_html include
+// "Sharpe" in their headline tables (always emitted regardless of whether risk is None or Some).
+#[tokio::test]
+async fn risk_metrics_html_contains_sharpe() {
+    use rquant::backtest::portfolio::{PortfolioConfig, run_portfolio};
+    use std::io::Write as _;
+
+    // ── sim HTML ─────────────────────────────────────────────────────────────
+    const SIM_TREE: &str = r#"
+meta: { name: sharpe_html_sim, forward_window: 1, stances: [long, flat] }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - when: "pos == 0 and close > 0"
+        goto: leaf_long
+        label: enter
+      - when: "pos > 0 and bars_held >= 8"
+        goto: leaf_flat
+        label: exit
+      - when: "pos > 0"
+        goto: leaf_long
+        label: hold
+    default: { goto: leaf_flat, label: idle }
+leaves:
+  leaf_long: { stance: long }
+  leaf_flat: { stance: flat }
+"#;
+    let tree_f = write_file(SIM_TREE, ".yaml");
+    let primary_f = write_file(&gen_primary_csv(), ".csv");
+    let context_f = write_file(&gen_context_csv(), ".csv");
+    let out_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+
+    let sim_cfg = BacktestConfig {
+        tree_path: tree_f.path().to_path_buf(),
+        primary_path: primary_f.path().to_path_buf(),
+        context_path: context_f.path().to_path_buf(),
+        news_path: None,
+        out_path: out_f.path().to_path_buf(),
+        traces_path: None,
+        cost_bps: 10.0,
+        warmup: 5,
+        window: 100,
+        concurrency: 4,
+        holidays_path: None,
+        folds: 0,
+        aux_paths: vec![],
+    };
+    let sim_report = run_sim(&sim_cfg, &LlmEvaluator::Disabled, false)
+        .await
+        .expect("run_sim should succeed");
+    let sim_html = rquant::report::viz::render_sim_html(&sim_report, None);
+    assert!(
+        sim_html.contains("Sharpe"),
+        "sim HTML must contain 'Sharpe' in headline table"
+    );
+
+    // ── portfolio HTML ────────────────────────────────────────────────────────
+    const MOMENTUM_TREE: &str = r#"
+meta: { name: sharpe_html_port, forward_window: 1, stances: [long, flat] }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - when: "close > sma(close, 3)"
+        goto: leaf_long
+        label: up
+    default: { goto: leaf_flat, label: flat }
+leaves:
+  leaf_long: { stance: long, weight: 1.0 }
+  leaf_flat: { stance: flat }
+"#;
+    let days: Vec<u32> = (2u32..=11).collect();
+    let hm: &[(u32, u32)] = &[(9, 30), (10, 0), (10, 30), (11, 0)];
+    let mut timestamps = Vec::new();
+    for &d in &days {
+        for &(h, m) in hm {
+            use chrono::NaiveDate;
+            timestamps.push(
+                NaiveDate::from_ymd_opt(2024, 1, d)
+                    .unwrap()
+                    .and_hms_opt(h, m, 0)
+                    .unwrap(),
+            );
+        }
+    }
+    let write_bars_csv = |start: f64, pct: f64| -> tempfile::NamedTempFile {
+        let mut f = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+        writeln!(f, "time,open,high,low,close,volume").unwrap();
+        let mut price = start;
+        for ts in &timestamps {
+            writeln!(
+                f,
+                "{},{p:.6},{p:.6},{p:.6},{p:.6},1000",
+                ts.format("%Y-%m-%d %H:%M:%S"),
+                p = price
+            )
+            .unwrap();
+            price *= 1.0 + pct;
+        }
+        f.flush().unwrap();
+        f
+    };
+    let f_a = write_bars_csv(100.0, 0.01);
+    let f_b = write_bars_csv(100.0, 0.0);
+    let f_c = write_bars_csv(100.0, -0.01);
+    let mut univ_f = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+    writeln!(
+        univ_f,
+        "symbol,primary\nA,{}\nB,{}\nC,{}",
+        f_a.path().display(),
+        f_b.path().display(),
+        f_c.path().display()
+    )
+    .unwrap();
+    univ_f.flush().unwrap();
+    let port_tree_f = write_file(MOMENTUM_TREE, ".yaml");
+    let port_out_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+    let port_cfg = PortfolioConfig {
+        tree_path: port_tree_f.path().to_path_buf(),
+        universe_path: univ_f.path().to_path_buf(),
+        top: 1,
+        rebalance: 4,
+        warmup: 6,
+        window: 10,
+        cost_bps: 10.0,
+        soft: false,
+        aux_paths: Vec::new(),
+        out_path: port_out_f.path().to_path_buf(),
+        traces_path: None,
+    };
+    let port_report = run_portfolio(&port_cfg, &LlmEvaluator::Disabled)
+        .await
+        .expect("run_portfolio should succeed");
+    let port_html = rquant::report::viz::render_portfolio_html(&port_report);
+    assert!(
+        port_html.contains("Sharpe"),
+        "portfolio HTML must contain 'Sharpe' in headline table"
+    );
+}
+
 // E4 T5 — sim_full_chain: enter/exit/hold tree with pos conditions through run_sim (hard and soft)
 // Tree: pos==0 and close>0 → long; pos>0 and bars_held>=8 → flat; pos>0 → long; default flat
 // gen_primary_csv produces 40 bars (5 days × 8 bars/day), steadily uptrending from 10.0 to 13.9.
@@ -700,6 +852,41 @@ leaves:
     assert!(
         json_content.contains("sim_e2e"),
         "output JSON should contain tree name"
+    );
+
+    // F4 T3 — risk metrics: gen_primary_csv spans Jan 2–6 (4 calendar days < 30-day threshold).
+    // Annualised metrics (ann_return / ann_vol / sharpe / sortino / calmar) must be None.
+    // VaR95 must be finite (always computed from per-step returns regardless of span).
+    let risk = report.risk.as_ref().expect("risk must be Some (>1 nav point)");
+    assert!(
+        risk.ann_return.is_none(),
+        "span < 30 days → ann_return must be None"
+    );
+    assert!(
+        risk.ann_vol.is_none(),
+        "span < 30 days → ann_vol must be None"
+    );
+    assert!(
+        risk.sharpe.is_none(),
+        "span < 30 days → sharpe must be None"
+    );
+    assert!(
+        risk.sortino.is_none(),
+        "span < 30 days → sortino must be None"
+    );
+    assert!(
+        risk.calmar.is_none(),
+        "span < 30 days → calmar must be None"
+    );
+    assert!(
+        risk.var95.is_finite(),
+        "var95 must be finite regardless of span, got {}",
+        risk.var95
+    );
+    assert!(
+        risk.cvar95.is_finite(),
+        "cvar95 must be finite regardless of span, got {}",
+        risk.cvar95
     );
 
     // Soft mode: same tree, should complete without error and produce finite result
@@ -854,6 +1041,24 @@ leaves:
         report.n_rebalances >= 2,
         "expected n_rebalances >= 2, got {}",
         report.n_rebalances
+    );
+
+    // F4 T3 — risk metrics: portfolio fixture spans Jan 2–11 (9 calendar days < 30-day threshold).
+    // Annualised metrics must be None; VaR95/CVaR95 must be finite.
+    let prisk = report.risk.as_ref().expect("portfolio risk must be Some (>1 holdings point)");
+    assert!(
+        prisk.ann_return.is_none(),
+        "portfolio span < 30 days → ann_return must be None"
+    );
+    assert!(
+        prisk.var95.is_finite(),
+        "portfolio var95 must be finite regardless of span, got {}",
+        prisk.var95
+    );
+    assert!(
+        prisk.cvar95.is_finite(),
+        "portfolio cvar95 must be finite regardless of span, got {}",
+        prisk.cvar95
     );
 }
 

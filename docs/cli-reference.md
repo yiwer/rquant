@@ -250,6 +250,28 @@ cost_bps=10  top_n=2  rebalance=8
 
 ---
 
+## 风险指标（F-4 RiskMetrics）
+
+`--sim` 和 `portfolio` 产出的 JSON 报告含 `risk` 字段（`Option<RiskMetrics>`，旧 JSON 兼容反序列化为 `null`）。
+
+### 指标表
+
+| 字段 | 说明 | None 语义 |
+|---|---|---|
+| `ann_return` | 年化复合收益（CAGR），首末 nav 比的年化幂次 | 时间跨度 < 30 天时为 None |
+| `ann_vol` | 年化波动率（样本标准差 × √bpy），bpy = n\_rets / 首末跨度年数 | 时间跨度 < 30 天，或 n < 2 时为 None |
+| `sharpe` | Sharpe = ann\_return / ann\_vol（无风险利率 = 0） | 同 ann\_vol；或 ann\_vol ≈ 0 时为 None（拒绝假 Sharpe）|
+| `sortino` | Sortino = ann\_return / (下行波动 × √bpy)，下行仅含负收益 | 无负收益，或 ann\_return None 时为 None |
+| `calmar` | Calmar = ann\_return / max\_drawdown（模拟器最大回撤） | ann\_return None，或 max\_drawdown ≈ 0 时为 None |
+| `var95` | 历史 VaR（95%）= 升序排列第 ⌈5%·n⌉ 个分位点收益（通常为负值） | 永不为 None（仅需 ≥1 个收益点） |
+| `cvar95` | CVaR95 = VaR95 及更差尾部的均值（期望损失） | 同 var95 |
+
+`SignalStat.t_stat`（出现在 `metrics.active` / `metrics.engaged` 等字段）= mean / (sample\_std / √n)；n < 2 或 std ≈ 0 时为 None。
+
+**公式权威**：详见 `docs/superpowers/specs/2026-06-11-rquant-f4-risk-metrics-design.md` §3。
+
+---
+
 ## 环境变量
 
 | 变量 | 说明 |
