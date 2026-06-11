@@ -706,6 +706,7 @@ mod tests {
             min_price_since_entry: 9.9,
         };
         assert_eq!(f("max_price_since_entry == 11", &ctx), Value::Bool(true));
+        assert_eq!(f("min_price_since_entry == 9.9", &ctx), Value::Bool(true)); // 判别 max/min 不可接反
         assert_eq!(f("close < max_price_since_entry - 0.5", &ctx), Value::Bool(true));
         // MFE 推导：(11/10 - 1) = 0.1
         assert_eq!(f("max_price_since_entry / entry_price - 1 > 0.09", &ctx), Value::Bool(true));
