@@ -116,6 +116,11 @@ BinaryOp::Ne => { let (a,b) = ...; !a.is_nan() && !b.is_nan() && a != b }
 | `lowest(series, n)` | series: Series, n: int | NaN | 最近 n 根最低值（**含当前 bar**）；NaN 行为同 highest | `lowest(low, 20)` |
 | `std(series, n)` | series: Series, n: int | NaN | 最近 n 根总体标准差（÷n） | `std(close, 20)` |
 | `sigmoid(x)` | x: Scalar | — | 1/(1+e^−x)，常用于 strength 表达式 | `sigmoid((close - sma(close,20)) / 0.5)` |
+| `abs(x)` | x: Scalar | — | 绝对值 | `abs(close - entry_price)` |
+| `max(a, b)` | a, b: Scalar | 任一 NaN → NaN | 较大值；**显式 NaN 传播**（不吃弃权） | `max(pos, 0.25)` |
+| `min(a, b)` | a, b: Scalar | 任一 NaN → NaN | 较小值；NaN 传播同 max | `min(1, pos + 0.25)` |
+| `count(cond, n)` | cond: 布尔表达式, n: int≥1 | 序列 < n → NaN | 末 n 位中 cond 为 true 的个数；cond **逐位**求值（见下节） | `count(close > ema(close,20), 10)` |
+| `barssince(cond)` | cond: 布尔表达式 | 从未 true → NaN | 距最近一次 cond=true 的 bar 数（当前 bar=0） | `barssince(crossover(close, sma(close,20)))` |
 
 > **陷阱：`highest`/`lowest` 窗口含当前 bar**。`close > highest(high, n)` 恒假（窗口最大值 ≥ 当前 high ≥ 当前 close，严格大于永不成立）。表达 Turtle"超过前 N 根高点"的突破语义必须先用 `ref` 移掉当前 bar：
 >
@@ -130,6 +135,32 @@ BinaryOp::Ne => { let (a,b) = ...; !a.is_nan() && !b.is_nan() && a != b }
 |---|---|---|---|
 | `crossover(a, b)` | a, b: Series | 上穿：前一根 a≤b 且本根 a>b；序列不足 2 根时 false | `crossover(close, sma(close,20))` |
 | `crossunder(a, b)` | a, b: Series | 下穿：前一根 a≥b 且本根 a<b；序列不足 2 根时 false | `crossunder(ema(close,5), ema(close,20))` |
+
+---
+
+## 事件计数与逐位条件（`count` / `barssince`）
+
+`count`/`barssince` 的条件参数不走「Series → 取末元素」归约，而是**逐位**求值成布尔序列：
+
+- 比较（`> < >= <= == !=`）：两侧序列**尾对齐**（取右端公共长度；标量广播），逐位比较；任一侧该位 NaN → 该位 false（NaN 弃权逐位生效）。
+- `and` / `or` / `not`：逐位组合。
+- `crossover(a, b)` / `crossunder(a, b)`：逐位事件序列——位 j 为 true 当且仅当前一位未越线且本位越线；首位与含 NaN 位恒 false。**注意与普通 `when` 上下文的标量版语义并存**：普通上下文里 crossover 只看末两位返回单个 Bool，条件序列上下文里它是整个窗口的事件序列。
+- 其余表达式形态（裸序列、算术结果）作为条件 → 求值报错。
+
+窗口纪律：布尔序列长度 < n（或 `barssince` 从未触发）→ 返回 NaN，外层比较自动弃权走 default。
+
+### 价格行为惯用法
+
+```yaml
+# 趋势强度：最近 10 根中至少 8 根收于 EMA20 上方
+when: "count(close > ema(close,20), 10) >= 8"
+# H2 计数近似：20 根内第 2 次上穿 EMA8
+when: "count(crossover(close, ema(close,8)), 20) == 2"
+# 突破后回踩不破：距突破 ≤5 根且未跌破前低
+when: "barssince(close > highest(ref(high,1), 20)) <= 5 and low > lowest(ref(low,1), 10)"
+# inside bar（无需 count，普通索引即可）
+when: "high < high[-1] and low > low[-1]"
+```
 
 ---
 
