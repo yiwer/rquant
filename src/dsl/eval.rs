@@ -295,6 +295,29 @@ fn eval_call(name: &str, args: &[Expr], ctx: &Context) -> Result<Value> {
                 None => f64::NAN, // 可见窗口内从未触发 → 弃权
             }));
         }
+        "valuewhen" => {
+            if !(2..=3).contains(&args.len()) {
+                return Err(Error::Eval(format!(
+                    "valuewhen expects 2 or 3 args (cond, expr[, occurrence]), got {}",
+                    args.len()
+                )));
+            }
+            let cond = eval_bool_series(&args[0], ctx)?;
+            let vals = as_series(&eval(&args[1], ctx)?)?;
+            let occ = if args.len() == 3 { as_usize(&eval(&args[2], ctx)?)? } else { 0 };
+            let m = cond.len().min(vals.len());
+            let (cond, vals) = (&cond[cond.len() - m..], &vals[vals.len() - m..]);
+            let mut seen = 0usize;
+            for j in (0..m).rev() {
+                if cond[j] {
+                    if seen == occ {
+                        return Ok(Value::Scalar(vals[j]));
+                    }
+                    seen += 1;
+                }
+            }
+            return Ok(Value::Scalar(f64::NAN)); // 触发次数不足 → 弃权
+        }
         _ => {}
     }
     let vals: Result<Vec<Value>> = args.iter().map(|a| eval(a, ctx)).collect();
@@ -754,6 +777,27 @@ mod tests {
         // 非布尔条件 / 错参数量 → Err
         assert!(eval(&parse_str("barssince(close)").unwrap(), &ctx).is_err());
         assert!(eval(&parse_str("barssince(close > 0, 1)").unwrap(), &ctx).is_err());
+    }
+
+    #[test]
+    fn valuewhen_anchors_event_values() {
+        // closes [1,2,3,4,3]：crossover(close,2.5) 事件仅在 idx2（2→3 上穿）
+        let ctx = ctx_from_closes(&[1.0, 2.0, 3.0, 4.0, 3.0]);
+        let f = |src: &str| eval(&parse_str(src).unwrap(), &ctx).unwrap();
+        // 最近一次上穿时的 close = 3
+        assert_eq!(f("valuewhen(crossover(close, 2.5), close) == 3"), Value::Bool(true));
+        // occurrence=1：再往前一次——不存在 → NaN 弃权（比较恒 false）
+        assert_eq!(f("valuewhen(crossover(close, 2.5), close, 1) > 0"), Value::Bool(false));
+        // 从未触发 → NaN 弃权
+        assert_eq!(f("valuewhen(close > 99, close) > 0"), Value::Bool(false));
+        // 条件与取值序列尾对齐：ref(close,1)=[1,2,3,4]，事件位取移后值 = 2
+        assert_eq!(f("valuewhen(crossover(close, 2.5), ref(close, 1)) == 2"), Value::Bool(true));
+        // 锚定惯用法：closes=[1,2,3,4,3]，highest_roll(close,2)=[1,2,3,4,4]
+        // close >= highest_roll 逐位 = [T,T,T,T,F]，最近真位 = idx3，close[3] = 4
+        assert_eq!(f("valuewhen(close >= highest(close, 2), close) == 4"), Value::Bool(true));
+        // 参数个数校验
+        assert!(eval(&parse_str("valuewhen(close > 0)").unwrap(), &ctx).is_err());
+        assert!(eval(&parse_str("valuewhen(close > 0, close, 1, 2)").unwrap(), &ctx).is_err());
     }
 
     #[test]
