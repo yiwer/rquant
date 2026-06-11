@@ -14,7 +14,8 @@ struct Row {
 }
 
 /// 读取本地 CSV 为按时间升序的 Bar 列表，并做基本校验：
-/// 时间严格递增、high >= low。
+/// 时间严格递增、high >= low、OHLCV 全部有限（NaN/inf 拒绝——
+/// 持仓极值等状态量依赖 high/low，NaN 入场 bar 会让整回合极值静默卡死）。
 pub fn read_bars_csv(path: &Path) -> Result<Vec<Bar>> {
     let mut rdr = csv::Reader::from_path(path)?;
     let mut bars: Vec<Bar> = Vec::new();
@@ -30,6 +31,9 @@ pub fn read_bars_csv(path: &Path) -> Result<Vec<Bar>> {
             close: row.close,
             volume: row.volume,
         };
+        if ![bar.open, bar.high, bar.low, bar.close, bar.volume].iter().all(|v| v.is_finite()) {
+            return Err(Error::Data(format!("non-finite OHLCV at {time}")));
+        }
         if bar.high < bar.low {
             return Err(Error::Data(format!("high < low at {time}")));
         }
@@ -106,6 +110,21 @@ mod tests {
              2024-01-02 09:45:00,10.0,9.0,9.8,10.2,1000\n",
         );
         assert!(read_bars_csv(f.path()).is_err());
+    }
+
+    #[test]
+    fn rejects_non_finite_ohlcv() {
+        // NaN high 通过 high<low 校验（NaN 比较恒 false）——必须被有限性校验拦下
+        let f = write_csv(
+            "time,open,high,low,close,volume\n\
+             2024-01-02 09:45:00,10.0,NaN,9.8,10.2,1000\n",
+        );
+        assert!(read_bars_csv(f.path()).is_err());
+        let f2 = write_csv(
+            "time,open,high,low,close,volume\n\
+             2024-01-02 09:45:00,10.0,inf,9.8,10.2,1000\n",
+        );
+        assert!(read_bars_csv(f2.path()).is_err());
     }
 
     // M3 — bad time in bars CSV
