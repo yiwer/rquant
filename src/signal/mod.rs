@@ -34,18 +34,26 @@ const STATE_VERSION: u32 = 1;
 /// 纸交易持久化状态（JSON落盘，人可读）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaperState {
+    /// 协议版本 = 1。
     pub version: u32,
+    /// 树名（防串树）。
     pub tree_name: String,
+    /// 已记账最后**决策 bar** 时间（落后最新 bar 一根；悬挂决策不记账）。
     pub last_time: Option<NaiveDateTime>,
+    /// 账户快照（持仓/均价/bars_held）。
     pub account: AccountSnapshot,
 }
 
 /// 回放统计摘要（随信号一起输出）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaperStats {
+    /// 净值（权益 / 初始资金）。
     pub nav: f64,
+    /// 总收益率（nav - 1）。
     pub total_return: f64,
+    /// 最大回撤。
     pub max_drawdown: f64,
+    /// 本次运行真正重放（记账）的 bar 数。
     pub bars_replayed: usize,
 }
 
@@ -69,16 +77,27 @@ pub struct SingleSignal {
 }
 
 /// 单标的信号运行配置。
+#[derive(Debug, Clone)]
 pub struct SignalSingleConfig {
+    /// 决策树 YAML 文件路径。
     pub tree_path: PathBuf,
+    /// 主行情 CSV 路径（K 线数据）。
     pub primary_path: PathBuf,
+    /// 辅助行情 CSV 路径（Context 计算）。
     pub context_path: PathBuf,
+    /// 新闻 CSV 路径（可选，供 LLM 节点）。
     pub news_path: Option<PathBuf>,
+    /// 辅助表路径列表。
     pub aux_paths: Vec<(String, PathBuf)>,
+    /// 特征工程窗口大小（单位：bars）。
     pub window: usize,
+    /// 预热 bar 数（单位：bars，预热期不生成决策）。
     pub warmup: usize,
+    /// 交易成本（单位：bp，万分比）。
     pub cost_bps: f64,
+    /// 是否使用 soft 遍历（概率）。
     pub soft: bool,
+    /// Paper state JSON 路径，读写均经 read/write_paper_state。
     pub state_path: PathBuf,
 }
 
@@ -88,7 +107,7 @@ pub struct SignalSingleConfig {
 
 /// 读取 paper state 文件。
 /// - 不存在 → `Ok(None)`
-/// - JSON 损坏 → `Err`（含 "corrupt"）
+/// - 空/损坏文件 → `Err`（含 "corrupt"）
 /// - version ≠ 1 → `Err`
 /// - tree_name 不符 → `Err`（防串树）
 pub fn read_paper_state(path: &Path, tree_name: &str) -> Result<Option<PaperState>> {
@@ -96,9 +115,6 @@ pub fn read_paper_state(path: &Path, tree_name: &str) -> Result<Option<PaperStat
         return Ok(None);
     }
     let raw = std::fs::read_to_string(path)?;
-    if raw.trim().is_empty() {
-        return Ok(None);
-    }
     let st: PaperState = serde_json::from_str(&raw).map_err(|e| {
         Error::Data(format!(
             "signal state corrupt: {e}（如需重建请删除该文件）"
@@ -106,13 +122,13 @@ pub fn read_paper_state(path: &Path, tree_name: &str) -> Result<Option<PaperStat
     })?;
     if st.version != STATE_VERSION {
         return Err(Error::Data(format!(
-            "signal state version {} unsupported (expected {})",
+            "signal state version {} unsupported (expected {})（请删除 state 文件重建）",
             st.version, STATE_VERSION
         )));
     }
     if st.tree_name != tree_name {
         return Err(Error::Data(format!(
-            "signal state tree_name '{}' does not match requested tree '{tree_name}'",
+            "signal state tree_name '{}' does not match requested tree '{tree_name}'（state 与 --tree 不匹配：换 state 文件或删除重建）",
             st.tree_name
         )));
     }
@@ -300,7 +316,7 @@ pub async fn run_signal_single(
         cfg.window,
     );
 
-    let unreal_hang = if acc.pos.abs() > EPS {
+    let unreal_pnl = if acc.pos.abs() > EPS {
         (close_hang / acc.entry_price - 1.0) * acc.pos.signum()
     } else {
         0.0
@@ -309,16 +325,16 @@ pub async fn run_signal_single(
         pos: acc.pos,
         entry_price: acc.entry_price,
         bars_held: acc.bars_held,
-        unreal_pnl: unreal_hang,
+        unreal_pnl,
     };
 
     // 悬挂决策：风控覆盖优先，否则树目标（保留 leaf trace）
     let (hang_target, hang_reason, hang_leaf): (f64, &str, Option<String>) =
         if acc.pos.abs() > EPS {
             if let Some(risk) = &tree.risk {
-                if risk.stop_loss.is_some_and(|sl| unreal_hang <= -sl) {
+                if risk.stop_loss.is_some_and(|sl| unreal_pnl <= -sl) {
                     (0.0, "stop", None)
-                } else if risk.take_profit.is_some_and(|tp| unreal_hang >= tp) {
+                } else if risk.take_profit.is_some_and(|tp| unreal_pnl >= tp) {
                     (0.0, "tp", None)
                 } else if risk.max_hold_bars.is_some_and(|mh| acc.bars_held >= mh) {
                     (0.0, "max_hold", None)
@@ -386,6 +402,7 @@ mod tests {
         for day in 0..4usize {
             for k in 0..8usize {
                 let price = 10.0 + 0.1 * idx as f64;
+                // 09:45 起每 15 分钟一根，至 11:30
                 let hour = 9 + (45 + k * 15) / 60;
                 let minute = (45 + k * 15) % 60;
                 s.push_str(&format!(
@@ -507,13 +524,14 @@ risk:
         let warmup = 5;
 
         for k in [warmup + 3, len - 5] {
+            let tmp_dir = tempfile::tempdir().unwrap();
             // ── A：全量 fresh ────────────────────────────────────────────────
-            let state_a_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+            let state_a_path = tmp_dir.path().join("state_a.json");
             let cfg_a = make_cfg(
                 tree_f.path(),
                 primary_f.path(),
                 context_f.path(),
-                state_a_f.path(),
+                &state_a_path,
             );
             let (_sig_a, state_a) = run_signal_single(&cfg_a, &LlmEvaluator::Disabled)
                 .await
@@ -526,26 +544,26 @@ risk:
             let partial_csv = partial_lines.join("\n") + "\n";
             let partial_f = write_file(&partial_csv, ".csv");
 
-            let state_b1_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+            let state_b1_path = tmp_dir.path().join("state_b1.json");
             let cfg_b1 = make_cfg(
                 tree_f.path(),
                 partial_f.path(),
                 context_f.path(),
-                state_b1_f.path(),
+                &state_b1_path,
             );
             let (_sig_b1, state_b1) = run_signal_single(&cfg_b1, &LlmEvaluator::Disabled)
                 .await
                 .unwrap();
 
             // ── B2：从 state_b1 全量跑 ──────────────────────────────────────
-            let state_b2_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
-            write_paper_state(state_b2_f.path(), &state_b1).unwrap();
+            let state_b2_path = tmp_dir.path().join("state_b2.json");
+            write_paper_state(&state_b2_path, &state_b1).unwrap();
 
             let cfg_b2 = make_cfg(
                 tree_f.path(),
                 primary_f.path(),
                 context_f.path(),
-                state_b2_f.path(),
+                &state_b2_path,
             );
             let (_sig_b2, state_b2) = run_signal_single(&cfg_b2, &LlmEvaluator::Disabled)
                 .await
@@ -568,15 +586,17 @@ risk:
         let primary_f = write_file(&gen_primary_csv(), ".csv");
         let context_f = write_file(&gen_context_csv(), ".csv");
 
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let state_path = tmp_dir.path().join("state.json");
+
         // 第一次：全量 fresh
-        let state_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
-        let cfg = make_cfg(tree_f.path(), primary_f.path(), context_f.path(), state_f.path());
+        let cfg = make_cfg(tree_f.path(), primary_f.path(), context_f.path(), &state_path);
         let (sig1, state1) = run_signal_single(&cfg, &LlmEvaluator::Disabled)
             .await
             .unwrap();
 
         // 保存 state1，再跑一次
-        write_paper_state(state_f.path(), &state1).unwrap();
+        write_paper_state(&state_path, &state1).unwrap();
         let (sig2, state2) = run_signal_single(&cfg, &LlmEvaluator::Disabled)
             .await
             .unwrap();
@@ -607,7 +627,7 @@ risk:
     async fn pending_decision_stop_loss_fires() {
         // 构造 primary：稳定上行入场，末 bar 大幅下跌（超 5% 止损）。
         // warmup=5, 前 10 bar 上行（入场），bar 10 大幅下跌。
-        // 12 bars total: warmup=5, bar5=entry-decision, bar6..10=hold, bar11=hang(crash)
+        // 12 bars total: warmup=5, bar5=entry-decision, bar 6..=10（5 根）=hold, bar11=hang(crash)
         // Use clean per-minute times spread across 3 days.
         let mut rows = vec!["time,open,high,low,close,volume".to_string()];
         // bar 0..5: 上行预热（day 1）
@@ -640,7 +660,8 @@ risk:
         let tree_f = write_file(&enter_hold_stop_tree(), ".yaml");
         let primary_f = write_file(&primary_csv, ".csv");
         let context_f = write_file(&context_csv, ".csv");
-        let state_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let state_path = tmp_dir.path().join("state.json");
 
         let cfg = SignalSingleConfig {
             tree_path: tree_f.path().to_path_buf(),
@@ -652,7 +673,7 @@ risk:
             warmup: 5,
             cost_bps: 10.0,
             soft: false,
-            state_path: state_f.path().to_path_buf(),
+            state_path,
         };
 
         let (sig, state) = run_signal_single(&cfg, &LlmEvaluator::Disabled)
@@ -685,6 +706,16 @@ risk:
             msg.contains("corrupt"),
             "corrupt state must mention 'corrupt', got: {msg}"
         );
+
+        // 空文件应被拒绝（不静默返回 None）
+        let f_empty = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+        std::fs::write(f_empty.path(), "").unwrap();
+        let err_empty = read_paper_state(f_empty.path(), "any_tree").unwrap_err();
+        let msg_empty = err_empty.to_string();
+        assert!(
+            msg_empty.contains("corrupt"),
+            "empty state file must be treated as corrupt, got: {msg_empty}"
+        );
     }
 
     #[test]
@@ -697,13 +728,11 @@ risk:
         };
         let f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
         write_paper_state(f.path(), &st).unwrap();
-        // manually patch version
-        let raw = std::fs::read_to_string(f.path()).unwrap();
-        std::fs::write(f.path(), raw).unwrap();
         let err = read_paper_state(f.path(), "t").unwrap_err();
+        let msg = err.to_string();
         assert!(
-            err.to_string().contains("version") || err.to_string().contains("999"),
-            "version mismatch must mention version, got: {err}"
+            msg.contains("version") || msg.contains("999"),
+            "version mismatch must mention version, got: {msg}"
         );
     }
 
