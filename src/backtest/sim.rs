@@ -310,8 +310,8 @@ pub async fn run_sim(cfg: &BacktestConfig, llm: &LlmEvaluator, soft: bool) -> Re
             entry_price: acc.entry_price,
             bars_held: acc.bars_held,
             unreal_pnl,
-            max_price_since_entry: f64::NAN, // Task 8: wire to acc
-            min_price_since_entry: f64::NAN, // Task 8: wire to acc
+            max_price_since_entry: acc.max_price_since_entry,
+            min_price_since_entry: acc.min_price_since_entry,
         };
 
         // 风控覆盖（spec §3.2）：pos≠0 时按 stop→tp→max_hold 顺序检查
@@ -924,5 +924,57 @@ time,open,high,low,close,volume
             first_reason, "stop",
             "first trip reason should be 'stop', got '{first_reason}'"
         );
+    }
+
+    /// Chandelier 式跟踪止损树：回撤超 2% 即离场。
+    const CHANDELIER_TREE: &str = r#"
+meta: { name: chandelier, forward_window: 1, stances: [long, flat] }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - when: "pos == 0 and close > 0"
+        goto: leaf_long
+        label: enter
+      - when: "pos > 0 and close < max_price_since_entry * 0.98"
+        goto: leaf_flat
+        label: chandelier_exit
+      - when: "pos > 0"
+        goto: leaf_long
+        label: hold
+    default: { goto: leaf_flat, label: idle }
+leaves:
+  leaf_long: { stance: long }
+  leaf_flat: { stance: flat }
+"#;
+
+    /// 冲高后回撤：b1 执行入场（high 10.6），b2 收 10.3 < 10.6*0.98=10.388 → 决策离场，b3 执行。
+    fn write_chandelier_bars_csv() -> tempfile::NamedTempFile {
+        use std::io::Write as _;
+        let csv = "\
+time,open,high,low,close,volume
+2024-01-02 09:45:00,10.0,10.1,9.9,10.0,1000
+2024-01-02 10:00:00,10.0,10.6,9.9,10.5,1000
+2024-01-03 09:45:00,10.5,10.55,10.2,10.3,1000
+2024-01-03 10:00:00,10.3,10.35,10.1,10.2,1000
+";
+        let mut f = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+        write!(f, "{csv}").unwrap();
+        f.flush().unwrap();
+        f
+    }
+
+    #[tokio::test]
+    async fn run_sim_chandelier_exit_fires() {
+        let tree_f = write_tree_yaml(CHANDELIER_TREE);
+        let bars_f = write_chandelier_bars_csv();
+        let out_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+        let cfg = make_cfg(&tree_f, &bars_f, &out_f, None);
+        let report = run_sim(&cfg, &LlmEvaluator::Disabled, false).await.unwrap();
+        assert_eq!(report.n_round_trips, 1);
+        // 树内 chandelier 分支驱动的离场，reason 是 "tree"（风控块离场才是 stop/tp）
+        assert_eq!(report.trades[0].reason, "tree");
+        assert_relative_eq!(report.trades[0].exit_px, 10.3); // b3 开盘执行
     }
 }

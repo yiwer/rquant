@@ -27,6 +27,8 @@
 | `entry_price` | `Context.sim`（sim 模式） | 入场均价（标量）；空仓或非 sim 模式为 `NaN`，引用它的比较自动弃权（false） |
 | `bars_held` | `Context.sim`（sim 模式） | 当前持仓已持 bar 数（标量，从开仓收盘后的第 1 根起计）；非 sim 模式默认 `0.0` |
 | `unreal_pnl` | `Context.sim`（sim 模式） | 浮动损益率 `(close/entry_price−1)×sign(pos)`（标量）；空仓或非 sim 模式默认 `0.0` |
+| `max_price_since_entry` | `Context.sim`（sim 模式） | 入场以来（含入场执行 bar）最高 `high`（标量）；空仓/非 sim 为 NaN → 比较弃权。Chandelier：`close < max_price_since_entry - 3*atr(22)` |
+| `min_price_since_entry` | `Context.sim`（sim 模式） | 入场以来最低 `low`（标量）；空仓 NaN。MFE/MAE 自行推导：`max_price_since_entry/entry_price - 1` |
 | `aux.<表名>.<列名>` | 挂载的外部 aux 表 | `--aux <表名>=path.csv` 中 `<列名>` 对应的数值序列（time≤t 截断后的可见部分） |
 
 `resolve_series`（`eval.rs`）实现上述解析：前缀 `aux.` 存在时路由到对应 `AuxView`，前缀 `ctx.` 存在时路由到 `ctx.context`，否则路由到 `ctx.primary`。`hour`/`minute`/`dow` 与 `pos`/`entry_price`/`bars_held`/`unreal_pnl` 在 `eval` 的 `Ident` 臂中优先匹配，直接从 `ctx` 读取，不参与序列解析。
