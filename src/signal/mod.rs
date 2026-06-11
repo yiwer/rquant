@@ -661,14 +661,14 @@ pub fn print_portfolio_signal(sig: &PortfolioSignal) {
         println!("  {}  {:.4}", symbol, weight);
     }
     println!("交易清单（{}条）:", sig.trades.len());
-    for t in &sig.trades {
-        let action_str = match t.action {
+    for instr in &sig.trades {
+        let action_str = match instr.action {
             TradeAction::Buy    => "BUY   ",
             TradeAction::Sell   => "SELL  ",
             TradeAction::Adjust => "ADJUST",
             TradeAction::Hold   => "HOLD  ",
         };
-        println!("  {}  {}  {:.2} → {:.2}", action_str, t.symbol, t.from_w, t.to_w);
+        println!("  {}  {}  {:.2} → {:.2}", action_str, instr.symbol, instr.from_w, instr.to_w);
     }
     println!("新鲜标的数: {}", sig.n_fresh);
 }

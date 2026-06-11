@@ -122,10 +122,13 @@ enum Cmd {
         /// Optional: refresh --primary from network first (single mode only)
         #[arg(long)]
         fetch: Option<String>,
+        /// K-line scale in minutes (only used with --fetch): 15, 60, 240 (daily)
         #[arg(long, default_value_t = 60)]
         scale: u32,
+        /// Max bars to fetch (only used with --fetch; Sina cap: 1023)
         #[arg(long, default_value_t = 1023)]
         datalen: u32,
+        /// Price adjustment for --fetch: none (raw) or qfq (forward-adjusted)
         #[arg(long, default_value = "none")]
         adjust: String,
         #[arg(long, default_value_t = false)]
@@ -541,7 +544,7 @@ pub async fn main() -> anyhow::Result<()> {
                 }
             } else {
                 // ── portfolio mode ────────────────────────────────────────────
-                let universe_path = universe.unwrap();
+                let universe_path = universe.expect("invariant: portfolio mode requires --universe (checked above)");
                 let cfg = SignalPortfolioConfig {
                     tree_path: tree,
                     universe_path,
