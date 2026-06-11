@@ -15,6 +15,7 @@ pub mod eval;
 pub mod engine;
 pub mod backtest;
 pub mod report;
+pub mod factor;
 pub mod cli;
 
 pub type Result<T> = std::result::Result<T, Error>;
