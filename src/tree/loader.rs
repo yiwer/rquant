@@ -185,7 +185,7 @@ pub fn load_tree_str(src: &str) -> Result<Tree> {
         check_name(k, &env)?;
         env.insert(k.clone(), Expr::Number(*v));
     }
-    for (k, v) in &spec.factors {
+    for (slot, (k, v)) in (0_u32..).zip(&spec.factors) {
         let name = k
             .as_str()
             .ok_or_else(|| Error::Tree("factor name must be a string".into()))?;
@@ -197,6 +197,11 @@ pub fn load_tree_str(src: &str) -> Result<Tree> {
             .map_err(|e| Error::Tree(format!("factor '{name}': {e}")))?;
         let e = substitute(&e, &env);
         check_no_unknown_idents(&e, &format!("factor '{name}'"))?;
+        // 包缓存槽：所有引用处共享同一槽位 → 每个 Context 只真算一次（params 是字面量，不包）。
+        // INVARIANT：槽位 id 必须全树唯一（本计数器是唯一分配点）——id 撞车会造成静默值串用。
+        // 布尔因子同样包裹：硬 when 多处引用照常命中；fuzzy strength 路径对 Cached 透传重算
+        //（fuzzy 真值依赖 scale，不消费 Value 缓存），正确性不受影响、只是该路径无缓存收益。
+        let e = Expr::Cached(slot, Box::new(e));
         env.insert(name.to_string(), e);
     }
 
@@ -1024,6 +1029,55 @@ leaves:
         assert!(load_tree_str(&yaml("unreal_pnl")).is_err());
         assert!(load_tree_str(&yaml("max_price_since_entry")).is_err());
         assert!(load_tree_str(&yaml("min_price_since_entry")).is_err());
+    }
+
+    #[test]
+    fn factors_are_wrapped_in_shared_cache_slots() {
+        let src = r#"
+meta: { name: t, forward_window: 3, stances: [long, flat] }
+factors:
+  atr_v: "atr(3)"
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "atr_v >= 0 and atr_v < 1000", goto: leaf_l, label: up } ]
+    default: { goto: leaf_f, label: flat }
+leaves:
+  leaf_l: { stance: long }
+  leaf_f: { stance: flat }
+"#;
+        let tree = load_tree_str(src).unwrap();
+        // 同名因子的两处引用共享同一槽位 id（Cached(0, ...) 出现 ≥2 次）
+        let rendered = format!("{:?}", tree.nodes.get("a").unwrap());
+        assert!(
+            rendered.matches("Cached(0,").count() >= 2,
+            "expected shared cache slot, got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn nested_factors_get_distinct_slots() {
+        let src = r#"
+meta: { name: t, forward_window: 3, stances: [long, flat] }
+factors:
+  base: "sma(close, 3)"
+  derived: "base + 1"
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "derived > 0 and base > 0", goto: leaf_l, label: up } ]
+    default: { goto: leaf_f, label: flat }
+leaves:
+  leaf_l: { stance: long }
+  leaf_f: { stance: flat }
+"#;
+        let tree = load_tree_str(src).unwrap();
+        let rendered = format!("{:?}", tree.nodes.get("a").unwrap());
+        // derived 包槽 1，其体内嵌 base 的槽 0；branch 里直接引用的 base 也是槽 0
+        assert!(rendered.contains("Cached(1,"), "derived slot missing: {rendered}");
+        assert!(rendered.matches("Cached(0,").count() >= 2, "base slot not shared: {rendered}");
     }
 
     #[test]

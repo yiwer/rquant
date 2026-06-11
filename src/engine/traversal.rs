@@ -140,6 +140,43 @@ leaves:
 "#;
 
     #[tokio::test]
+    async fn factor_tree_equivalent_to_inline_tree() {
+        let factored = r#"
+meta: { name: t, forward_window: 3, stances: [long, flat] }
+factors:
+  f: "sma(close, 3)"
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "close > f and f > 0", goto: leaf_l, label: up } ]
+    default: { goto: leaf_f, label: flat }
+leaves:
+  leaf_l: { stance: long }
+  leaf_f: { stance: flat }
+"#;
+        let inline = r#"
+meta: { name: t, forward_window: 3, stances: [long, flat] }
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "close > sma(close, 3) and sma(close, 3) > 0", goto: leaf_l, label: up } ]
+    default: { goto: leaf_f, label: flat }
+leaves:
+  leaf_l: { stance: long }
+  leaf_f: { stance: flat }
+"#;
+        let (tf, ti) = (load_tree_str(factored).unwrap(), load_tree_str(inline).unwrap());
+        for closes in [&[1.0, 2.0, 3.0, 4.0, 5.0][..], &[5.0, 4.0, 3.0][..], &[1.0][..]] {
+            let c = ctx(closes);
+            let a = traverse(&tf, &c, &LlmEvaluator::Disabled).await.unwrap();
+            let b = traverse(&ti, &c, &LlmEvaluator::Disabled).await.unwrap();
+            assert_eq!(a.leaf, b.leaf, "closes={closes:?}");
+        }
+    }
+
+    #[tokio::test]
     async fn shared_judge_nodes_resolve_via_judge_scope() {
         let tree = load_tree_str(SHARED_JUDGE_TREE).unwrap();
         // stub 以 scope（judge:veto）为键——一个答案同时驱动两个调用点，证明判定已与落点解耦
