@@ -242,6 +242,23 @@ fn eval_call(name: &str, args: &[Expr], ctx: &Context) -> Result<Value> {
             need(&vals, 1, name)?;
             Ok(Value::Scalar(1.0 / (1.0 + (-as_scalar(&vals[0])?).exp())))
         }
+        "abs" => {
+            need(&vals, 1, name)?;
+            Ok(Value::Scalar(as_scalar(&vals[0])?.abs()))
+        }
+        "max" | "min" => {
+            need(&vals, 2, name)?;
+            let (a, b) = (as_scalar(&vals[0])?, as_scalar(&vals[1])?);
+            // f64::max(NaN, x) 返回 x，会吞掉预热弃权 → 显式传播 NaN
+            let v = if a.is_nan() || b.is_nan() {
+                f64::NAN
+            } else if name == "max" {
+                a.max(b)
+            } else {
+                a.min(b)
+            };
+            Ok(Value::Scalar(v))
+        }
         _ => Err(Error::Eval(format!("unknown function: {name}"))),
     }
 }
@@ -475,6 +492,24 @@ mod tests {
         assert_eq!(f("dow <= 5"), Value::Bool(true));
         // fuzzy 路径可用（比较经 as_scalar）
         assert!((eval_fuzzy(&parse_str("hour >= 9").unwrap(), &ctx, 0.02).unwrap() - 0.5).abs() < 0.5);
+    }
+
+    #[test]
+    fn abs_min_max_eval() {
+        let ctx = ctx_from_closes(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+        let f = |src: &str| eval(&parse_str(src).unwrap(), &ctx).unwrap();
+        assert_eq!(f("abs(0 - 3) == 3"), Value::Bool(true));
+        assert_eq!(f("abs(close - 10) == 5"), Value::Bool(true));
+        assert_eq!(f("max(2, 3) == 3"), Value::Bool(true));
+        assert_eq!(f("min(2, 3) == 2"), Value::Bool(true));
+        // 序列参数经 as_scalar 归约取末元素
+        assert_eq!(f("max(close, 4.5) == 5"), Value::Bool(true));
+        // NaN 传播：预热期 sma 为 NaN → max/min 必须返回 NaN（弃权），不得吃掉 NaN
+        assert_eq!(f("max(sma(close, 10), 1) > 0"), Value::Bool(false));
+        assert_eq!(f("min(sma(close, 10), 1) < 99"), Value::Bool(false));
+        // 错参数量
+        assert!(eval(&parse_str("abs(1, 2)").unwrap(), &ctx).is_err());
+        assert!(eval(&parse_str("max(1)").unwrap(), &ctx).is_err());
     }
 
     #[test]

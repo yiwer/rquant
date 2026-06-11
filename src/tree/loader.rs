@@ -7,24 +7,10 @@ use std::path::Path;
 
 const RESERVED_IDENTS: [&str; 12] =
     ["close", "open", "high", "low", "volume", "hour", "minute", "dow", "pos", "entry_price", "bars_held", "unreal_pnl"];
-const RESERVED_FNS: [&str; 17] = [
-    "sma",
-    "ema",
-    "wma",
-    "rsi",
-    "atr",
-    "slope",
-    "ref",
-    "highest",
-    "lowest",
-    "crossover",
-    "crossunder",
-    "macd_line",
-    "macd_signal",
-    "macd_hist",
-    "std",
-    "sigmoid",
-    "auto",
+const RESERVED_FNS: [&str; 20] = [
+    "sma", "ema", "wma", "rsi", "atr", "slope", "ref", "highest", "lowest",
+    "crossover", "crossunder", "macd_line", "macd_signal", "macd_hist",
+    "std", "sigmoid", "auto", "abs", "max", "min",
 ];
 
 fn check_name(name: &str, env: &HashMap<String, Expr>) -> Result<()> {
@@ -771,6 +757,27 @@ leaves:
         assert!(load_tree_str(&yaml("entry_price")).is_err());
         assert!(load_tree_str(&yaml("bars_held")).is_err());
         assert!(load_tree_str(&yaml("unreal_pnl")).is_err());
+    }
+
+    #[test]
+    fn math_fns_are_reserved() {
+        let yaml = |factor: &str| format!(r#"
+meta: {{ name: t, forward_window: 3, stances: [long, flat] }}
+factors:
+  {factor}: "close - 1"
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ {{ when: "{factor} > 0", goto: leaf_l, label: up }} ]
+    default: {{ goto: leaf_f, label: flat }}
+leaves:
+  leaf_l: {{ stance: long }}
+  leaf_f: {{ stance: flat }}
+"#);
+        assert!(load_tree_str(&yaml("abs")).is_err());
+        assert!(load_tree_str(&yaml("max")).is_err());
+        assert!(load_tree_str(&yaml("min")).is_err());
     }
 
     #[test]
