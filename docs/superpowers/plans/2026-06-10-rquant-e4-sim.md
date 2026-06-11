@@ -303,17 +303,18 @@ mod tests {
     fn golden_walk_enter_hold_exit() {
         // bars: b0 c=10 | b1 o=10 c=10.2 | b2 o=10.4 c=10.6 | b3 o=10.8 c=10.6
         // rate=0.001。i0: target 1 → exec b1；i1: hold → b2 无交易；i2: target 0 → exec b3 平仓。
+        // 注意：执行时间须跨自然日（入场日 T+1 禁止当日平仓——纯记账路径用三天展开）
         let mut acc = SimAccount::default();
         let rt1 = sim_step(&mut acc, 10.0, 10.0, 10.2, t("2024-01-02 10:00:00"), 1.0, 0.001, "tree");
         assert!(rt1.is_none());
         assert_relative_eq!(acc.nav, 0.999 * (10.2 / 10.0), epsilon = 1e-12);
         assert_relative_eq!(acc.entry_price, 10.0);
         assert_eq!(acc.bars_held, 1);
-        let rt2 = sim_step(&mut acc, 10.2, 10.4, 10.6, t("2024-01-02 10:15:00"), 1.0, 0.001, "tree");
+        let rt2 = sim_step(&mut acc, 10.2, 10.4, 10.6, t("2024-01-03 10:00:00"), 1.0, 0.001, "tree");
         assert!(rt2.is_none());
         assert_relative_eq!(acc.nav, 0.999 * (10.6 / 10.0), epsilon = 1e-12); // 连续持仓 = 链式收益
         assert_eq!(acc.bars_held, 2);
-        let rt3 = sim_step(&mut acc, 10.6, 10.8, 10.6, t("2024-01-02 10:30:00"), 0.0, 0.001, "tree").unwrap();
+        let rt3 = sim_step(&mut acc, 10.6, 10.8, 10.6, t("2024-01-04 10:00:00"), 0.0, 0.001, "tree").unwrap();
         // 平仓后 nav = 0.999*(10.8/10.0)*0.999；段2 pos=0 不变
         assert_relative_eq!(acc.nav, 0.999 * (10.8 / 10.0) * 0.999, epsilon = 1e-12);
         assert_eq!(acc.pos, 0.0);
