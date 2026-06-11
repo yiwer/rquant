@@ -156,12 +156,24 @@ pub fn load_tree_file(path: &Path) -> Result<Tree> {
     load_tree_str(&src)
 }
 
-/// 从 YAML 字符串加载并验证决策树。
+/// 以参数覆盖加载决策树（override 键必须存在于树 params 块；既有全部校验保留）。
 ///
 /// 验证规则：root 必须是节点；所有 goto 目标已定义；从 root 可达所有节点；
 /// 无环（DFS 着色）；叶子 stance 在 `meta.stances` 声明集合内。
-pub fn load_tree_str(src: &str) -> Result<Tree> {
-    let spec: TreeSpec = serde_yaml::from_str(src)?;
+pub fn load_tree_str_with_overrides(
+    src: &str,
+    overrides: &std::collections::BTreeMap<String, f64>,
+) -> Result<Tree> {
+    let mut spec: TreeSpec = serde_yaml::from_str(src)?;
+
+    // Apply overrides: each override key must exist in spec.params
+    for (k, v) in overrides {
+        if !spec.params.contains_key(k) {
+            return Err(Error::Tree(format!("override param '{k}' not found in tree params")));
+        }
+        spec.params.insert(k.clone(), *v);
+    }
+
     let stances: HashSet<Stance> = spec.meta.stances.iter().copied().collect();
 
     // Build substitution environment: params first, then factors (document order).
@@ -319,6 +331,14 @@ pub fn load_tree_str(src: &str) -> Result<Tree> {
     };
     validate(&tree)?;
     Ok(tree)
+}
+
+/// 从 YAML 字符串加载并验证决策树。
+///
+/// 验证规则：root 必须是节点；所有 goto 目标已定义；从 root 可达所有节点；
+/// 无环（DFS 着色）；叶子 stance 在 `meta.stances` 声明集合内。
+pub fn load_tree_str(src: &str) -> Result<Tree> {
+    load_tree_str_with_overrides(src, &std::collections::BTreeMap::new())
 }
 
 /// "auto" → Auto(0.02)；"auto(<f64>)" → Auto(s)（s>0）；其余按 DSL 表达式编译。
@@ -796,5 +816,60 @@ leaves:
         assert!(load_tree_str(&yaml("")).unwrap().risk.is_none());
         assert!(load_tree_str(&yaml("risk: { stop_loss: -0.1 }")).is_err());
         assert!(load_tree_str(&yaml("risk: { max_hold_bars: 0 }")).is_err());
+    }
+
+    // Test helper: construct a minimal context with close=10.0
+    fn test_ctx_close10() -> crate::features::context::Context {
+        use crate::data::bar::Bar;
+        use chrono::NaiveDate;
+        let base = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap().and_hms_opt(9, 45, 0).unwrap();
+        let bars = vec![Bar {
+            time: base,
+            open: 10.0,
+            high: 10.0,
+            low: 10.0,
+            close: 10.0,
+            volume: 1.0,
+        }];
+        crate::features::context::Context {
+            t: base,
+            primary: crate::data::bar::Window { bars: bars.clone() },
+            context: crate::data::bar::Window { bars },
+            news: None,
+            aux: std::collections::BTreeMap::new(),
+            sim: crate::features::context::SimState::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn overrides_change_routing_and_unknown_key_errs() {
+        let yaml = r#"
+meta: { name: t, forward_window: 2, stances: [long, flat] }
+params: { thr: 5.0 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches: [ { when: "close > thr", goto: leaf_l, label: above } ]
+    default: { goto: leaf_f, label: below }
+leaves:
+  leaf_l: { stance: long }
+  leaf_f: { stance: flat }
+"#;
+        use std::collections::BTreeMap;
+        let mut hi = BTreeMap::new();
+        hi.insert("thr".to_string(), 100.0);
+        let t_low = load_tree_str(yaml).unwrap();                    // thr=5
+        let t_hi = load_tree_str_with_overrides(yaml, &hi).unwrap(); // thr=100
+        // ctx: close=10 → thr=5 走 leaf_l, thr=100 走 leaf_f
+        let ctx = test_ctx_close10();
+        let llm = crate::eval::llm::LlmEvaluator::Disabled;
+        assert_eq!(crate::engine::traversal::traverse(&t_low, &ctx, &llm).await.unwrap().leaf, "leaf_l");
+        assert_eq!(crate::engine::traversal::traverse(&t_hi, &ctx, &llm).await.unwrap().leaf, "leaf_f");
+        // 未知键 → Err 含键名
+        let mut bad = BTreeMap::new();
+        bad.insert("nope".to_string(), 1.0);
+        let e = load_tree_str_with_overrides(yaml, &bad).unwrap_err().to_string();
+        assert!(e.contains("nope"));
     }
 }
