@@ -7,3 +7,4 @@ pub mod aux_table;
 pub mod news;
 pub mod sina;
 pub mod universe;
+pub mod tencent;
