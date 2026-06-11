@@ -7,10 +7,10 @@ use std::path::Path;
 
 const RESERVED_IDENTS: [&str; 12] =
     ["close", "open", "high", "low", "volume", "hour", "minute", "dow", "pos", "entry_price", "bars_held", "unreal_pnl"];
-const RESERVED_FNS: [&str; 20] = [
+const RESERVED_FNS: [&str; 21] = [
     "sma", "ema", "wma", "rsi", "atr", "slope", "ref", "highest", "lowest",
     "crossover", "crossunder", "macd_line", "macd_signal", "macd_hist",
-    "std", "sigmoid", "auto", "abs", "max", "min",
+    "std", "sigmoid", "auto", "abs", "max", "min", "count",
 ];
 
 fn check_name(name: &str, env: &HashMap<String, Expr>) -> Result<()> {
@@ -778,6 +778,7 @@ leaves:
         assert!(load_tree_str(&yaml("abs")).is_err());
         assert!(load_tree_str(&yaml("max")).is_err());
         assert!(load_tree_str(&yaml("min")).is_err());
+        assert!(load_tree_str(&yaml("count")).is_err());
     }
 
     #[test]
