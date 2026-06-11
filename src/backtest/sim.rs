@@ -674,6 +674,9 @@ mod tests {
         );
         assert_relative_eq!(acc.entry_price, 11.0); // 部分减仓 entry 不变
         assert_eq!(acc.pos, 0.4);
+        // 部分减仓不重置极值：max 来自加仓 bar（12），min 来自入场 bar（10）
+        assert_relative_eq!(acc.max_price_since_entry, 12.0);
+        assert_relative_eq!(acc.min_price_since_entry, 10.0);
     }
 
     #[test]
