@@ -20,7 +20,7 @@ pub async fn traverse(tree: &Tree, ctx: &Context, llm: &LlmEvaluator) -> Result<
             .ok_or_else(|| Error::Engine(format!("dangling node '{current}'")))?;
         let decision = match node {
             Node::Quant { branches, default } => eval_quant(branches, default, ctx)?,
-            Node::Llm { inputs, prompt, labels, default } => {
+            Node::Llm { inputs, prompt, labels, default, scope: _ } => {
                 let ln = LlmNode { inputs, prompt, labels, default };
                 llm.eval_llm(&current, &ln, ctx).await?
             }

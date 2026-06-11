@@ -96,6 +96,8 @@ pub enum Node {
         prompt: String,
         labels: HashMap<String, String>,
         default: String,
+        /// 缓存/求值作用域：judge 节点为 `judge:<名>`（共享判定 → 共享缓存键），内联节点 None（用节点 id）。
+        scope: Option<String>,
     },
 }
 
@@ -306,21 +308,56 @@ pub fn load_tree_str(src: &str) -> Result<Tree> {
                     },
                 );
             }
-            NodeSpec::Llm {
-                inputs,
-                prompt,
-                labels,
-                default,
-            } => {
-                nodes.insert(
-                    id.clone(),
-                    Node::Llm {
-                        inputs: inputs.clone(),
-                        prompt: prompt.clone(),
-                        labels: labels.clone(),
-                        default: default.clone(),
-                    },
-                );
+            NodeSpec::Llm { inputs, prompt, labels, judge, map, default } => {
+                let node = match judge {
+                    Some(jname) => {
+                        if !prompt.is_empty() || !labels.is_empty() || !inputs.is_empty() {
+                            return Err(Error::Tree(format!(
+                                "llm node '{id}': judge form must not also set prompt/labels/inputs"
+                            )));
+                        }
+                        let j = spec.judges.get(jname).ok_or_else(|| {
+                            Error::Tree(format!("llm node '{id}': unknown judge '{jname}'"))
+                        })?;
+                        if j.labels.is_empty() {
+                            return Err(Error::Tree(format!("judge '{jname}': labels must be non-empty")));
+                        }
+                        for k in map.keys() {
+                            if !j.labels.contains(k) {
+                                return Err(Error::Tree(format!(
+                                    "llm node '{id}': map key '{k}' not in judge '{jname}' labels"
+                                )));
+                            }
+                        }
+                        // 物化 label→goto：judge 的每个 label 都有落点（未映射 → 本节点 default）。
+                        // 物化后键集 = judge.labels，与共享同一 judge 的其它节点逐字节同渲染。
+                        let labels: HashMap<String, String> = j
+                            .labels
+                            .iter()
+                            .map(|l| (l.clone(), map.get(l).cloned().unwrap_or_else(|| default.clone())))
+                            .collect();
+                        Node::Llm {
+                            inputs: j.inputs.clone(),
+                            prompt: j.prompt.clone(),
+                            labels,
+                            default: default.clone(),
+                            scope: Some(format!("judge:{jname}")),
+                        }
+                    }
+                    None => {
+                        if !map.is_empty() {
+                            return Err(Error::Tree(format!("llm node '{id}': 'map' requires 'judge'")));
+                        }
+                        Node::Llm {
+                            inputs: inputs.clone(),
+                            prompt: prompt.clone(),
+                            labels: labels.clone(),
+                            default: default.clone(),
+                            scope: None,
+                        }
+                    }
+                };
+                nodes.insert(id.clone(), node);
             }
         }
     }
@@ -458,6 +495,102 @@ fn dfs_cycle(cur: &str, tree: &Tree, color: &mut HashMap<String, u8>) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const JUDGE_TREE: &str = r#"
+meta: { name: t, forward_window: 3, stances: [long, flat] }
+judges:
+  news_veto:
+    inputs: [news_score]
+    prompt: "消息面是否一票否决？"
+    labels: [veto, pass]
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "close > 1", goto: g1, label: up } ]
+    default: { goto: g2, label: dn }
+  g1:
+    type: llm
+    judge: news_veto
+    map: { veto: leaf_f, pass: leaf_l }
+    default: leaf_f
+  g2:
+    type: llm
+    judge: news_veto
+    map: { veto: leaf_f }
+    default: leaf_l
+leaves:
+  leaf_l: { stance: long }
+  leaf_f: { stance: flat }
+"#;
+
+    #[test]
+    fn judge_nodes_materialize_labels_and_scope() {
+        let tree = load_tree_str(JUDGE_TREE).unwrap();
+        let (g1, g2) = (tree.nodes.get("g1").unwrap(), tree.nodes.get("g2").unwrap());
+        match (g1, g2) {
+            (
+                Node::Llm { labels: l1, inputs: i1, prompt: p1, scope: s1, .. },
+                Node::Llm { labels: l2, prompt: p2, scope: s2, .. },
+            ) => {
+                // 物化：judge 的每个 label 都有落点；g2 未映射的 pass → 其 default(leaf_l)
+                assert_eq!(l1["veto"], "leaf_f");
+                assert_eq!(l1["pass"], "leaf_l");
+                assert_eq!(l2["veto"], "leaf_f");
+                assert_eq!(l2["pass"], "leaf_l");
+                // 键集一致（渲染串一致的前提）+ prompt/inputs 来自 judge + scope 一致
+                let mut k1: Vec<_> = l1.keys().collect();
+                let mut k2: Vec<_> = l2.keys().collect();
+                k1.sort(); k2.sort();
+                assert_eq!(k1, k2);
+                assert_eq!(p1, "消息面是否一票否决？");
+                assert_eq!(p2, p1);
+                assert_eq!(i1, &vec!["news_score".to_string()]);
+                assert_eq!(s1.as_deref(), Some("judge:news_veto"));
+                assert_eq!(s1, s2);
+            }
+            _ => panic!("expected llm nodes"),
+        }
+    }
+
+    #[test]
+    fn judge_validation_rejects_bad_forms() {
+        // 未知 judge
+        assert!(load_tree_str(&JUDGE_TREE.replace("judge: news_veto", "judge: nope")).is_err());
+        // judge 形式不得再带 prompt
+        assert!(load_tree_str(&JUDGE_TREE.replace(
+            "    judge: news_veto\n    map: { veto: leaf_f, pass: leaf_l }",
+            "    judge: news_veto\n    prompt: \"x\"\n    map: { veto: leaf_f, pass: leaf_l }"
+        )).is_err());
+        // map 键不在 judge labels 内
+        assert!(load_tree_str(&JUDGE_TREE.replace("map: { veto: leaf_f, pass: leaf_l }", "map: { nope: leaf_f }")).is_err());
+        // map 不带 judge（改成内联形式 + 残留 map）
+        let inline_with_map = JUDGE_TREE.replace(
+            "    judge: news_veto\n    map: { veto: leaf_f, pass: leaf_l }",
+            "    prompt: \"q\"\n    labels: { veto: leaf_f }\n    map: { veto: leaf_f }");
+        assert!(load_tree_str(&inline_with_map).is_err());
+        // judge labels 为空
+        assert!(load_tree_str(&JUDGE_TREE.replace("labels: [veto, pass]", "labels: []")).is_err());
+        // 内联形式（无 judge）完全不受影响
+        let inline = r#"
+meta: { name: t, forward_window: 3, stances: [long, flat] }
+root: g1
+nodes:
+  g1:
+    type: llm
+    prompt: "q"
+    labels: { yes: leaf_l }
+    default: leaf_f
+leaves:
+  leaf_l: { stance: long }
+  leaf_f: { stance: flat }
+"#;
+        let t = load_tree_str(inline).unwrap();
+        match t.nodes.get("g1").unwrap() {
+            Node::Llm { scope, .. } => assert!(scope.is_none()),
+            _ => panic!(),
+        }
+    }
 
     const VALID: &str = r#"
 meta: { name: t, forward_window: 3, stances: [long, flat] }

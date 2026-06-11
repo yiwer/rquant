@@ -29,7 +29,7 @@ pub async fn traverse_soft(tree: &Tree, ctx: &Context, llm: &LlmEvaluator) -> Re
             .ok_or_else(|| Error::Engine(format!("dangling node '{id}'")))?;
         let dist: Vec<(String, f64)> = match node {
             Node::Quant { branches, default } => quant_branch_dist(branches, default, ctx)?,
-            Node::Llm { inputs, prompt, labels, default } => {
+            Node::Llm { inputs, prompt, labels, default, scope: _ } => {
                 let ln = LlmNode { inputs, prompt, labels, default };
                 let (dist, _rationale) = llm.eval_llm_dist(&id, &ln, ctx).await?;
                 dist
