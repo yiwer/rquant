@@ -630,6 +630,9 @@ mod tests {
         // count(close>3,3)=2，两侧相等 → 模糊真值 0.5
         let v = eval_fuzzy(&parse_str("count(close > 3, 3) >= 2").unwrap(), &ctx, 0.02).unwrap();
         assert!((v - 0.5).abs() < 1e-9);
+        // barssince 返回 Scalar，fuzzy 路径同样可用：close<2.5 → [T,T,F,F,F] → barssince=3，两侧相等 → 0.5
+        let v2 = eval_fuzzy(&parse_str("barssince(close < 2.5) >= 3").unwrap(), &ctx, 0.02).unwrap();
+        assert!((v2 - 0.5).abs() < 1e-9);
     }
 
     #[test]
@@ -655,6 +658,9 @@ mod tests {
         assert_eq!(f("barssince(close > 4) == 3"), Value::Bool(true));
         // 当前 bar 即 true → 0
         assert_eq!(f("barssince(close > 3.5) == 0"), Value::Bool(true));
+        // 多次 true 且最近一次不在尾部：close<2.5 → [T,F,T,F,F]，最近 true 在 idx2 → 距离 2
+        // （若误用 position 从头找会得 4——本断言锁定 rposition 语义）
+        assert_eq!(f("barssince(close < 2.5) == 2"), Value::Bool(true));
         // 从未 true → NaN 弃权
         assert_eq!(f("barssince(close > 99) >= 0"), Value::Bool(false));
         // 非布尔条件 / 错参数量 → Err
