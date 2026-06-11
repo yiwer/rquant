@@ -61,6 +61,8 @@ pub fn eval(expr: &Expr, ctx: &Context) -> Result<Value> {
             "entry_price" => Ok(Value::Scalar(ctx.sim.entry_price)),
             "bars_held" => Ok(Value::Scalar(ctx.sim.bars_held as f64)),
             "unreal_pnl" => Ok(Value::Scalar(ctx.sim.unreal_pnl)),
+            "max_price_since_entry" => Ok(Value::Scalar(ctx.sim.max_price_since_entry)),
+            "min_price_since_entry" => Ok(Value::Scalar(ctx.sim.min_price_since_entry)),
             _ => Ok(Value::Series(resolve_series(name, ctx)?)),
         },
         Expr::Index(inner, k) => {
@@ -685,6 +687,28 @@ mod tests {
         assert_eq!(f("barssince(crossover(close, 2.5)) == 0"), Value::Bool(true));
         // 预热 NaN 段不产生事件：sma(close,3)=[N,N,2.0,2.67,2.33,2.67]，上穿仅 idx3、idx5 → 2
         assert_eq!(f("count(crossover(sma(close,3), 2.5), 6) == 2"), Value::Bool(true));
+    }
+
+    #[test]
+    fn position_extreme_identifiers() {
+        let mut ctx = ctx_from_closes(&[10.4]);
+        let f = |src: &str, c: &Context| eval(&parse_str(src).unwrap(), c).unwrap();
+        // 空仓默认 NaN → 弃权
+        assert_eq!(f("max_price_since_entry > 0", &ctx), Value::Bool(false));
+        assert_eq!(f("min_price_since_entry > 0", &ctx), Value::Bool(false));
+        // 注入后可见：Chandelier 形态条件可表达
+        ctx.sim = crate::features::context::SimState {
+            pos: 1.0,
+            entry_price: 10.0,
+            bars_held: 3,
+            unreal_pnl: 0.04,
+            max_price_since_entry: 11.0,
+            min_price_since_entry: 9.9,
+        };
+        assert_eq!(f("max_price_since_entry == 11", &ctx), Value::Bool(true));
+        assert_eq!(f("close < max_price_since_entry - 0.5", &ctx), Value::Bool(true));
+        // MFE 推导：(11/10 - 1) = 0.1
+        assert_eq!(f("max_price_since_entry / entry_price - 1 > 0.09", &ctx), Value::Bool(true));
     }
 
     #[test]

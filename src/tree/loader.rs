@@ -5,8 +5,11 @@ use crate::{Error, Result};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-const RESERVED_IDENTS: [&str; 12] =
-    ["close", "open", "high", "low", "volume", "hour", "minute", "dow", "pos", "entry_price", "bars_held", "unreal_pnl"];
+const RESERVED_IDENTS: [&str; 14] = [
+    "close", "open", "high", "low", "volume", "hour", "minute", "dow",
+    "pos", "entry_price", "bars_held", "unreal_pnl",
+    "max_price_since_entry", "min_price_since_entry",
+];
 const RESERVED_FNS: [&str; 22] = [
     "sma", "ema", "wma", "rsi", "atr", "slope", "ref", "highest", "lowest",
     "crossover", "crossunder", "macd_line", "macd_signal", "macd_hist",
@@ -757,6 +760,8 @@ leaves:
         assert!(load_tree_str(&yaml("entry_price")).is_err());
         assert!(load_tree_str(&yaml("bars_held")).is_err());
         assert!(load_tree_str(&yaml("unreal_pnl")).is_err());
+        assert!(load_tree_str(&yaml("max_price_since_entry")).is_err());
+        assert!(load_tree_str(&yaml("min_price_since_entry")).is_err());
     }
 
     #[test]
