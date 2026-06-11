@@ -7,9 +7,9 @@
 ## Quick Start
 
 ```bash
-# 1. 拉取 K 线
-cargo run --release -- fetch --symbol sh600000 --scale 15 --out 15m.csv
-cargo run --release -- fetch --symbol sh600000 --scale 60 --out 1h.csv
+# 1. 拉取 K 线（--adjust qfq 前复权，回测推荐）
+cargo run --release -- fetch --symbol sh600000 --scale 15 --adjust qfq --out 15m.csv
+cargo run --release -- fetch --symbol sh600000 --scale 60  --adjust qfq --out 1h.csv
 
 # 2. 回测（可选 --aux 挂载外部序列，如指数 CSV，DSL 用 aux.idx.close 引用）
 cargo run --release -- backtest \
@@ -213,9 +213,21 @@ universe CSV 格式：首行 `symbol,primary[,context]`；`symbol` 非空且唯�
 ```bash
 cargo run --release -- fetch --symbol sh600000 --scale 15 --out 15m.csv
 cargo run --release -- fetch --symbol sh600000 --scale 240 --out daily.csv  # scale=240 为日线别名
+
+# 前复权（推荐回测用）：消除除息假跳空
+cargo run --release -- fetch --symbol sh600000 --scale 240 --adjust qfq --out daily_qfq.csv
+cargo run --release -- fetch --symbol sh600000 --scale 60  --adjust qfq --out 60m_qfq.csv
 ```
 
 `--datalen` 默认 1023（新浪上限）。默认端点 `https://quotes.sina.cn/cn/api/json_v2.php`（2026-06 可用）；旧端点 `money.finance.sina.com.cn` 已不可用，可用 `--base-url` 覆盖。
+
+`--adjust qfq`：日线（scale=240）直取腾讯前复权日线；分钟线为三源合成——新浪分钟 raw × 腾讯 qfq/raw 日线因子，消除除息日假跳空。
+
+**诚实边界（前复权 qfq）**
+
+- **历史价随新除权整体重标**：前复权锚定最新交易日（因子≈1），每次重新拉取后历史价格会随新增除权事件整体下移；旧 CSV 与新 CSV 不可混用，需同批次拉取。
+- **volume 单位不统一**：腾讯日线 volume 单位为手（100 股），新浪分钟 volume 单位为股；引擎内 volume 仅作相对量使用，跨数据源横向对比绝对成交量无意义。
+- **建议**：回测一律使用 `--adjust qfq`，raw（不复权）仅用于与实时行情盘口对照。
 
 ---
 

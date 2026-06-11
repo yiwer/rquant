@@ -120,6 +120,7 @@ rquant fetch [OPTIONS]
 | `--scale <u32>` | u32 | 必填 | K 线周期（分钟）：`15`、`60`、`240`（日线别名） |
 | `--out <PATH>` | PathBuf | 必填 | 输出 CSV 路径 |
 | `--datalen <u32>` | u32 | `1023` | 最多拉取的 bar 数，新浪上限 1023 |
+| `--adjust <string>` | string | `none` | 复权方式：`none`（raw，不复权）/ `qfq`（前复权，via 腾讯日线） |
 | `--base-url <string>` | string | `https://quotes.sina.cn/cn/api/json_v2.php` | 新浪 API 端点 base URL |
 
 ### 说明
@@ -127,6 +128,16 @@ rquant fetch [OPTIONS]
 `scale=240` 是日线的新浪别名（一个交易日 = 4 × 60 分钟 = 240 分钟）。
 
 **端点说明（2026-06）**：旧端点 `money.finance.sina.com.cn` 回应"Service not valid"，当前可用端点为 `https://quotes.sina.cn/cn/api/json_v2.php`（已设为默认值）。如端点再次变更，用 `--base-url` 覆盖。
+
+**`--adjust qfq` 三源合成原理（分钟线）**：当日复权因子 = 腾讯前复权日线 close ÷ 腾讯 raw 日线 close；该因子乘到新浪分钟 OHLC 各价格上（volume 不动）。日线（scale=240）则直接从腾讯 fqkline 拉取前复权日线，不经合成。
+
+### 数据源表
+
+| 数据源 | 用途 | 说明 |
+|---|---|---|
+| 新浪 `quotes.sina.cn` | 分钟 raw OHLCV（scale < 240） | 不复权原始价格，`--adjust none` 的唯一来源 |
+| 腾讯 `web.ifzq.gtimg.cn` fqkline（`day` 键） | 日线 raw close（因子分母） | 仅在 `--adjust qfq` + 分钟线时拉取 |
+| 腾讯 `web.ifzq.gtimg.cn` fqkline（`qfqday` 键） | 日线前复权 close（因子分子）/ scale=240 直接输出 | `--adjust qfq` 的前复权来源 |
 
 ---
 
