@@ -72,6 +72,55 @@ pub fn parse_tencent_klines(json: &str, symbol: &str, adjust: &str) -> Result<Ve
     Ok(bars)
 }
 
+/// HTTP text fetch (one attempt) — shared by retry loop.
+async fn fetch_once_tencent(http: &reqwest::Client, url: &str) -> Result<String> {
+    let resp = http
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| Error::Data(format!("tencent request error: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(Error::Data(format!("tencent http status {}", resp.status())));
+    }
+    resp.text()
+        .await
+        .map_err(|e| Error::Data(format!("tencent read body: {e}")))
+}
+
+/// 拉腾讯日线（带重试，mirror sina）。
+/// end = 本地今日；start = end − ceil(datalen×1.7) 自然日（覆盖节假日空隙）。
+pub async fn fetch_tencent_daily(
+    http: &reqwest::Client,
+    base_url: &str,
+    symbol: &str,
+    datalen: u32,
+    adjust: &str,
+) -> Result<Vec<Bar>> {
+    let end = chrono::Local::now().date_naive();
+    let start = end - chrono::Days::new((datalen as f64 * 1.7).ceil() as u64);
+    let url = tencent_fqkline_url(
+        base_url,
+        symbol,
+        &start.format("%Y-%m-%d").to_string(),
+        &end.format("%Y-%m-%d").to_string(),
+        datalen,
+        adjust,
+    );
+    // 重试循环 mirror sina（3 次；解析失败/网络错误均可重试；全部失败 → Error::Data）
+    let max_retries = 2u32;
+    let mut last = String::from("no attempt");
+    for _ in 0..=max_retries {
+        match fetch_once_tencent(http, &url).await {
+            Ok(body) => match parse_tencent_klines(&body, symbol, adjust) {
+                Ok(bars) => return Ok(bars),
+                Err(e) => last = e.to_string(),
+            },
+            Err(e) => last = e.to_string(),
+        }
+    }
+    Err(Error::Data(format!("tencent fetch failed after retries: {last}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -82,6 +82,9 @@ enum Cmd {
         // 2026-06 实测：money.finance.sina.com.cn 该服务回 "Service not valid"；quotes.sina.cn 可用
         #[arg(long, default_value = "https://quotes.sina.cn/cn/api/json_v2.php")]
         base_url: String,
+        /// Price adjustment: none (raw, default) or qfq (forward-adjusted via Tencent daily)
+        #[arg(long, default_value = "none")]
+        adjust: String,
     },
     /// Render a report.json (+ optional traces/primary) into a self-contained HTML report
     Report {
@@ -188,11 +191,30 @@ pub async fn main() -> anyhow::Result<()> {
                 crate::report::print_summary(&report);
             }
         }
-        Cmd::Fetch { symbol, scale, out, datalen, base_url } => {
+        Cmd::Fetch { symbol, scale, out, datalen, base_url, adjust } => {
+            if adjust != "none" && adjust != "qfq" {
+                return Err(anyhow::anyhow!("--adjust must be 'none' or 'qfq'"));
+            }
             let http = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(30))
                 .build()?;
-            let bars = crate::data::sina::fetch_sina_klines(&http, &base_url, &symbol, scale, datalen, 2).await?;
+            let bars = if adjust == "qfq" {
+                use crate::data::tencent::{fetch_tencent_daily, TENCENT_FQKLINE_BASE};
+                if scale == 240 {
+                    fetch_tencent_daily(&http, TENCENT_FQKLINE_BASE, &symbol, datalen, "qfq").await?
+                } else {
+                    // 三源合成：因子表天数 = 分钟 bar 覆盖天数 + 30 裕量（240/scale = bars/日）
+                    let daily_len = (datalen * scale / 240 + 30).min(1023);
+                    let raw_min = crate::data::sina::fetch_sina_klines(&http, &base_url, &symbol, scale, datalen, 2).await?;
+                    let raw_d = fetch_tencent_daily(&http, TENCENT_FQKLINE_BASE, &symbol, daily_len, "").await?;
+                    let qfq_d = fetch_tencent_daily(&http, TENCENT_FQKLINE_BASE, &symbol, daily_len, "qfq").await?;
+                    let factors = crate::data::adjust::adjust_factors(&raw_d, &qfq_d)?;
+                    eprintln!("[rquant] qfq synthesis: {} factor days x {} intraday bars", factors.len(), raw_min.len());
+                    crate::data::adjust::apply_factors(&raw_min, &factors)?
+                }
+            } else {
+                crate::data::sina::fetch_sina_klines(&http, &base_url, &symbol, scale, datalen, 2).await?
+            };
             crate::data::reader::write_bars_csv(&bars, &out)?;
             println!("wrote {} bars to {}", bars.len(), out.display());
         }
