@@ -185,6 +185,9 @@ pub async fn run_portfolio(cfg: &PortfolioConfig, llm: &LlmEvaluator) -> Result<
 
     // 调仓点索引：warmup, warmup+K, warmup+2K, ... (越界即止)
     let k = cfg.rebalance;
+    if k == 0 {
+        return Err(Error::Data("rebalance must be >= 1".into()));
+    }
     let warmup = cfg.warmup;
     let rb_indices: Vec<usize> = (warmup..n).step_by(k).collect();
 
