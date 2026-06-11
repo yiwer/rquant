@@ -106,7 +106,7 @@ sha256( model \0 base_url \0 system_prompt \0 scope \0 rendered )
 
 **缓存存储**：每条记录写为一个 JSON 文件（`{key}.json`），包含 `probs`/`reason`/`model`。写入使用原子 rename（先写带 PID+计数器的临时文件，再 rename），并发写同一键安全。
 
-**自动失效**：修改 `--llm-model`、`--llm-base-url`、`system_prompt`、scope（节点 id 或 `judge:<名>`）、或 prompt / input 字段任意一项，对应缓存自动失效（键变化）。可手动删除 `.rquant-cache/` 目录清空所有缓存。
+**自动失效**：修改 `--llm-model`、`--llm-base-url`、`system_prompt`、scope（节点 id 或 `judge:<名>`）、或 prompt / input 字段任意一项，对应缓存自动失效（键变化）。可手动删除 `.rquant-cache/` 目录清空所有缓存。注意：把既有内联 llm 节点迁移为 `judge:` 引用形式会改变其 scope（节点 id → `judge:<名>`）——旧缓存条目随之失效，下次运行重新发起调用（一次性成本，正确性不受影响）。
 
 ---
 
