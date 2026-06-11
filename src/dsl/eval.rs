@@ -177,7 +177,93 @@ fn need(args: &[Value], n: usize, name: &str) -> Result<()> {
     Ok(())
 }
 
+/// 把两个 Value 调成等长数值序列对（尾对齐）：双 Series 取右端公共长度；Scalar 广播；Bool → Err。
+fn tail_align(a: &Value, b: &Value) -> Result<(Vec<f64>, Vec<f64>)> {
+    match (a, b) {
+        (Value::Series(x), Value::Series(y)) => {
+            let m = x.len().min(y.len());
+            Ok((x[x.len() - m..].to_vec(), y[y.len() - m..].to_vec()))
+        }
+        (Value::Series(x), Value::Scalar(s)) => Ok((x.clone(), vec![*s; x.len()])),
+        (Value::Scalar(s), Value::Series(y)) => Ok((vec![*s; y.len()], y.clone())),
+        (Value::Scalar(p), Value::Scalar(q)) => Ok((vec![*p], vec![*q])),
+        _ => Err(Error::Eval("expected numeric operands in condition".into())),
+    }
+}
+
+/// 布尔序列求值（count/barssince 的条件臂）：比较 → 逐位（任一侧 NaN → 该位 false），
+/// and/or/not → 逐位组合（尾对齐到公共长度），其余表达式形态 → Err。
+fn eval_bool_series(expr: &Expr, ctx: &Context) -> Result<Vec<bool>> {
+    match expr {
+        Expr::Binary(op, l, r) => match op {
+            BinaryOp::And | BinaryOp::Or => {
+                let a = eval_bool_series(l, ctx)?;
+                let b = eval_bool_series(r, ctx)?;
+                let m = a.len().min(b.len());
+                let (a, b) = (&a[a.len() - m..], &b[b.len() - m..]);
+                Ok(a.iter()
+                    .zip(b)
+                    .map(|(&x, &y)| if matches!(op, BinaryOp::And) { x && y } else { x || y })
+                    .collect())
+            }
+            BinaryOp::Gt | BinaryOp::Lt | BinaryOp::Ge | BinaryOp::Le | BinaryOp::Eq | BinaryOp::Ne => {
+                let (a, b) = tail_align(&eval(l, ctx)?, &eval(r, ctx)?)?;
+                Ok(a.iter()
+                    .zip(&b)
+                    .map(|(&x, &y)| {
+                        if x.is_nan() || y.is_nan() {
+                            return false;
+                        }
+                        match op {
+                            BinaryOp::Gt => x > y,
+                            BinaryOp::Lt => x < y,
+                            BinaryOp::Ge => x >= y,
+                            BinaryOp::Le => x <= y,
+                            BinaryOp::Eq => x == y,
+                            BinaryOp::Ne => x != y,
+                            _ => unreachable!(),
+                        }
+                    })
+                    .collect())
+            }
+            _ => Err(Error::Eval(
+                "count/barssince: condition must be a comparison or boolean combination".into(),
+            )),
+        },
+        Expr::Unary(UnaryOp::Not, e) => Ok(eval_bool_series(e, ctx)?.into_iter().map(|x| !x).collect()),
+        _ => Err(Error::Eval(
+            "count/barssince: condition must be a comparison or boolean combination".into(),
+        )),
+    }
+}
+
 fn eval_call(name: &str, args: &[Expr], ctx: &Context) -> Result<Value> {
+    // count/barssince 的条件参数必须按原始 AST 逐位求值，不能走统一参数求值（那会归约成单 Bool）
+    match name {
+        "count" => {
+            if args.len() != 2 {
+                return Err(Error::Eval(format!("count expects 2 args, got {}", args.len())));
+            }
+            let cond = eval_bool_series(&args[0], ctx)?;
+            let n = as_usize(&eval(&args[1], ctx)?)?;
+            if n == 0 || cond.len() < n {
+                return Ok(Value::Scalar(f64::NAN)); // 窗口不足 → 弃权
+            }
+            return Ok(Value::Scalar(cond[cond.len() - n..].iter().filter(|&&b| b).count() as f64));
+        }
+        "barssince" => {
+            if args.len() != 1 {
+                return Err(Error::Eval(format!("barssince expects 1 arg, got {}", args.len())));
+            }
+            let cond = eval_bool_series(&args[0], ctx)?;
+            return Ok(Value::Scalar(match cond.iter().rposition(|&b| b) {
+                Some(j) => (cond.len() - 1 - j) as f64,
+                None => f64::NAN, // 可见窗口内从未触发 → 弃权
+            }));
+        }
+        _ => {}
+    }
+
     let vals: Result<Vec<Value>> = args.iter().map(|a| eval(a, ctx)).collect();
     let vals = vals?;
     match name {
@@ -490,5 +576,34 @@ mod tests {
         ctx.sim = crate::features::context::SimState { pos: 0.5, entry_price: 10.0, bars_held: 3, unreal_pnl: -0.02 };
         assert_eq!(f("pos > 0 and bars_held >= 3", &ctx), Value::Bool(true));
         assert_eq!(f("unreal_pnl < -0.01 and entry_price == 10", &ctx), Value::Bool(true));
+    }
+
+    #[test]
+    fn barssince_last_true_distance() {
+        let ctx = ctx_from_closes(&[1.0, 5.0, 2.0, 3.0, 4.0]);
+        let f = |src: &str| eval(&parse_str(src).unwrap(), &ctx).unwrap();
+        // close>4 仅在 idx1（5.0）为 true → 距末位 3 根
+        assert_eq!(f("barssince(close > 4) == 3"), Value::Bool(true));
+        // 当前 bar 即 true → 0
+        assert_eq!(f("barssince(close > 3.5) == 0"), Value::Bool(true));
+        // 多次 true 且最近一次不在尾部：close<2.5 → [T,F,T,F,F]，最近 true 在 idx2 → 距离 2
+        // （若误用 position 从头找会得 4——本断言锁定 rposition 语义）
+        assert_eq!(f("barssince(close < 2.5) == 2"), Value::Bool(true));
+        // 从未 true → NaN 弃权
+        assert_eq!(f("barssince(close > 99) >= 0"), Value::Bool(false));
+        // 非布尔条件 / 错参数量 → Err
+        assert!(eval(&parse_str("barssince(close)").unwrap(), &ctx).is_err());
+        assert!(eval(&parse_str("barssince(close > 0, 1)").unwrap(), &ctx).is_err());
+    }
+
+    #[test]
+    fn count_works_in_fuzzy_strength() {
+        let ctx = ctx_from_closes(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+        // count(close>3,3)=2，两侧相等 → 模糊真值 0.5
+        let v = eval_fuzzy(&parse_str("count(close > 3, 3) >= 2").unwrap(), &ctx, 0.02).unwrap();
+        assert!((v - 0.5).abs() < 1e-9);
+        // barssince 返回 Scalar，fuzzy 路径同样可用：barssince=3，两侧相等 → 0.5
+        let v2 = eval_fuzzy(&parse_str("barssince(close < 2.5) >= 3").unwrap(), &ctx, 0.02).unwrap();
+        assert!((v2 - 0.5).abs() < 1e-9);
     }
 }
