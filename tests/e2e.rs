@@ -1652,11 +1652,11 @@ fn make_single_cfg(
 // F-9 T5 — signal_two_day_paper_flow:
 // 合成 32-bar 上行数据 (4 days × 8 bars)，cut 前 16 bars 作"第一天"前缀。
 // Step A: 第一天（16 bar 前缀）→ state_day1（bars_replayed=10，i=5..14）
-// Step B: --commit → write_paper_state → 再跑全量 → state_full2（bars_replayed=15，i=15..30）
+// Step B: --commit → write_paper_state → 再跑全量 → state_full2（bars_replayed=16，i=15..=30）
 // split==full 不变量：全量 fresh state_full 与 split 后的 state_full2 的 serde_json::Value 相等。
-// 精确断言：第二跑 bars_replayed == 15（硬算：warmup=5, 全量 len=32, day-1 prefix len=16;
+// 精确断言：第二跑 bars_replayed == 16（硬算：warmup=5, 全量 len=32, day-1 prefix len=16;
 //   day-1 可记账 bar: i=5..14 共 10 根（state day1 last_time = bar[14].time）;
-//   day-2 增量: i=15..30 共 15 根 → bars_replayed_2 = 15）。
+//   day-2 增量: i=15..=30 共 16 根 → bars_replayed_2 = 16）。
 #[tokio::test]
 async fn signal_two_day_paper_flow() {
     let tree_f = write_file(&signal_enter_hold_exit_tree(), ".yaml");
@@ -1868,8 +1868,8 @@ fn signal_cli_mutex() {
     );
     let stderr1 = String::from_utf8_lossy(&out1.stderr);
     assert!(
-        stderr1.contains("primary") || stderr1.contains("universe"),
-        "stderr must mention 'primary' or 'universe' in mutex error, got: {stderr1}"
+        stderr1.contains("exactly one of"),
+        "stderr must contain 'exactly one of' error message, got: {stderr1}"
     );
 
     // ── case 2: --universe + --fetch → fetch requires --primary error ────
@@ -1893,9 +1893,8 @@ fn signal_cli_mutex() {
         "signal --universe + --fetch must exit non-zero"
     );
     let stderr2 = String::from_utf8_lossy(&out2.stderr);
-    // Either "exactly one" mutex error (primary missing) or "--fetch requires --primary"
     assert!(
-        stderr2.contains("primary") || stderr2.contains("fetch") || stderr2.contains("universe"),
-        "stderr must mention relevant flags in error, got: {stderr2}"
+        stderr2.contains("--fetch requires --primary"),
+        "stderr must contain '--fetch requires --primary' error message, got: {stderr2}"
     );
 }
