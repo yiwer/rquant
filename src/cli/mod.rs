@@ -4,6 +4,12 @@ use crate::eval::llm::client::OpenAiLlm;
 use crate::eval::llm::{LlmConfig, LlmEvaluator};
 use crate::factor::{FactorConfig, FactorSpecItem, run_factor, print_factor_summary};
 use crate::optimize::{OptimizeConfig, print_optimize_summary, run_optimize};
+use crate::signal::{
+    SignalSingleConfig, SignalPortfolioConfig,
+    run_signal_single, run_signal_portfolio,
+    write_paper_state, write_holdings_state,
+    print_single_signal, print_portfolio_signal,
+};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -11,6 +17,9 @@ use std::path::PathBuf;
 pub(crate) fn llm_enabled(model: &str, base_url: &str, api_key: &str) -> bool {
     !model.is_empty() && !base_url.is_empty() && !api_key.is_empty()
 }
+
+// 2026-06 实测：money.finance.sina.com.cn 该服务回 "Service not valid"；quotes.sina.cn 可用
+pub(crate) const SINA_BASE_URL: &str = "https://quotes.sina.cn/cn/api/json_v2.php";
 
 #[derive(Parser)]
 #[command(name = "rquant", about = "Fuzzy decision-tree A-share backtester")]
@@ -81,12 +90,66 @@ enum Cmd {
         #[arg(long, default_value_t = 1023)]
         datalen: u32,
         /// Override the Sina endpoint base URL
-        // 2026-06 实测：money.finance.sina.com.cn 该服务回 "Service not valid"；quotes.sina.cn 可用
-        #[arg(long, default_value = "https://quotes.sina.cn/cn/api/json_v2.php")]
+        #[arg(long, default_value = SINA_BASE_URL)]
         base_url: String,
         /// Price adjustment: none (raw, default) or qfq (forward-adjusted via Tencent daily)
         #[arg(long, default_value = "none")]
         adjust: String,
+    },
+    /// Generate today's trading signal (single-symbol paper-sim or portfolio target list)
+    Signal {
+        /// Decision tree YAML file path
+        #[arg(long)]
+        tree: PathBuf,
+        /// Paper state JSON path (read/write; created fresh if absent)
+        #[arg(long)]
+        state: PathBuf,
+        /// Primary K-line CSV path (single mode)
+        #[arg(long)]
+        primary: Option<PathBuf>,
+        /// Context bars CSV path (single mode; defaults to --primary if omitted)
+        #[arg(long)]
+        context: Option<PathBuf>,
+        /// News CSV path (optional; for LLM nodes)
+        #[arg(long)]
+        news: Option<PathBuf>,
+        /// Universe CSV path (portfolio mode; mutually exclusive with --primary)
+        #[arg(long)]
+        universe: Option<PathBuf>,
+        /// Number of top symbols to hold (portfolio mode)
+        #[arg(long, default_value_t = 5)]
+        top: usize,
+        /// Optional: refresh --primary from network first (single mode only)
+        #[arg(long)]
+        fetch: Option<String>,
+        #[arg(long, default_value_t = 60)]
+        scale: u32,
+        #[arg(long, default_value_t = 1023)]
+        datalen: u32,
+        #[arg(long, default_value = "none")]
+        adjust: String,
+        #[arg(long, default_value_t = false)]
+        soft: bool,
+        /// Commit signal to state file (dry-run if omitted)
+        #[arg(long, default_value_t = false)]
+        commit: bool,
+        /// Optional: write signal JSON to this file
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[arg(long, default_value_t = 100)]
+        warmup: usize,
+        #[arg(long, default_value_t = 100)]
+        window: usize,
+        #[arg(long, default_value_t = 10.0)]
+        cost_bps: f64,
+        #[arg(long = "aux", value_name = "NAME=PATH")]
+        aux: Vec<String>,
+        #[arg(long, default_value = "")]
+        llm_model: String,
+        #[arg(long, default_value = "")]
+        llm_base_url: String,
+        #[arg(long, default_value = ".rquant-cache/llm")]
+        llm_cache_dir: PathBuf,
     },
     /// Render a report.json (+ optional traces/primary) into a self-contained HTML report
     Report {
@@ -199,6 +262,43 @@ enum Cmd {
         #[arg(long, default_value = ".rquant-cache/llm")]
         llm_cache_dir: PathBuf,
     },
+}
+
+/// Fetch K-line bars from Sina and write to a CSV file.
+/// Returns the number of bars written. Prints no output itself (caller prints).
+pub(crate) async fn run_fetch_to_csv(
+    symbol: &str,
+    scale: u32,
+    datalen: u32,
+    base_url: &str,
+    adjust: &str,
+    out: &std::path::Path,
+) -> anyhow::Result<usize> {
+    if adjust != "none" && adjust != "qfq" {
+        return Err(anyhow::anyhow!("--adjust must be 'none' or 'qfq'"));
+    }
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()?;
+    let bars = if adjust == "qfq" {
+        use crate::data::tencent::{fetch_tencent_daily, TENCENT_FQKLINE_BASE};
+        if scale == 240 {
+            fetch_tencent_daily(&http, TENCENT_FQKLINE_BASE, symbol, datalen, "qfq").await?
+        } else {
+            // 三源合成：因子表天数 = 分钟 bar 覆盖天数 + 30 裕量（240/scale = bars/日）
+            let daily_len = (datalen * scale / 240 + 30).min(1023);
+            let raw_min = crate::data::sina::fetch_sina_klines(&http, base_url, symbol, scale, datalen, 2).await?;
+            let raw_d = fetch_tencent_daily(&http, TENCENT_FQKLINE_BASE, symbol, daily_len, "").await?;
+            let qfq_d = fetch_tencent_daily(&http, TENCENT_FQKLINE_BASE, symbol, daily_len, "qfq").await?;
+            let factors = crate::data::adjust::adjust_factors(&raw_d, &qfq_d)?;
+            eprintln!("[rquant] qfq synthesis: {} factor days x {} intraday bars", factors.len(), raw_min.len());
+            crate::data::adjust::apply_factors(&raw_min, &factors)?
+        }
+    } else {
+        crate::data::sina::fetch_sina_klines(&http, base_url, symbol, scale, datalen, 2).await?
+    };
+    crate::data::reader::write_bars_csv(&bars, out)?;
+    Ok(bars.len())
 }
 
 #[tokio::main]
@@ -353,31 +453,122 @@ pub async fn main() -> anyhow::Result<()> {
             }
         }
         Cmd::Fetch { symbol, scale, out, datalen, base_url, adjust } => {
-            if adjust != "none" && adjust != "qfq" {
-                return Err(anyhow::anyhow!("--adjust must be 'none' or 'qfq'"));
+            let n = run_fetch_to_csv(&symbol, scale, datalen, &base_url, &adjust, &out).await?;
+            println!("wrote {} bars to {}", n, out.display());
+        }
+        Cmd::Signal {
+            tree, state, primary, context, news, universe, top,
+            fetch, scale, datalen, adjust, soft, commit, out,
+            warmup, window, cost_bps, aux, llm_model, llm_base_url, llm_cache_dir,
+        } => {
+            // ── mode mutex check ──────────────────────────────────────────────
+            if primary.is_some() == universe.is_some() {
+                return Err(anyhow::anyhow!(
+                    "exactly one of --primary or --universe is required"
+                ));
             }
-            let http = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .build()?;
-            let bars = if adjust == "qfq" {
-                use crate::data::tencent::{fetch_tencent_daily, TENCENT_FQKLINE_BASE};
-                if scale == 240 {
-                    fetch_tencent_daily(&http, TENCENT_FQKLINE_BASE, &symbol, datalen, "qfq").await?
+            if fetch.is_some() && primary.is_none() {
+                return Err(anyhow::anyhow!(
+                    "--fetch requires --primary (single-symbol mode only)"
+                ));
+            }
+
+            // ── optional pre-fetch ─────────────────────────────────────────────
+            if let Some(ref sym) = fetch {
+                let primary_path = primary.as_ref().unwrap();
+                let n = run_fetch_to_csv(sym, scale, datalen, SINA_BASE_URL, &adjust, primary_path).await?;
+                println!("fetched {} bars for {} → {}", n, sym, primary_path.display());
+            }
+
+            // ── LLM setup ─────────────────────────────────────────────────────
+            let api_key = std::env::var("RQUANT_LLM_API_KEY").unwrap_or_default();
+            let llm = if llm_enabled(&llm_model, &llm_base_url, &api_key) {
+                let cfg = LlmConfig {
+                    base_url: llm_base_url,
+                    api_key,
+                    model: llm_model,
+                    timeout_secs: 60,
+                    max_retries: 2,
+                    cache_dir: llm_cache_dir,
+                };
+                LlmEvaluator::OpenAi(OpenAiLlm::new(cfg)?)
+            } else {
+                eprintln!("[rquant] LLM not configured (need --llm-model, --llm-base-url, env RQUANT_LLM_API_KEY); LLM nodes will take their default branch.");
+                LlmEvaluator::Disabled
+            };
+
+            // ── aux parse ─────────────────────────────────────────────────────
+            let mut aux_paths: Vec<(String, PathBuf)> = Vec::new();
+            for spec in &aux {
+                let (n, p) = spec
+                    .split_once('=')
+                    .ok_or_else(|| anyhow::anyhow!("--aux expects NAME=PATH, got '{spec}'"))?;
+                if aux_paths.iter().any(|(en, _)| en == n) {
+                    return Err(anyhow::anyhow!("duplicate --aux name '{n}'"));
+                }
+                aux_paths.push((n.to_string(), PathBuf::from(p)));
+            }
+
+            if let Some(primary_path) = primary {
+                // ── single-symbol mode ────────────────────────────────────────
+                let context_path = context.unwrap_or_else(|| primary_path.clone());
+                let cfg = SignalSingleConfig {
+                    tree_path: tree,
+                    primary_path,
+                    context_path,
+                    news_path: news,
+                    aux_paths,
+                    window,
+                    warmup,
+                    cost_bps,
+                    soft,
+                    state_path: state.clone(),
+                };
+                let (sig, new_state) = run_signal_single(&cfg, &llm).await?;
+                print_single_signal(&sig);
+
+                if let Some(ref out_path) = out {
+                    let json = serde_json::to_string_pretty(&sig)?;
+                    std::fs::write(out_path, &json)?;
+                    println!("wrote signal JSON to {}", out_path.display());
+                }
+
+                if commit {
+                    write_paper_state(&state, &new_state)?;
+                    println!("committed state to {}", state.display());
                 } else {
-                    // 三源合成：因子表天数 = 分钟 bar 覆盖天数 + 30 裕量（240/scale = bars/日）
-                    let daily_len = (datalen * scale / 240 + 30).min(1023);
-                    let raw_min = crate::data::sina::fetch_sina_klines(&http, &base_url, &symbol, scale, datalen, 2).await?;
-                    let raw_d = fetch_tencent_daily(&http, TENCENT_FQKLINE_BASE, &symbol, daily_len, "").await?;
-                    let qfq_d = fetch_tencent_daily(&http, TENCENT_FQKLINE_BASE, &symbol, daily_len, "qfq").await?;
-                    let factors = crate::data::adjust::adjust_factors(&raw_d, &qfq_d)?;
-                    eprintln!("[rquant] qfq synthesis: {} factor days x {} intraday bars", factors.len(), raw_min.len());
-                    crate::data::adjust::apply_factors(&raw_min, &factors)?
+                    println!("[DRY RUN] 未落盘 state；加 --commit 提交");
                 }
             } else {
-                crate::data::sina::fetch_sina_klines(&http, &base_url, &symbol, scale, datalen, 2).await?
-            };
-            crate::data::reader::write_bars_csv(&bars, &out)?;
-            println!("wrote {} bars to {}", bars.len(), out.display());
+                // ── portfolio mode ────────────────────────────────────────────
+                let universe_path = universe.unwrap();
+                let cfg = SignalPortfolioConfig {
+                    tree_path: tree,
+                    universe_path,
+                    top,
+                    window,
+                    warmup,
+                    cost_bps,
+                    soft,
+                    aux_paths,
+                    state_path: state.clone(),
+                };
+                let (sig, new_state) = run_signal_portfolio(&cfg, &llm).await?;
+                print_portfolio_signal(&sig);
+
+                if let Some(ref out_path) = out {
+                    let json = serde_json::to_string_pretty(&sig)?;
+                    std::fs::write(out_path, &json)?;
+                    println!("wrote signal JSON to {}", out_path.display());
+                }
+
+                if commit {
+                    write_holdings_state(&state, &new_state)?;
+                    println!("committed state to {}", state.display());
+                } else {
+                    println!("[DRY RUN] 未落盘 state；加 --commit 提交");
+                }
+            }
         }
         Cmd::Report { report, out, traces, primary, soft, sim, portfolio } => {
             let picked = [soft, sim, portfolio].iter().filter(|b| **b).count();

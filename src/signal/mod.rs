@@ -629,6 +629,51 @@ pub async fn run_signal_portfolio(
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Print 函数
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// 打印单标的信号摘要（中文标签，参照 print_sim_summary 风格）。
+pub fn print_single_signal(sig: &SingleSignal) {
+    println!("=== rquant SIGNAL (single) @ {} ===", sig.t);
+    let leaf_suffix = match &sig.leaf {
+        Some(id) => format!(" (叶 {})", id),
+        None => String::new(),
+    };
+    println!(
+        "目标仓位: {:.2}   当前: {:.2}   Δ: {:+.2}",
+        sig.target, sig.current_pos, sig.delta
+    );
+    println!("reason: {}{}", sig.reason, leaf_suffix);
+    println!(
+        "纸面账户: nav {:.4}  总收益 {:+.2}%  回撤 {:.2}%  本次重放 {} bar",
+        sig.paper.nav,
+        sig.paper.total_return * 100.0,
+        sig.paper.max_drawdown * 100.0,
+        sig.paper.bars_replayed,
+    );
+}
+
+/// 打印组合信号摘要（中文标签，参照 print_sim_summary 风格）。
+pub fn print_portfolio_signal(sig: &PortfolioSignal) {
+    println!("=== rquant SIGNAL (portfolio) @ {} ===", sig.t);
+    println!("目标组合（{}只）:", sig.targets.len());
+    for (symbol, weight) in &sig.targets {
+        println!("  {}  {:.4}", symbol, weight);
+    }
+    println!("交易清单（{}条）:", sig.trades.len());
+    for t in &sig.trades {
+        let action_str = match t.action {
+            TradeAction::Buy    => "BUY   ",
+            TradeAction::Sell   => "SELL  ",
+            TradeAction::Adjust => "ADJUST",
+            TradeAction::Hold   => "HOLD  ",
+        };
+        println!("  {}  {}  {:.2} → {:.2}", action_str, t.symbol, t.from_w, t.to_w);
+    }
+    println!("新鲜标的数: {}", sig.n_fresh);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // 测试
 // ──────────────────────────────────────────────────────────────────────────────
 
