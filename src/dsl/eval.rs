@@ -326,10 +326,7 @@ fn eval_call(name: &str, args: &[Expr], ctx: &Context) -> Result<Value> {
                 n,
             )))
         }
-        "slope" => {
-            need(&vals, 2, name)?;
-            Ok(Value::Scalar(indicators::slope(&as_series(&vals[0])?, as_usize(&vals[1])?)))
-        }
+        "slope" => { need(&vals, 2, name)?; Ok(Value::Series(indicators::slope_roll(&as_series(&vals[0])?, as_usize(&vals[1])?))) }
         "ref" => {
             need(&vals, 2, name)?;
             let s = as_series(&vals[0])?;
@@ -337,14 +334,8 @@ fn eval_call(name: &str, args: &[Expr], ctx: &Context) -> Result<Value> {
             let end = s.len().saturating_sub(k);
             Ok(Value::Series(s[..end].to_vec()))
         }
-        "highest" => {
-            need(&vals, 2, name)?;
-            Ok(Value::Scalar(indicators::highest(&as_series(&vals[0])?, as_usize(&vals[1])?)))
-        }
-        "lowest" => {
-            need(&vals, 2, name)?;
-            Ok(Value::Scalar(indicators::lowest(&as_series(&vals[0])?, as_usize(&vals[1])?)))
-        }
+        "highest" => { need(&vals, 2, name)?; Ok(Value::Series(indicators::highest_roll(&as_series(&vals[0])?, as_usize(&vals[1])?))) }
+        "lowest"  => { need(&vals, 2, name)?; Ok(Value::Series(indicators::lowest_roll(&as_series(&vals[0])?, as_usize(&vals[1])?))) }
         "crossover" => {
             need(&vals, 2, name)?;
             Ok(Value::Bool(indicators::crossover(&as_series(&vals[0])?, &as_series(&vals[1])?)))
@@ -356,7 +347,7 @@ fn eval_call(name: &str, args: &[Expr], ctx: &Context) -> Result<Value> {
         "macd_line" => { need(&vals, 3, name)?; Ok(Value::Series(indicators::macd_line(&as_series(&vals[0])?, as_usize(&vals[1])?, as_usize(&vals[2])?))) }
         "macd_signal" => { need(&vals, 4, name)?; Ok(Value::Series(indicators::macd_signal(&as_series(&vals[0])?, as_usize(&vals[1])?, as_usize(&vals[2])?, as_usize(&vals[3])?))) }
         "macd_hist" => { need(&vals, 4, name)?; Ok(Value::Series(indicators::macd_hist(&as_series(&vals[0])?, as_usize(&vals[1])?, as_usize(&vals[2])?, as_usize(&vals[3])?))) }
-        "std" => { need(&vals, 2, name)?; Ok(Value::Scalar(indicators::std(&as_series(&vals[0])?, as_usize(&vals[1])?))) }
+        "std"     => { need(&vals, 2, name)?; Ok(Value::Series(indicators::std_roll(&as_series(&vals[0])?, as_usize(&vals[1])?))) }
         "sigmoid" => {
             need(&vals, 1, name)?;
             Ok(Value::Scalar(1.0 / (1.0 + (-as_scalar(&vals[0])?).exp())))
@@ -436,9 +427,16 @@ mod tests {
 
     #[test]
     fn slope_of_series_is_scalar() {
+        // Task1 后 slope 返回 Series；标量上下文取末位，等价不变
         let ctx = ctx_from_closes(&[1.0, 2.0, 3.0, 4.0, 5.0]);
         let e = parse_str("slope(close,5)").unwrap();
-        assert_eq!(eval(&e, &ctx).unwrap(), Value::Scalar(1.0));
+        // 直接 eval 返回 Series，末位值为 1.0（等差斜率）
+        match eval(&e, &ctx).unwrap() {
+            Value::Series(s) => assert!((s.last().copied().unwrap() - 1.0).abs() < 1e-9),
+            other => panic!("expected Series, got {other:?}"),
+        }
+        // 标量上下文（比较）仍正常工作
+        assert_eq!(eval(&parse_str("slope(close,5) > 0.9").unwrap(), &ctx).unwrap(), Value::Bool(true));
     }
 
     #[test]
@@ -452,9 +450,10 @@ mod tests {
     fn wma_std_macd_eval() {
         let ctx = ctx_from_closes(&[1.0, 2.0, 3.0, 4.0, 5.0]);
         assert_eq!(eval(&parse_str("wma(close,3) > 0").unwrap(), &ctx).unwrap(), Value::Bool(true));
+        // Task1 后 std 返回 Series；末位值仍是 sqrt(2)（总体标准差，等价不变）
         match eval(&parse_str("std(close,5)").unwrap(), &ctx).unwrap() {
-            Value::Scalar(x) => assert!((x - 2.0_f64.sqrt()).abs() < 1e-9),
-            other => panic!("expected scalar, got {other:?}"),
+            Value::Series(s) => assert!((s.last().copied().unwrap() - 2.0_f64.sqrt()).abs() < 1e-9),
+            other => panic!("expected Series, got {other:?}"),
         }
         assert_eq!(eval(&parse_str("macd_line(close,3,5) > -1000.0").unwrap(), &ctx).unwrap(), Value::Bool(true));
         assert_eq!(eval(&parse_str("macd_hist(close,3,5,2) > -1000.0").unwrap(), &ctx).unwrap(), Value::Bool(true));
@@ -666,8 +665,9 @@ mod tests {
         // 序列不足 n → NaN 弃权（所有比较 false）
         assert_eq!(f("count(close > 0, 99) > 0"), Value::Bool(false));
         assert_eq!(f("count(close > 0, 99) == count(close > 0, 99)"), Value::Bool(false));
-        // 双标量条件 → 长度 1 布尔序列 → n>1 时弃权（语义锁定）
-        assert_eq!(f("count(highest(close,3) > lowest(close,3), 5) > 0"), Value::Bool(false));
+        // Task1 滚动统一后：highest/lowest 在逐位条件中是滚动序列（不再是双标量弃权）。
+        // fixture [1..5]：hi3=[1,2,3,4,5] vs lo3=[1,1,1,2,3] → 逐位 > = [F,T,T,T,T] → count=4
+        assert_eq!(f("count(highest(close,3) > lowest(close,3), 5) == 4"), Value::Bool(true));
         // 条件不是布尔表达式 → Err
         assert!(eval(&parse_str("count(close, 3)").unwrap(), &ctx).is_err());
         // 错参数量 → Err
@@ -754,5 +754,18 @@ mod tests {
         // 非布尔条件 / 错参数量 → Err
         assert!(eval(&parse_str("barssince(close)").unwrap(), &ctx).is_err());
         assert!(eval(&parse_str("barssince(close > 0, 1)").unwrap(), &ctx).is_err());
+    }
+
+    #[test]
+    fn rolling_forms_unlock_elementwise_conditions() {
+        let ctx = ctx_from_closes(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+        let f = |src: &str| eval(&parse_str(src).unwrap(), &ctx).unwrap();
+        // highest_roll(close,2)=[1,2,3,4,5]（宽容头），close >= 它 ⇒ 逐位全真（创新高序列）
+        assert_eq!(f("count(close >= highest(close, 2), 5) == 5"), Value::Bool(true));
+        // barssince + 滚动 highest：最近一次创 2 根新高就在当前 bar
+        assert_eq!(f("barssince(close >= highest(close, 2)) == 0"), Value::Bool(true));
+        // 标量上下文不变：highest(close,3) 仍按末位取值 = 5
+        assert_eq!(f("highest(close, 3) == 5"), Value::Bool(true));
+        assert_eq!(f("slope(close, 5) > 0.9 and slope(close, 5) < 1.1"), Value::Bool(true));
     }
 }

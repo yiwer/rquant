@@ -135,6 +135,78 @@ pub fn lowest(s: &[f64], n: usize) -> f64 {
     if m == f64::INFINITY { f64::NAN } else { m }
 }
 
+/// highest 的滚动序列版：位 j = 窗口 [max(0,j+1−n)..=j] 的 NaN 跳过最大值。
+/// 头部为宽容扩张窗（与标量版 len<n 语义一致）；全 NaN 窗 → NaN。
+pub fn highest_roll(s: &[f64], n: usize) -> Vec<f64> {
+    let mut out = vec![f64::NAN; s.len()];
+    if n == 0 {
+        return out;
+    }
+    for j in 0..s.len() {
+        let start = (j + 1).saturating_sub(n);
+        let m = s[start..=j].iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        out[j] = if m == f64::NEG_INFINITY { f64::NAN } else { m };
+    }
+    out
+}
+
+/// lowest 的滚动序列版（语义镜像 highest_roll）。
+pub fn lowest_roll(s: &[f64], n: usize) -> Vec<f64> {
+    let mut out = vec![f64::NAN; s.len()];
+    if n == 0 {
+        return out;
+    }
+    for j in 0..s.len() {
+        let start = (j + 1).saturating_sub(n);
+        let m = s[start..=j].iter().copied().fold(f64::INFINITY, f64::min);
+        out[j] = if m == f64::INFINITY { f64::NAN } else { m };
+    }
+    out
+}
+
+/// std 的滚动序列版：位 j+1<n → NaN（严格头，镜像标量版 len<n → NaN）；窗含 NaN → NaN 传播。
+pub fn std_roll(s: &[f64], n: usize) -> Vec<f64> {
+    let mut out = vec![f64::NAN; s.len()];
+    if n == 0 {
+        return out;
+    }
+    for j in 0..s.len() {
+        if j + 1 < n {
+            continue;
+        }
+        let w = &s[j + 1 - n..=j];
+        let mean = w.iter().sum::<f64>() / n as f64;
+        let var = w.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n as f64;
+        out[j] = var.sqrt();
+    }
+    out
+}
+
+/// slope 的滚动序列版：OLS 斜率逐位；n<2 或 j+1<n → NaN（严格头）。
+pub fn slope_roll(s: &[f64], n: usize) -> Vec<f64> {
+    let mut out = vec![f64::NAN; s.len()];
+    if n < 2 {
+        return out;
+    }
+    for j in 0..s.len() {
+        if j + 1 < n {
+            continue;
+        }
+        let w = &s[j + 1 - n..=j];
+        let nf = n as f64;
+        let mean_x = (nf - 1.0) / 2.0;
+        let mean_y = w.iter().sum::<f64>() / nf;
+        let (mut num, mut den) = (0.0, 0.0);
+        for (i, &y) in w.iter().enumerate() {
+            let dx = i as f64 - mean_x;
+            num += dx * (y - mean_y);
+            den += dx * dx;
+        }
+        out[j] = if den == 0.0 { f64::NAN } else { num / den };
+    }
+    out
+}
+
 /// a 上穿 b：上一根 a<=b 且本根 a>b。
 pub fn crossover(a: &[f64], b: &[f64]) -> bool {
     let (la, lb) = (a.len(), b.len());
@@ -297,5 +369,48 @@ mod tests {
         assert!(macd_line(&s, 12, 26).last().unwrap().abs() < 1e-9);
         assert!(macd_signal(&s, 12, 26, 9).last().unwrap().abs() < 1e-9);
         assert!(macd_hist(&s, 12, 26, 9).last().unwrap().abs() < 1e-9);
+    }
+
+    /// 滚动版末位 == 旧标量版（含 len<n 的宽容/严格差异），NaN 位用 bits 比较。
+    #[test]
+    fn roll_last_equals_scalar_form() {
+        let s = [3.0, f64::NAN, 5.0, 1.0, 4.0, 2.0];
+        for n in [1usize, 3, 6, 99] {
+            for len in 1..=s.len() {
+                let w = &s[..len];
+                let pairs: [(f64, f64); 4] = [
+                    (*highest_roll(w, n).last().unwrap(), highest(w, n)),
+                    (*lowest_roll(w, n).last().unwrap(), lowest(w, n)),
+                    (*std_roll(w, n).last().unwrap(), std(w, n)),
+                    (*slope_roll(w, n).last().unwrap(), slope(w, n)),
+                ];
+                for (i, (r, sc)) in pairs.iter().enumerate() {
+                    assert!(
+                        r.to_bits() == sc.to_bits() || (r.is_nan() && sc.is_nan()),
+                        "fn#{i} n={n} len={len}: roll last {r} != scalar {sc}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn highest_roll_head_is_expanding_window() {
+        // 宽容头部：j<n-1 时窗口为 [0..=j]（运行最值），与标量版短序列语义一致
+        let s = [2.0, 5.0, 1.0, 4.0];
+        assert_eq!(highest_roll(&s, 3), vec![2.0, 5.0, 5.0, 5.0]);
+        assert_eq!(lowest_roll(&s, 3), vec![2.0, 2.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn std_slope_roll_head_is_nan_prefix() {
+        // 严格头部：j+1<n → NaN（镜像标量版 len<n → NaN）
+        let s = [1.0, 2.0, 3.0, 4.0];
+        let sd = std_roll(&s, 3);
+        assert!(sd[0].is_nan() && sd[1].is_nan());
+        assert!((sd[2] - std(&s[..3], 3)).abs() < 1e-12);
+        let sl = slope_roll(&s, 3);
+        assert!(sl[0].is_nan() && sl[1].is_nan());
+        assert!((sl[3] - 1.0).abs() < 1e-12); // 等差数列斜率=1
     }
 }
