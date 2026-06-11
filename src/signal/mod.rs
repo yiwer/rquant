@@ -182,6 +182,35 @@ async fn compute_tree_target(
     }
 }
 
+/// 风控覆盖（stop→tp→max_hold）优先，否则树目标。重放与悬挂决策共用，保证两径同口径。
+/// 返回 `(target, reason, leaf_id)`；风控触发时 leaf 为 None。
+async fn resolve_target(
+    acc: &SimAccount,
+    tree: &crate::tree::loader::Tree,
+    ctx: &crate::features::context::Context,
+    llm: &LlmEvaluator,
+    unreal_pnl: f64,
+    soft: bool,
+) -> Result<(f64, &'static str, Option<String>)> {
+    if acc.pos.abs() > EPS {
+        if let Some(risk) = &tree.risk {
+            if risk.stop_loss.is_some_and(|sl| unreal_pnl <= -sl) {
+                Ok((0.0, "stop", None))
+            } else if risk.take_profit.is_some_and(|tp| unreal_pnl >= tp) {
+                Ok((0.0, "tp", None))
+            } else if risk.max_hold_bars.is_some_and(|mh| acc.bars_held >= mh) {
+                Ok((0.0, "max_hold", None))
+            } else {
+                compute_tree_target(tree, ctx, llm, soft).await
+            }
+        } else {
+            compute_tree_target(tree, ctx, llm, soft).await
+        }
+    } else {
+        compute_tree_target(tree, ctx, llm, soft).await
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // 主函数
 // ──────────────────────────────────────────────────────────────────────────────
@@ -265,26 +294,7 @@ pub async fn run_signal_single(
         };
 
         // 风控覆盖（spec §3.2）：pos≠0 时按 stop→tp→max_hold 顺序检查
-        let (target, reason): (f64, &str) = if acc.pos.abs() > EPS {
-            if let Some(risk) = &tree.risk {
-                if risk.stop_loss.is_some_and(|sl| unreal_pnl <= -sl) {
-                    (0.0, "stop")
-                } else if risk.take_profit.is_some_and(|tp| unreal_pnl >= tp) {
-                    (0.0, "tp")
-                } else if risk.max_hold_bars.is_some_and(|mh| acc.bars_held >= mh) {
-                    (0.0, "max_hold")
-                } else {
-                    let (t, r, _) = compute_tree_target(&tree, &ctx, llm, cfg.soft).await?;
-                    (t, r)
-                }
-            } else {
-                let (t, r, _) = compute_tree_target(&tree, &ctx, llm, cfg.soft).await?;
-                (t, r)
-            }
-        } else {
-            let (t, r, _) = compute_tree_target(&tree, &ctx, llm, cfg.soft).await?;
-            (t, r)
-        };
+        let (target, reason, _) = resolve_target(&acc, &tree, &ctx, llm, unreal_pnl, cfg.soft).await?;
 
         // 执行 sim_step（哪怕 delta≈0 也记账）
         let _ = sim_step(
@@ -329,24 +339,8 @@ pub async fn run_signal_single(
     };
 
     // 悬挂决策：风控覆盖优先，否则树目标（保留 leaf trace）
-    let (hang_target, hang_reason, hang_leaf): (f64, &str, Option<String>) =
-        if acc.pos.abs() > EPS {
-            if let Some(risk) = &tree.risk {
-                if risk.stop_loss.is_some_and(|sl| unreal_pnl <= -sl) {
-                    (0.0, "stop", None)
-                } else if risk.take_profit.is_some_and(|tp| unreal_pnl >= tp) {
-                    (0.0, "tp", None)
-                } else if risk.max_hold_bars.is_some_and(|mh| acc.bars_held >= mh) {
-                    (0.0, "max_hold", None)
-                } else {
-                    compute_tree_target(&tree, &ctx_hang, llm, cfg.soft).await?
-                }
-            } else {
-                compute_tree_target(&tree, &ctx_hang, llm, cfg.soft).await?
-            }
-        } else {
-            compute_tree_target(&tree, &ctx_hang, llm, cfg.soft).await?
-        };
+    let (hang_target, hang_reason, hang_leaf) =
+        resolve_target(&acc, &tree, &ctx_hang, llm, unreal_pnl, cfg.soft).await?;
 
     // ── 6. 组装输出 ──────────────────────────────────────────────────────────
     let paper = PaperStats {
