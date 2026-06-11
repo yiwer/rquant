@@ -150,7 +150,8 @@ pub fn highest_roll(s: &[f64], n: usize) -> Vec<f64> {
     out
 }
 
-/// lowest 的滚动序列版（语义镜像 highest_roll）。
+/// lowest 的滚动序列版：位 j = 窗口 [max(0,j+1−n)..=j] 的 NaN 跳过最小值。
+/// 头部为宽容扩张窗（与标量版 len<n 语义一致）；全 NaN 窗 → NaN。
 pub fn lowest_roll(s: &[f64], n: usize) -> Vec<f64> {
     let mut out = vec![f64::NAN; s.len()];
     if n == 0 {
@@ -182,7 +183,8 @@ pub fn std_roll(s: &[f64], n: usize) -> Vec<f64> {
     out
 }
 
-/// slope 的滚动序列版：OLS 斜率逐位；n<2 或 j+1<n → NaN（严格头）。
+/// slope 的滚动序列版：OLS 斜率逐位；n<2 或 j+1<n → NaN（严格头）；
+/// 窗含 NaN → NaN 传播（不跳过，与 std_roll 一致，与 highest/lowest_roll 的跳过语义相反）。
 pub fn slope_roll(s: &[f64], n: usize) -> Vec<f64> {
     let mut out = vec![f64::NAN; s.len()];
     if n < 2 {
