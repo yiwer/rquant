@@ -1082,14 +1082,17 @@ risk:
 
     // ── Step 2: Portfolio 信号生成 ──────────────────────────────────────────
 
-    /// 生成四叉树：根据 close 值路由到不同的叶子，均为 long。
-    /// - close < 10.15 → leaf_a（weight 0.9）
-    /// - 10.15 <= close < 10.25 → leaf_c（weight 0.8）
-    /// - 10.25 <= close < 10.35 → leaf_d（weight 0.7）
-    /// - close >= 10.35 → leaf_b（weight 0.1，最低得分）
+    /// 生成四叉树：根据 close 值路由到四条互不相交的路径。
+    /// 阈值：10.15 / 10.25 / 10.35（三个分支，依次比较）。
+    /// - close < 10.15 → leaf_a（long, weight=0.9, score=0.9）
+    /// - 10.15 ≤ close < 10.25 → leaf_c（long, weight=0.8, score=0.8）
+    /// - 10.25 ≤ close < 10.35 → leaf_d（long, weight=0.7, score=0.7）
+    /// - close ≥ 10.35 → leaf_b（**flat**, score=0 → select_top 的 score>0 过滤掉）
+    ///
+    /// 注意：meta 必须声明 stances: [long, flat] 才能在叶子里用 flat。
     fn four_way_tree() -> String {
         r#"
-meta: { name: portfolio_test, forward_window: 1, stances: [long] }
+meta: { name: portfolio_test, forward_window: 1, stances: [long, flat] }
 root: router
 nodes:
   router:
@@ -1107,7 +1110,7 @@ nodes:
     default: { goto: leaf_b, label: score_b }
 leaves:
   leaf_a: { stance: long, weight: 0.9 }
-  leaf_b: { stance: long, weight: 0.1 }
+  leaf_b: { stance: flat }
   leaf_c: { stance: long, weight: 0.8 }
   leaf_d: { stance: long, weight: 0.7 }
 "#
@@ -1130,7 +1133,7 @@ leaves:
         .to_string()
     }
 
-    fn gen_bars_csv(_symbol: &str, start_day: u32, n_bars: usize, _last_close: f64) -> String {
+    fn gen_bars_csv(start_day: u32, n_bars: usize) -> String {
         let mut s = String::from("time,open,high,low,close,volume\n");
         for i in 0..n_bars {
             let price = 10.0 + i as f64 * 0.1;
@@ -1150,55 +1153,78 @@ leaves:
 
     /// 四象限：旧持仓 {A:0.5, B:0.5} → 新目标 {A:1/3, C:1/3, D:1/3}（top=3）。
     /// 预期 trades：A=Adjust(0.5→1/3)、B=Sell(0.5→0)、C=Buy(0→1/3)、D=Buy(0→1/3)。
-    /// 用四叉树根据 close 值路由：
-    /// - 数据 A：close < 10.15 → leaf_a（long 0.9）
-    /// - 数据 B：close >= 10.35 → leaf_b（flat 1.0 → score=0）
-    /// - 数据 C：10.15 <= close < 10.25 → leaf_c（long 0.8）
-    /// - 数据 D：10.25 <= close < 10.35 → leaf_d（long 0.7）
+    ///
+    /// 路由演算表（末收盘→命中条件→叶→得分）：
+    /// - A：末收盘 10.05（< 10.15 ✓，余量 0.10）→ leaf_a → score=0.9（long 0.9）
+    /// - B：末收盘 10.50（≥ 10.35，余量 0.15）→ leaf_b → score=0.0（flat）→ select_top score>0 过滤
+    /// - C：末收盘 10.20（10.15 ≤ 10.20 < 10.25，余量 0.05/0.05）→ leaf_c → score=0.8（long 0.8）
+    /// - D：末收盘 10.30（10.25 ≤ 10.30 < 10.35，余量 0.05/0.05）→ leaf_d → score=0.7（long 0.7）
+    /// select_top(top=3) 过滤 B（score=0），余下 A/C/D 三者得分均为正，等权 1/3。
     #[tokio::test]
     async fn portfolio_four_quadrants() {
         let tree_f = write_file(&four_way_tree(), ".yaml");
 
-        // 生成 A, B, C, D 的行情 CSV（都有数据，close 值不同以触发不同的路由）
-        // A: 10.0+0.1*i，最后 close≈10.7
-        let mut bars_a = String::from("time,open,high,low,close,volume\n");
-        for i in 0..8 {
-            let p = 10.0 + 0.05 * i as f64;
-            bars_a.push_str(&format!(
-                "2024-01-02 {:02}:00:00,{p},{p},{p},{p},1000\n",
-                9 + i
-            ));
-        }
+        // A：末收盘 10.05 < 10.15 → leaf_a（score=0.9）。余量 0.10，远离阈值。
+        // 固定末 bar 10.05；前 7 条是占位行情（路由仅看末 bar close）。
+        let bars_a = {
+            let mut s = String::from("time,open,high,low,close,volume\n");
+            // 末收盘 10.05，前 7 条从 10.40 降到 10.10（随意，只有末 bar 参与路由）
+            for i in 0..7usize {
+                let p = 10.40 - 0.05 * i as f64;
+                s.push_str(&format!(
+                    "2024-01-02 {:02}:00:00,{p},{p},{p},{p},1000\n",
+                    9 + i
+                ));
+            }
+            // 末 bar：10.05（< 10.15，余量 0.10）
+            s.push_str("2024-01-02 16:00:00,10.05,10.05,10.05,10.05,1000\n");
+            s
+        };
 
-        // B: 10.35+ 以上（触发 default → leaf_b flat）
-        let mut bars_b = String::from("time,open,high,low,close,volume\n");
-        for i in 0..8 {
-            let p = 10.35 + 0.05 * i as f64;
-            bars_b.push_str(&format!(
-                "2024-01-02 {:02}:00:00,{p},{p},{p},{p},1000\n",
-                9 + i
-            ));
-        }
+        // B：末收盘 10.50 ≥ 10.35 → leaf_b（flat, score=0）→ 被 select_top 过滤，余量 0.15。
+        let bars_b = {
+            let mut s = String::from("time,open,high,low,close,volume\n");
+            for i in 0..7usize {
+                let p = 10.10 + 0.05 * i as f64;
+                s.push_str(&format!(
+                    "2024-01-02 {:02}:00:00,{p},{p},{p},{p},1000\n",
+                    9 + i
+                ));
+            }
+            // 末 bar：10.50（> 10.35，余量 0.15）
+            s.push_str("2024-01-02 16:00:00,10.50,10.50,10.50,10.50,1000\n");
+            s
+        };
 
-        // C: 10.15..10.25（触发 leaf_c）
-        let mut bars_c = String::from("time,open,high,low,close,volume\n");
-        for i in 0..8 {
-            let p = 10.15 + 0.01 * i as f64;
-            bars_c.push_str(&format!(
-                "2024-01-02 {:02}:00:00,{p},{p},{p},{p},1000\n",
-                9 + i
-            ));
-        }
+        // C：末收盘 10.20（10.15 ≤ 10.20 < 10.25）→ leaf_c（score=0.8），余量 0.05/0.05。
+        let bars_c = {
+            let mut s = String::from("time,open,high,low,close,volume\n");
+            for i in 0..7usize {
+                let p = 10.50 - 0.05 * i as f64;
+                s.push_str(&format!(
+                    "2024-01-02 {:02}:00:00,{p},{p},{p},{p},1000\n",
+                    9 + i
+                ));
+            }
+            // 末 bar：10.20（10.15 ≤ 10.20 < 10.25）
+            s.push_str("2024-01-02 16:00:00,10.20,10.20,10.20,10.20,1000\n");
+            s
+        };
 
-        // D: 10.25..10.35（触发 leaf_d）
-        let mut bars_d = String::from("time,open,high,low,close,volume\n");
-        for i in 0..8 {
-            let p = 10.25 + 0.01 * i as f64;
-            bars_d.push_str(&format!(
-                "2024-01-02 {:02}:00:00,{p},{p},{p},{p},1000\n",
-                9 + i
-            ));
-        }
+        // D：末收盘 10.30（10.25 ≤ 10.30 < 10.35）→ leaf_d（score=0.7），余量 0.05/0.05。
+        let bars_d = {
+            let mut s = String::from("time,open,high,low,close,volume\n");
+            for i in 0..7usize {
+                let p = 10.60 - 0.05 * i as f64;
+                s.push_str(&format!(
+                    "2024-01-02 {:02}:00:00,{p},{p},{p},{p},1000\n",
+                    9 + i
+                ));
+            }
+            // 末 bar：10.30（10.25 ≤ 10.30 < 10.35）
+            s.push_str("2024-01-02 16:00:00,10.30,10.30,10.30,10.30,1000\n");
+            s
+        };
 
         let tmp_dir = tempfile::tempdir().unwrap();
         let f_a = write_file(&bars_a, ".csv");
@@ -1233,10 +1259,10 @@ leaves:
             .unwrap();
 
         // 验证初始信号
-        // 四个标的的得分：A=0.9, B=0.1, C=0.8, D=0.7（都为正）
-        // top=3 → 选中 A(0.9), C(0.8), D(0.7)，B(0.1) 落选
+        // 得分：A=0.9、C=0.8、D=0.7（long，均为正）；B=0.0（flat，被 select_top score>0 过滤）。
+        // top=3 → 选中 A/C/D；B 因 score=0 被过滤（不是 tie-break）。
         assert_eq!(sig1.n_fresh, 4); // 所有 4 个标的都有数据
-        assert_eq!(sig1.targets.len(), 3); // 入选 A, C, D（B 得分最低被过滤）
+        assert_eq!(sig1.targets.len(), 3); // 入选 A, C, D（B score=0 被过滤）
         let targets_1: BTreeMap<String, f64> = sig1.targets.iter().cloned().collect();
         assert!(targets_1.contains_key("A"));
         assert!(targets_1.contains_key("C"));
@@ -1316,8 +1342,8 @@ leaves:
         let tree_f = write_file(&uniform_tree(), ".yaml");
 
         // 生成 A, B 的行情（都有数据，uniform_tree 都得分 0.5）
-        let bars_a = gen_bars_csv("A", 2, 8, 10.7);
-        let bars_b = gen_bars_csv("B", 2, 8, 10.7);
+        let bars_a = gen_bars_csv(2, 8);
+        let bars_b = gen_bars_csv(2, 8);
 
         let f_a = write_file(&bars_a, ".csv");
         let f_b = write_file(&bars_b, ".csv");
@@ -1333,7 +1359,8 @@ leaves:
         let cfg = SignalPortfolioConfig {
             tree_path: tree_f.path().to_path_buf(),
             universe_path: universe_f.path().to_string_lossy().to_string().into(),
-            top: 2,
+            // top=5 > 入选数（2）：验证"入选数 < top 时等权 = 1/入选数"分支。
+            top: 5,
             window: 100,
             warmup: 0,
             cost_bps: 0.0,
@@ -1375,11 +1402,11 @@ leaves:
         let tree_f = write_file(&four_way_tree(), ".yaml");
 
         // A, B, C 有数据，D 只有早期数据（不新鲜）
-        let bars_a = gen_bars_csv("A", 2, 8, 10.7);
-        let bars_b = gen_bars_csv("B", 2, 8, 10.7);
-        let bars_c = gen_bars_csv("C", 2, 8, 10.7);
-        // D 的末 bar 远早于其他标的
-        let bars_d = gen_bars_csv("D", 2, 1, 10.1);
+        let bars_a = gen_bars_csv(2, 8);
+        let bars_b = gen_bars_csv(2, 8);
+        let bars_c = gen_bars_csv(2, 8);
+        // D 的末 bar 远早于其他标的（只有 1 条，时间戳早，不新鲜）
+        let bars_d = gen_bars_csv(2, 1);
 
         let f_a = write_file(&bars_a, ".csv");
         let f_b = write_file(&bars_b, ".csv");
@@ -1417,5 +1444,39 @@ leaves:
         // 所以 n_fresh = 3，targets 应该包含 A, C（B score 不正），不包含 D
         assert_eq!(sig.n_fresh, 3, "fresh symbols should be 3 (A, B, C; not D)");
         assert!(sig.targets.len() <= 3, "at most 3 targets selected");
+        // 不新鲜的 D 不得出现在 targets 或 Buy 指令中
+        assert!(
+            sig.targets.iter().all(|(s, _)| s != "D"),
+            "stale symbol D must not appear in targets"
+        );
+        assert!(
+            sig.trades.iter().all(|t| !(t.symbol == "D" && t.action == TradeAction::Buy)),
+            "stale symbol D must not appear as a Buy trade"
+        );
+    }
+
+    // ── holdings_state corrupt 校验 ──────────────────────────────────────────
+
+    #[test]
+    fn holdings_state_corrupt_returns_err() {
+        // 非法 JSON → Err，消息含 "corrupt"
+        let f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+        std::fs::write(f.path(), b"{not json").unwrap();
+        let err = read_holdings_state(f.path(), "any_tree").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("corrupt"),
+            "corrupt holdings state must mention 'corrupt', got: {msg}"
+        );
+
+        // 空文件也应被拒绝（不静默返回 None）
+        let f_empty = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+        std::fs::write(f_empty.path(), "").unwrap();
+        let err_empty = read_holdings_state(f_empty.path(), "any_tree").unwrap_err();
+        let msg_empty = err_empty.to_string();
+        assert!(
+            msg_empty.contains("corrupt"),
+            "empty holdings state file must be treated as corrupt, got: {msg_empty}"
+        );
     }
 }
