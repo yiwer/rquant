@@ -415,6 +415,9 @@ pub fn load_tree_str_with_overrides(
         leaves,
     };
     validate(&tree)?;
+    for w in crate::tree::lint::lint_tree(&tree) {
+        eprintln!("[rquant] tree lint: {w}");
+    }
     Ok(tree)
 }
 
