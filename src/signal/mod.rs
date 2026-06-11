@@ -420,7 +420,7 @@ pub struct PortfolioSignal {
     pub t: NaiveDateTime,
     /// 本轮新鲜标的数（至少有一根当期 bar）。
     pub n_fresh: usize,
-    /// 入选目标：(symbol, weight) 列表。
+    /// 入选目标 (symbol, weight)，按 select_top 顺序：score 降序、并列 symbol 升序。
     pub targets: Vec<(String, f64)>,
     /// 交易清单（按 symbol 字典序）。
     pub trades: Vec<TradeInstr>,
@@ -437,7 +437,7 @@ pub struct SignalPortfolioConfig {
     pub top: usize,
     /// 特征工程窗口大小（单位：bars）。
     pub window: usize,
-    /// 预热 bar 数（单位：bars，预热期不生成信号）。
+    /// 预热 bar 数（单位 bars）。组合模式不参与打分（横截面仅用 t_last），保留与单标的配置一致性。
     pub warmup: usize,
     /// 交易成本（单位：bp，万分比；清单不记账，保留一致性）。
     pub cost_bps: f64,
@@ -1274,8 +1274,10 @@ leaves:
         }
 
         // 验证初始交易（从空旧持仓）
+        // A, C, D 各为 Buy（空持仓→1/3）；B 不在旧持仓也不在目标，不出现在 trades
+        assert_eq!(sig1.trades.len(), 3);
         let trades_1: Vec<_> = sig1.trades.iter().filter(|t| t.action != TradeAction::Hold).collect();
-        assert_eq!(trades_1.len(), 3); // A, C, D 为 Buy（B 为 Hold）
+        assert_eq!(trades_1.len(), 3);
         for trade in &trades_1 {
             assert_eq!(trade.from_w, 0.0);
             assert!((trade.to_w - 1.0 / 3.0).abs() < EPS);
@@ -1301,7 +1303,6 @@ leaves:
 
         // 验证第二轮信号
         assert_eq!(sig2.targets.len(), 3);
-        let _targets_2: BTreeMap<String, f64> = sig2.targets.iter().cloned().collect();
 
         // 验证交易清单
         let trades_map: BTreeMap<String, TradeInstr> =
@@ -1396,21 +1397,41 @@ leaves:
         }
     }
 
-    /// 新鲜度：一标的末 bar 时间早于 t_last → 不入候选（score None），n_fresh < universe.len()。
+    /// 新鲜度检查：A/B/C 新鲜（末 bar 时间同 t_last），D 不新鲜（末 bar 时间早于 t_last）。
+    /// D 因不新鲜被过滤出候选（score None），不参与目标权重计算。
+    /// 路由演算表（末收盘→条件→叶→得分）：
+    /// - A/B/C day 2 各 8 根 bar，末收盘 10.05（< 10.15 → leaf_a → score=0.9）
+    /// - D day 1 仅 1 根 bar（不新鲜，时间早于 t_last=2024-01-03）
+    /// 验证：n_fresh=3，targets 仅含 A/B/C，各权重 1/3，D 不在 targets，trades 无 D 的 Buy。
     #[tokio::test]
     async fn portfolio_freshness_check() {
         let tree_f = write_file(&four_way_tree(), ".yaml");
 
-        // A, B, C 有数据，D 只有早期数据（不新鲜）
-        let bars_a = gen_bars_csv(2, 8);
-        let bars_b = gen_bars_csv(2, 8);
-        let bars_c = gen_bars_csv(2, 8);
-        // D 的末 bar 远早于其他标的（只有 1 条，时间戳早，不新鲜）
-        let bars_d = gen_bars_csv(2, 1);
+        // A/B/C: day 2 各 8 根 bar，末收盘 10.05（< 10.15 → leaf_a → score=0.9）
+        let bars_abc = {
+            let mut s = String::from("time,open,high,low,close,volume\n");
+            for i in 0..8usize {
+                let p = 10.05;
+                let hour = 9 + (45 + i * 15) / 60;
+                let minute = (45 + i * 15) % 60;
+                s.push_str(&format!(
+                    "2024-01-03 {:02}:{:02}:00,{p},{p},{p},{p},1000\n",
+                    hour,
+                    minute
+                ));
+            }
+            s
+        };
 
-        let f_a = write_file(&bars_a, ".csv");
-        let f_b = write_file(&bars_b, ".csv");
-        let f_c = write_file(&bars_c, ".csv");
+        // D: day 1 仅 1 根 bar（stale，时间早于 t_last）
+        let bars_d = String::from(
+            "time,open,high,low,close,volume\n\
+             2024-01-02 10:00:00,10.05,10.05,10.05,10.05,1000\n"
+        );
+
+        let f_a = write_file(&bars_abc, ".csv");
+        let f_b = write_file(&bars_abc, ".csv");
+        let f_c = write_file(&bars_abc, ".csv");
         let f_d = write_file(&bars_d, ".csv");
 
         let mut universe_content = String::from("symbol,primary\n");
@@ -1439,16 +1460,24 @@ leaves:
             .await
             .unwrap();
 
-        // n_fresh 应该 < 4（D 不新鲜，A, B 有 score，C 也有 score）
-        // 实际上 A, B, C 都会打分（各有末 bar），D 因不新鲜而不打分
-        // 所以 n_fresh = 3，targets 应该包含 A, C（B score 不正），不包含 D
-        assert_eq!(sig.n_fresh, 3, "fresh symbols should be 3 (A, B, C; not D)");
-        assert!(sig.targets.len() <= 3, "at most 3 targets selected");
-        // 不新鲜的 D 不得出现在 targets 或 Buy 指令中
-        assert!(
-            sig.targets.iter().all(|(s, _)| s != "D"),
-            "stale symbol D must not appear in targets"
-        );
+        // 验证新鲜度：A/B/C 新鲜（各有末 bar），D 不新鲜（末 bar 时间早）
+        assert_eq!(sig.n_fresh, 3, "n_fresh must be 3 (only A, B, C are fresh)");
+
+        // 验证目标权重
+        assert_eq!(sig.targets.len(), 3, "exactly 3 targets selected (A, B, C)");
+        let targets_map: BTreeMap<String, f64> = sig.targets.iter().cloned().collect();
+        assert!(targets_map.contains_key("A"));
+        assert!(targets_map.contains_key("B"));
+        assert!(targets_map.contains_key("C"));
+        assert!(!targets_map.contains_key("D"), "stale symbol D must not appear in targets");
+
+        // 验证权重（等权 1/3，浮点容差 1e-12）
+        for (sym, w) in &targets_map {
+            assert!((w - 1.0 / 3.0).abs() < EPS,
+                "{sym} weight {w} should be 1/3, margin {}", (w - 1.0 / 3.0).abs());
+        }
+
+        // 验证交易清单：D 不出现 Buy
         assert!(
             sig.trades.iter().all(|t| !(t.symbol == "D" && t.action == TradeAction::Buy)),
             "stale symbol D must not appear as a Buy trade"
