@@ -352,6 +352,108 @@ rquant factor [OPTIONS] --universe <UNIVERSE>
 
 ---
 
+## `optimize` 子命令
+
+```
+rquant optimize [OPTIONS]
+```
+
+锚定扩展 Walk-Forward Optimization（WFO）：对参数网格做 IS 寻优 → OS 验证，输出退化率、参数漂移、全样本对照、每折 IS top-5。
+
+### 标志一览
+
+| 标志 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `--tree <PATH>` | PathBuf | 必填 | 决策树 YAML 文件路径 |
+| `--primary <PATH>` | PathBuf | 必填 | 主周期 CSV |
+| `--context <PATH>` | PathBuf | 必填 | 大周期 CSV |
+| `--news <PATH>` | PathBuf | 可选 | 新闻 CSV |
+| `--grid NAME=VALUES`（可重复）| string | 必填（至少一个）| 参数轴：`name=start:stop:step`（闭区间，容差 1e-9）或 `name=v1,v2,...` |
+| `--folds <usize>` | usize | `5` | Walk-forward 折数，必须 ≥ 2 |
+| `--sim` | bool | `false` | 用 sim Sharpe/total_return 作为目标（与 `--soft` 互斥）|
+| `--soft` | bool | `false` | 用 engaged expected_net 均值作为目标（打分软口径）|
+| `--max-combos <usize>` | usize | `500` | 网格上限（超出则拒绝并提示缩格）|
+| `--warmup <usize>` | usize | `100` | 跳过前 N 根 bar（指标预热）|
+| `--window <usize>` | usize | `100` | Context 历史窗口大小 |
+| `--cost-bps <f64>` | f64 | `10.0` | 往返成本（基点）|
+| `--aux NAME=PATH`（可重复）| string | — | 挂载外部 aux 序列 |
+| `--out <PATH>` | PathBuf | `optimize_report.json` | 输出 `OptimizeReport` JSON 路径 |
+| `--llm-model <string>` | string | `""` | LLM 模型名（空则 Disabled）|
+| `--llm-base-url <string>` | string | `""` | LLM API base URL |
+| `--llm-cache-dir <PATH>` | PathBuf | `.rquant-cache/llm` | LLM 缓存目录 |
+
+### 输出字段表（OptimizeReport JSON）
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `mode` | string | `"score_hard"` / `"score_soft"` / `"sim"` |
+| `objective_name` | string | 目标函数名称（对应 mode）|
+| `folds` | usize | 折数参数 |
+| `n_combos` | usize | 展开的参数组合数 |
+| `fold_results` | Vec\<FoldResult\> | 每 OS 折结果（见下表）|
+| `os_mean_objective` | Option\<f64\> | OS 折目标均值（WFO 主要评价指标）|
+| `full_sample_best` | Option\<ComboScore\> | 全样本最优组合（事后偷看基准）|
+| `drift` | Vec\<ParamDrift\> | 每参数最优值跨折漂移情况 |
+| `is_top5` | Vec\<Vec\<ComboScore\>\> | 每 OS 折 IS 前 5 组合（IS 降序）|
+
+**FoldResult 子表**
+
+| 字段 | 说明 | None 语义 |
+|---|---|---|
+| `fold` | OS 折号（从 2 起，1-based）| — |
+| `is_from` / `is_to` | IS 区间首末时间 | — |
+| `os_from` / `os_to` | OS 区间首末时间 | — |
+| `best_params` | IS 最优参数组合 | 全组合均无可评估点时为 None |
+| `is_objective` | IS 最优目标值 | 同上 |
+| `os_objective` | 最优参数在 OS 上的目标值 | IS best 为 None 则 None |
+| `degradation` | `os/is`（退化率）| `is <= 1e-12` 或任一 None 时为 None |
+
+**ParamDrift 子表**
+
+| 字段 | 说明 |
+|---|---|
+| `name` | 参数名 |
+| `values` | 每 OS 折最优值（None = 该折无 best）|
+| `n_unique` | Some 值中 distinct 的 f64 个数（bit-pattern 去重）|
+
+### 防过拟合判读指南
+
+#### 退化率（degradation = OS/IS）
+- **退化率 < 0.5（红旗）**：OS 收益不足 IS 的一半，强过拟合信号。参数对历史数据严重过优化，OS 期间几乎没有泛化能力。建议扩大网格步长、减少参数数量或增大 `--folds`。
+- **退化率 0.5–0.8**：中等退化，常见于复杂树，可接受但需结合样本量判断。
+- **退化率 > 0.8**：参数稳健，优化效果主要来自因子本身而非曲线拟合。
+
+#### 参数漂移（drift n_unique）
+- **n_unique 接近折数（红旗）**：每折选出不同的参数值，说明"最优参数"随时间剧烈跳动，无规律性。此时 IS 寻优基本等同于随机选参，OS 预测能力极弱。
+- **n_unique = 1**：所有折均收敛到同一参数值，参数稳健。
+- **n_unique 远小于折数（如折数=5 时 n_unique=2）**：参数在少数几个值之间切换，可接受；结合 OS 目标正负判断。
+
+#### IS top-5 尖峰 vs plateau
+- **top-5 尖峰（第一名远高于其余）**：IS 目标在某参数值处存在孤立高峰，典型过拟合形态。这类情况下 OS 降幅往往更大，因为曲线是"偶然"的。
+- **plateau（top-5 目标相近）**：多个参数值效果相近，说明有真实且宽泛的 edge。此时即使选不到最优，OS 仍能保持较好表现。
+- 实操：如果 top-5 中 #1 与 #5 的 IS 目标差距超过 #5 绝对值的 50%，视为尖峰，需谨慎。
+
+#### WFO 拼接（OS mean）vs 全样本最优（full_sample_best）
+- **差距 = full_sample_best.objective − os_mean_objective**，即**事后偷看代价**：全样本最优天然拥有对全部历史的知情权，而 WFO OS 均值仅反映"在不同时间窗口上实际可获得的表现"。
+- 差距越大，说明真实可交易 edge 远低于全样本回测暗示的水平——这是最常见的回测虚高来源。
+- **判读规则**：若 `os_mean > 0` 且 `os_mean` 接近 `full_sample_best.objective`（差距 < 30%），历史 edge 具有较好跨期稳定性；若 `os_mean <= 0` 而 `full_sample_best > 0`，则全样本"盈利"纯属事后偷看，该参数组合无实际价值。
+
+### LLM 树成本提示
+
+决策树包含 `type: llm` 节点时，`optimize` 会在每个参数组合 × 每个 IS 折的每个决策点调用 LLM，总调用次数约为：
+
+```
+n_combos × (folds − 1) × is_points + n_combos × full_sample_points
+```
+
+LLM 缓存按 `(model, base_url, system_prompt, node_id, rendered_inputs)` 键去重，同一问题仅调用一次，**相同 LLM 参数下不同参数网格组合不会复用缓存**（树参数影响前置 quant 节点路由，不同组合到达 LLM 节点的 bar 集合可能不同）。
+
+建议：
+1. 先用 `LlmEvaluator::Disabled`（不传 `--llm-model`）对参数 edge 做初步验证，确认纯量化部分有意义后再引入 LLM。
+2. 若必须包含 LLM，缩小 `--grid` 步长以减少组合数，并确保 `--llm-cache-dir` 指向可持久化目录。
+
+---
+
 ## 环境变量
 
 | 变量 | 说明 |

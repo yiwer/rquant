@@ -4,6 +4,7 @@ use rquant::eval::llm::{LlmEvaluator, StubLlm};
 use std::collections::HashMap;
 use std::io::Write;
 use rquant::backtest::soft::run_soft;
+use rquant::optimize::{OptimizeConfig, OptimizeReport, run_optimize};
 
 fn write_file(content: &str, suffix: &str) -> tempfile::NamedTempFile {
     let mut f = tempfile::Builder::new().suffix(suffix).tempfile().unwrap();
@@ -1302,6 +1303,147 @@ fn factor_full_chain() {
         html_content.contains("<polyline"),
         "factor HTML must contain at least one polyline (IC decay chart)"
     );
+}
+
+// F2 T5 — optimize_finds_planted_optimum:
+// Synthetic rising data (close 10→~20, ≥80 bars, multi-day) + inline tree
+// (params: {thr: 5.0}, `close > thr` → long else flat, forward_window=2).
+// Grid: thr ∈ {5, 15, 100}. With rising data close∈[10,20], thr=5 always fires long
+// (positive edge), thr=15 fires only partially, thr=100 never fires (no edge).
+// Assertions: every fold best_params["thr"]==5.0; drift[0].n_unique==1;
+// full_sample_best params thr==5.0; os_mean_objective Some && >0;
+// out JSON deserializes to OptimizeReport.
+#[tokio::test]
+async fn optimize_finds_planted_optimum() {
+    use std::io::Write as IoWrite;
+
+    // ── synthetic rising CSV (≥80 bars, multi-day, close 10→20) ─────────────
+    fn gen_rising_csv(n_bars: usize) -> String {
+        let mut s = String::from("time,open,high,low,close,volume\n");
+        // Spread across 10 days (8 bars/day = 80 bars), price 10 → 20
+        let price_step = 10.0 / (n_bars - 1) as f64;
+        let mut day = 2u32;  // Jan 2
+        let mut intraday = 0u32;
+        for i in 0..n_bars {
+            let price = 10.0 + price_step * i as f64;
+            // 8 bars per day, slots: 09:45, 10:00, 10:15, 10:30, 10:45, 11:00, 11:15, 11:30
+            let hour = 9u32 + (45 + intraday * 15) / 60;
+            let minute = (45 + intraday * 15) % 60;
+            s.push_str(&format!(
+                "2024-01-{:02} {:02}:{:02}:00,{p:.4},{p:.4},{p:.4},{p:.4},1000\n",
+                day, hour, minute, p = price
+            ));
+            intraday += 1;
+            if intraday >= 8 {
+                intraday = 0;
+                day += 1;
+            }
+        }
+        s
+    }
+
+    const N: usize = 80;
+    let primary_csv = gen_rising_csv(N);
+
+    // Context CSV: a few daily bars (will be used for context lookup)
+    let context_csv = {
+        let mut s = String::from("time,open,high,low,close,volume\n");
+        for d in 2u32..=12 {
+            s.push_str(&format!(
+                "2024-01-{:02} 09:30:00,10.0,10.0,10.0,10.0,1\n",
+                d
+            ));
+        }
+        s
+    };
+
+    let mut primary_f = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+    primary_f.write_all(primary_csv.as_bytes()).unwrap();
+    primary_f.flush().unwrap();
+
+    let mut context_f = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+    context_f.write_all(context_csv.as_bytes()).unwrap();
+    context_f.flush().unwrap();
+
+    // Inline tree: params: {thr: 5.0}, `close > thr` → long else flat, forward_window=2
+    const OPT_TREE: &str = r#"
+meta: { name: planted_opt, forward_window: 2, stances: [long, flat] }
+params: { thr: 5.0 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - when: "close > thr"
+        goto: leaf_long
+        label: above
+    default: { goto: leaf_flat, label: below }
+leaves:
+  leaf_long: { stance: long }
+  leaf_flat: { stance: flat }
+"#;
+    let tree_f = write_file(OPT_TREE, ".yaml");
+    let out_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+
+    let cfg = OptimizeConfig {
+        tree_path: tree_f.path().to_path_buf(),
+        primary_path: primary_f.path().to_path_buf(),
+        context_path: context_f.path().to_path_buf(),
+        news_path: None,
+        aux_paths: vec![],
+        window: 20,
+        warmup: 5,
+        cost_bps: 10.0,
+        folds: 4,
+        sim: false,
+        soft: false,
+        grids: vec!["thr=5,15,100".to_string()],
+        max_combos: 500,
+        out_path: out_f.path().to_path_buf(),
+    };
+
+    let report = run_optimize(&cfg, &LlmEvaluator::Disabled)
+        .await
+        .expect("optimize_finds_planted_optimum: run_optimize should succeed");
+
+    // Every fold best_params["thr"] == 5.0
+    for fr in &report.fold_results {
+        let bp = fr.best_params.as_ref().expect("every fold should have a best_params");
+        let thr = bp.get("thr").copied().expect("thr key must be present");
+        assert!(
+            (thr - 5.0).abs() < 1e-9,
+            "fold {} best thr should be 5.0 (planted optimum), got {thr}",
+            fr.fold
+        );
+    }
+
+    // drift[0].n_unique == 1 (always picks thr=5.0)
+    assert!(!report.drift.is_empty(), "drift should be non-empty");
+    assert_eq!(
+        report.drift[0].n_unique, 1,
+        "all folds should converge on thr=5.0 → n_unique=1, got {}",
+        report.drift[0].n_unique
+    );
+
+    // full_sample_best params["thr"] == 5.0
+    let fsb = report.full_sample_best.as_ref().expect("full_sample_best should be Some");
+    let fsb_thr = fsb.params.get("thr").copied().expect("full_sample_best thr key missing");
+    assert!(
+        (fsb_thr - 5.0).abs() < 1e-9,
+        "full_sample_best thr should be 5.0, got {fsb_thr}"
+    );
+
+    // os_mean_objective Some && > 0
+    let os_mean = report.os_mean_objective.expect("os_mean_objective should be Some");
+    assert!(
+        os_mean > 0.0,
+        "os_mean_objective should be positive (rising data + always-above-threshold), got {os_mean}"
+    );
+
+    // out JSON deserializes to OptimizeReport
+    let json_content = std::fs::read_to_string(out_f.path()).unwrap();
+    let _parsed: OptimizeReport =
+        serde_json::from_str(&json_content).expect("out JSON must deserialize to OptimizeReport");
 }
 
 // T3 Step 3 — portfolio_report_html_renders: run_portfolio, render ReportMode::Portfolio,

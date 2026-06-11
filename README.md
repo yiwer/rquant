@@ -113,6 +113,47 @@ cargo run --release -- backtest ... --folds 5 --soft
 
 ---
 
+## 参数寻优（`optimize`）
+
+`optimize` 子命令对参数网格做**锚定扩展 Walk-Forward Optimization（WFO）**：样本内（IS）寻优 → 样本外（OS）验证，输出退化率、参数漂移、全样本对照基准，系统评估过拟合风险。
+
+```bash
+# 对 n_trend 和 k_trend 做 3×3 网格，4 折 WFO，预热 80 根 bar
+cargo run --release -- optimize \
+  --tree examples/regime_adaptive_1.yaml \
+  --primary 60m.csv --context 60m.csv \
+  --grid "n_trend=10,20,30" \
+  --grid "k_trend=0.05,0.10,0.15" \
+  --folds 4 --warmup 80 \
+  --out opt_report.json
+```
+
+**与 `backtest --folds` 的区别**：`backtest --folds K` 对**固定树**（不搜索参数）做时间稳定性分折，回答"这棵树的 edge 是全程稳定还是一段行情撞的"。`optimize` 则在每 OS 折的 IS 窗口上**寻找最优参数**，再验证该参数在 OS 上能否泛化，回答"参数选择本身有没有过拟合"。
+
+**研究循环**
+
+```
+factor 检验  →  入树  →  optimize 校准  →  backtest/sim 含成本复检
+    ↑                                               |
+    └─────────────── 因子/参数迭代调整 ──────────────┘
+```
+
+1. **factor 检验**：横截面 RankIC/ICIR 快速评估因子信号质量（gross 口径）。
+2. **入树**：满足门槛的因子写入决策树 `when`/`strength` 条件与 `params` 块。
+3. **optimize 校准**：对树中 `params` 做 WFO 网格寻优；判读退化率与漂移，确认参数稳健性。
+4. **backtest/sim 含成本复检**：用 optimize 确定的参数运行完整回测，验证扣费后 edge 仍然显著再入生产。
+
+**防过拟合快速判读**（详见 `docs/cli-reference.md` § optimize）
+
+| 指标 | 红旗 | 说明 |
+|---|---|---|
+| `degradation`（退化率=OS/IS）| < 0.5 | OS 收益不足 IS 一半，强过拟合信号 |
+| `drift.n_unique`（参数漂移）| 接近折数 | 参数乱跳，每折选不同值，无泛化规律 |
+| IS top-5 形态 | 尖峰（#1远高于#5）| 孤立高峰，过拟合概率高；plateau 更可靠 |
+| `full_sample_best` vs `os_mean` | 差距>30% | 事后偷看代价大，全样本"盈利"注水 |
+
+---
+
 ## 持仓模拟（`--sim`）
 
 `--sim` 启用顺序权益模拟模式，与前瞻打分模式互补：
@@ -241,14 +282,15 @@ cargo run --release -- factor \
 **研究循环定位**
 
 ```
-factor 检验  →  入树  →  backtest/portfolio 含成本复检
-    ↑                              |
-    └──────── 因子迭代调参 ─────────┘
+factor 检验  →  入树  →  optimize 校准  →  backtest/portfolio 含成本复检
+    ↑                                               |
+    └─────────────── 因子/参数迭代调整 ──────────────┘
 ```
 
 1. **factor 检验**：快速横截面评估因子的 RankIC/ICIR/单调性/冗余度（gross 口径，无成本）。
 2. **入树**：满足门槛（`|RankIC| > 0.03` 且 `|ICIR| > 0.3`）的因子写入决策树 DSL（`when`/`strength` 条件）。
-3. **backtest/portfolio 含成本复检**：加入 `--cost-bps` 后验证 edge 依然显著，再进入策略生产。
+3. **optimize 校准**：对树中 `params` 做 WFO 参数网格寻优，验证参数稳健性（退化率/漂移/事后偷看代价）。
+4. **backtest/portfolio 含成本复检**：加入 `--cost-bps` 后验证 edge 依然显著，再进入策略生产。
 
 **判读要点**
 
