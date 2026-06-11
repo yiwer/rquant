@@ -789,6 +789,117 @@ risk:
         .to_string()
     }
 
+    /// 吊灯跟踪止损树：出场条件依赖 max_price_since_entry（极值状态量）。
+    fn chandelier_signal_tree() -> String {
+        r#"
+meta: { name: chand_sig, forward_window: 1, stances: [long, flat] }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - when: "pos == 0 and close > 0"
+        goto: leaf_long
+        label: enter
+      - when: "pos > 0 and close < max_price_since_entry * 0.98"
+        goto: leaf_flat
+        label: chandelier_exit
+      - when: "pos > 0"
+        goto: leaf_long
+        label: hold
+    default: { goto: leaf_flat, label: idle }
+leaves:
+  leaf_long: { stance: long }
+  leaf_flat: { stance: flat }
+"#
+        .to_string()
+    }
+
+    /// 吊灯数据：20 根、一天一根（规避 T+1 同日限制）。先冲高（峰 = bar7 high 11.5）
+    /// 后阴跌；入场执行 bar6，吊灯线 11.5×0.98=11.27，close 首次跌破在 i=10（11.25）。
+    /// 峰值在切分点 k=10 之前、触线在其后——极值若没进 AccountSnapshot，B2 重播会以
+    /// 重置后的低峰值（≈bar10 high 11.30）推迟出场 → 状态分叉，本测试即变红。
+    fn gen_chandelier_csv() -> String {
+        let mut s = String::from("time,open,high,low,close,volume\n");
+        for i in 0..20usize {
+            let close = if i <= 7 {
+                10.0 + 0.2 * i as f64
+            } else {
+                11.35 - 0.05 * (i - 8) as f64
+            };
+            let (open, high, low) = if i <= 7 {
+                (close - 0.1, close + 0.1, close - 0.2)
+            } else {
+                (close + 0.03, close + 0.05, close - 0.05)
+            };
+            s.push_str(&format!(
+                "2024-01-{:02} 10:00:00,{open:.2},{high:.2},{low:.2},{close:.2},1000\n",
+                2 + i
+            ));
+        }
+        s
+    }
+
+    /// state 持久化要求 f64 经 JSON 位级精确往返（serde_json 默认解析为
+    /// 尽力而为精度，差 1 ulp 即破坏 split==full——靠 float_roundtrip feature 保证；
+    /// 本测试是该 feature 被误删时的回归锁）。
+    #[test]
+    fn paper_state_f64_json_roundtrip_is_exact() {
+        for &x in &[1.0265135135135137_f64, 1.0265135135135135, 0.9793636669920975] {
+            let s = serde_json::to_string_pretty(&x).unwrap();
+            let y: f64 = serde_json::from_str(&s).unwrap();
+            assert_eq!(x.to_bits(), y.to_bits(), "printed as {s}");
+        }
+    }
+
+    /// 极值经 state 往返的黄金不变量（schema-hardening × F-9 接缝回归锁）。
+    #[tokio::test]
+    async fn golden_invariant_with_position_extremes() {
+        let tree_f = write_file(&chandelier_signal_tree(), ".yaml");
+        let full_csv = gen_chandelier_csv();
+        let lines: Vec<&str> = full_csv.lines().collect(); // [0]=header + 20 行
+        let full_f = write_file(&full_csv, ".csv");
+        let llm = LlmEvaluator::Disabled;
+
+        // A：一次性全量 fresh
+        let tmp = tempfile::tempdir().unwrap();
+        let state_a_path = tmp.path().join("state_a.json");
+        let cfg_a = make_cfg(tree_f.path(), full_f.path(), full_f.path(), &state_a_path);
+        let (_sig_a, state_a) = run_signal_single(&cfg_a, &llm).await.unwrap();
+        // 非空转 sanity：吊灯出场 + 再入场确实发生（入1.0 + 出1.0 + 再入1.0 → turnover ≥ 2.5）
+        assert!(
+            state_a.account.turnover > 2.5,
+            "chandelier exit should have fired, turnover={}",
+            state_a.account.turnover
+        );
+
+        // B：前 k bar fresh commit → 全量续跑，k 取峰后持仓中(10)与首次出场后(14)
+        for k in [10usize, 14] {
+            let prefix = format!("{}\n", lines[..=k].join("\n"));
+            let prefix_f = write_file(&prefix, ".csv");
+            let state_b_path = tmp.path().join(format!("state_b_{k}.json"));
+            let cfg_b1 = make_cfg(tree_f.path(), prefix_f.path(), prefix_f.path(), &state_b_path);
+            let (_s1, state_b1) = run_signal_single(&cfg_b1, &llm).await.unwrap();
+            write_paper_state(&state_b_path, &state_b1).unwrap();
+            let cfg_b2 = make_cfg(tree_f.path(), full_f.path(), full_f.path(), &state_b_path);
+            let (_s2, state_b2) = run_signal_single(&cfg_b2, &llm).await.unwrap();
+            assert_eq!(
+                serde_json::to_value(&state_a).unwrap(),
+                serde_json::to_value(&state_b2).unwrap(),
+                "split==full violated at k={k}（极值未随 state 往返？）"
+            );
+        }
+
+        // 幂等：以 state_a 再跑全量 → 零重放
+        write_paper_state(&state_a_path, &state_a).unwrap();
+        let (sig_again, state_again) = run_signal_single(&cfg_a, &llm).await.unwrap();
+        assert_eq!(sig_again.paper.bars_replayed, 0);
+        assert_eq!(
+            serde_json::to_value(&state_a).unwrap(),
+            serde_json::to_value(&state_again).unwrap()
+        );
+    }
+
     fn make_cfg(
         tree_path: &Path,
         primary_path: &Path,
