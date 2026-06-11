@@ -105,16 +105,24 @@ BinaryOp::Ne => { let (a,b) = ...; !a.is_nan() && !b.is_nan() && a != b }
 | `macd_line(series, fast, slow)` | series: Series, fast/slow: int | 无（ema 从第一根起） | MACD 快线 = ema(fast) − ema(slow) | `macd_line(close, 12, 26)` |
 | `macd_signal(series, fast, slow, sig)` | +sig: int | 无 | MACD 信号线 = ema(macd_line, sig) | `macd_signal(close, 12, 26, 9)` |
 | `macd_hist(series, fast, slow, sig)` | +sig: int | 无 | MACD 柱 = macd_line − macd_signal | `macd_hist(close, 12, 26, 9)` |
+| `ref(series, k)` | series: Series, k: int≥0 | `k ≥ 长度` → 空序列 → NaN 弃权 | 去掉末 k 根（输出长度 = len−k），即"k 根前可见的序列"；`k=0` 恒等 | `highest(ref(high,1), 20)` |
 
 ### 标量函数（返回 `Scalar`，单个 f64）
 
 | 函数 | 参数 | 不足时 | 说明 | 示例 |
 |---|---|---|---|---|
-| `slope(series, n)` | series: Series, n: int≥2 | NaN | 最近 n 根的线性回归斜率（OLS，x=0..n-1） | `slope(ema(close,20), 5)` |
-| `highest(series, n)` | series: Series, n: int | NaN | 最近 n 根最高值 | `highest(high, 20)` |
-| `lowest(series, n)` | series: Series, n: int | NaN | 最近 n 根最低值 | `lowest(low, 20)` |
+| `slope(series, n)` | series: Series, n: int≥2 | NaN | 最近 n 根的线性回归斜率（OLS，x=0..n-1，单位 = 输入单位/bar） | `slope(ema(close,20), 5)` |
+| `highest(series, n)` | series: Series, n: int | NaN | 最近 n 根最高值（**含当前 bar**，见下方陷阱）；窗口内 NaN 跳过，无有限值时返回 NaN（弃权） | `highest(high, 20)` |
+| `lowest(series, n)` | series: Series, n: int | NaN | 最近 n 根最低值（**含当前 bar**）；NaN 行为同 highest | `lowest(low, 20)` |
 | `std(series, n)` | series: Series, n: int | NaN | 最近 n 根总体标准差（÷n） | `std(close, 20)` |
 | `sigmoid(x)` | x: Scalar | — | 1/(1+e^−x)，常用于 strength 表达式 | `sigmoid((close - sma(close,20)) / 0.5)` |
+
+> **陷阱：`highest`/`lowest` 窗口含当前 bar**。`close > highest(high, n)` 恒假（窗口最大值 ≥ 当前 high ≥ 当前 close，严格大于永不成立）。表达 Turtle"超过前 N 根高点"的突破语义必须先用 `ref` 移掉当前 bar：
+>
+> ```yaml
+> when: "close > highest(ref(high, 1), 20)"   # 突破前 20 根高点
+> when: "close < lowest(ref(low, 1), 20)"     # 跌破前 20 根低点
+> ```
 
 ### 布尔函数（返回 `Bool`）
 

@@ -7,13 +7,14 @@ use std::path::Path;
 
 const RESERVED_IDENTS: [&str; 12] =
     ["close", "open", "high", "low", "volume", "hour", "minute", "dow", "pos", "entry_price", "bars_held", "unreal_pnl"];
-const RESERVED_FNS: [&str; 16] = [
+const RESERVED_FNS: [&str; 17] = [
     "sma",
     "ema",
     "wma",
     "rsi",
     "atr",
     "slope",
+    "ref",
     "highest",
     "lowest",
     "crossover",
@@ -611,6 +612,27 @@ leaves:
         // Name clash with built-in function "sma" → load error.
         assert!(load_tree_str(&ok.replace("mom:", "sma:")).is_err());
 
+        // Name clash with built-in shift function "ref" → load error.
+        // (standalone snippet: the only defect is the factor name itself)
+        let shadow_ref = r#"
+meta: { name: t, forward_window: 3, stances: [long, flat] }
+factors:
+  ref: "close - 1"
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "ref > 0", goto: leaf_l, label: up } ]
+    default: { goto: leaf_f, label: flat }
+leaves:
+  leaf_l: { stance: long }
+  leaf_f: { stance: flat }
+"#;
+        assert!(
+            load_tree_str(shadow_ref).is_err(),
+            "factor named 'ref' must be rejected as shadowing a built-in"
+        );
+
         // Name clash with built-in identifier "close" → load error.
         assert!(load_tree_str(&ok.replace("th: 2.0", "close: 2.0")).is_err());
 
@@ -658,6 +680,14 @@ leaves:
     fn loads_factor_tree_example() {
         let src = include_str!("../../examples/factor_tree.yaml");
         assert!(load_tree_str(src).is_ok(), "examples/factor_tree.yaml must load without error");
+    }
+
+    #[test]
+    fn loads_regime_adaptive_example() {
+        let src = include_str!("../../examples/regime_adaptive_1.yaml");
+        let tree = load_tree_str(src)
+            .expect("examples/regime_adaptive_1.yaml must load without error");
+        assert_eq!(tree.root, "gate_pos");
     }
 
     #[test]

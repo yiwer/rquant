@@ -113,24 +113,26 @@ pub fn slope(s: &[f64], n: usize) -> f64 {
     if den == 0.0 { f64::NAN } else { num / den }
 }
 
-/// 最近 n 根最高值。
+/// 最近 n 根最高值。窗口内 NaN 跳过；无有限值（空/全 NaN）返回 NaN（弃权），不返回 −∞。
 pub fn highest(s: &[f64], n: usize) -> f64 {
     let len = s.len();
     if len == 0 || n == 0 {
         return f64::NAN;
     }
     let start = len.saturating_sub(n);
-    s[start..].iter().copied().fold(f64::NEG_INFINITY, f64::max)
+    let m = s[start..].iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    if m == f64::NEG_INFINITY { f64::NAN } else { m }
 }
 
-/// 最近 n 根最低值。
+/// 最近 n 根最低值。窗口内 NaN 跳过；无有限值（空/全 NaN）返回 NaN（弃权），不返回 +∞。
 pub fn lowest(s: &[f64], n: usize) -> f64 {
     let len = s.len();
     if len == 0 || n == 0 {
         return f64::NAN;
     }
     let start = len.saturating_sub(n);
-    s[start..].iter().copied().fold(f64::INFINITY, f64::min)
+    let m = s[start..].iter().copied().fold(f64::INFINITY, f64::min);
+    if m == f64::INFINITY { f64::NAN } else { m }
 }
 
 /// a 上穿 b：上一根 a<=b 且本根 a>b。
@@ -250,6 +252,22 @@ mod tests {
         let s = [3.0, 1.0, 4.0, 1.0, 5.0, 9.0, 2.0];
         assert_relative_eq!(highest(&s, 3), 9.0);
         assert_relative_eq!(lowest(&s, 3), 2.0);
+    }
+
+    #[test]
+    fn highest_lowest_all_nan_abstains() {
+        // 全 NaN 窗口必须返回 NaN（弃权），不能返回 ±∞ 让比较意外触发
+        let s = [f64::NAN, f64::NAN, f64::NAN];
+        assert!(highest(&s, 3).is_nan());
+        assert!(lowest(&s, 3).is_nan());
+    }
+
+    #[test]
+    fn highest_lowest_skip_nan_keep_finite() {
+        // 窗口内有有限值时跳过 NaN（IEEE max/min 语义），取有限值
+        let s = [f64::NAN, 5.0, f64::NAN];
+        assert_relative_eq!(highest(&s, 3), 5.0);
+        assert_relative_eq!(lowest(&s, 3), 5.0);
     }
 
     #[test]

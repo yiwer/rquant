@@ -1,0 +1,419 @@
+# =====================================================================
+# 双态自适应策略树 v1 — Brooks 回调 × Turtle 突破
+#
+# 架构(自上而下五层):
+#   L0 持仓保护闸 : 树内手搓 Turtle 2N 止损,优先于一切信号
+#                   (打分模式下 pos≡0,自动退化为直通,不影响评分)
+#   L1 波动率闸门 : ATR/close 过低(无行情)或过高(失控)→ 空仓
+#   L2 市场状态机 : slope(EMA20)/ATR 归一化 → 趋势多 | 趋势空 | 区间
+#   L3 三引擎     :
+#       趋势态 — Brooks 逻辑:不追延伸(>EMA20+2ATR 只许持仓者拿 runner);
+#                回踩 EMA20 后收复 EMA8 + 趋势 bar 确认才入场;
+#                趋势区内 swing 微突破 + 量能确认加注
+#       区间态 — Turtle 边界突破(量能确认,无量不追:多数突破失败);
+#                区间上下四分位 RSI 极值 + 反转 bar 高抛低吸(小仓短线)
+#   L4 LLM 消息闸 : 仅在技术入场触发的 bar 上调用;重大冲突利空 veto,
+#                   消息共振 boost 加满仓;LLM 不可用时退化为纯技术执行
+#
+# 防御性设计:所有 default 一律流向保守路径(flat / 继续评估)。
+# 配合 DSL 的 NaN 弃权语义,指标暖机期、除零(rng_w=0)自动落 default。
+#
+# 写法假设核实结论(2026-06-11,对照 src/dsl/eval.rs + docs/dsl-reference.md):
+#   A1 不成立:highest/lowest 窗口含当前 bar。突破因子已改用
+#      ref(series, 1) 先去掉当前 bar,恢复 Turtle"前 N 根高/低点"原义。
+#   A2 成立:rsi(series, n);slope(series, n) 为 OLS 回归斜率,
+#      x=bar 序号,单位 = 输入单位/bar。签名表见 docs/dsl-reference.md。
+# =====================================================================
+
+meta:
+  name: "双态自适应 · Brooks回调 × Turtle突破 v1"
+  forward_window: 24            # 叶子未覆盖时的默认前瞻窗口
+  stances: [long, flat, short]
+
+params:
+  # ---- 周期 ----
+  n_fast: 8                     # 快 EMA(Brooks 常用 8)
+  n_trend: 20                   # 趋势 EMA
+  n_slope: 8                    # EMA 斜率回看
+  n_atr: 14
+  n_rsi: 14
+  n_range: 20                   # 区间通道回看(Turtle S1 = 20)
+  n_swing: 10                   # 趋势内微突破回看
+  # ---- 阈值(占位值,务必按 标的 × 周期 做 walk-forward 校准)----
+  k_trend: 0.10                 # 趋势判定:slope/ATR 归一化阈值
+  k_trend_dn: -0.10             # 负数 param 直接注入 AST,绕开一元负号问题
+  k_ext: 2.0                    # 过度延伸:偏离 EMA20 超过 2×ATR
+  vol_floor: 0.002              # ATR/close 下限(死寂市,边际成本吃掉 edge)
+  vol_cap: 0.06                 # ATR/close 上限(失控市,风险敞口不可控)
+  v_break: 1.5                  # 突破量能 ≥ 1.5 × 均量
+  rsi_bull_floor: 40            # 多头回调 RSI 下限(跌破 = 回调过深,可能反转)
+  rsi_bear_cap: 60              # 空头反弹 RSI 上限(对称)
+  rsi_os: 30                    # 区间超卖
+  rsi_ob: 70                    # 区间超买
+  q_lo: 0.25                    # 区间下四分位
+  q_hi: 0.75                    # 区间上四分位
+  stop_n: 2.0                   # Turtle 2N 止损倍数
+
+factors:
+  # 按声明顺序展开,仅可前向引用(依赖链显式)
+  atr_v:       "atr(n_atr)"
+  ema_t:       "ema(close, n_trend)"
+  ema_f:       "ema(close, n_fast)"
+  trend_slope: "slope(ema_t, n_slope)"
+  vol_ratio:   "atr_v / close"
+  rng_hi:      "highest(ref(high, 1), n_range)"   # 前 n_range 根高点(不含当前 bar)
+  rng_lo:      "lowest(ref(low, 1), n_range)"
+  rng_w:       "rng_hi - rng_lo"
+  rng_pos:     "(close - rng_lo) / rng_w"     # 区间内 0~1,突破时可越界;rng_w=0 → NaN 弃权 → default
+  vol_ma:      "sma(volume, n_range)"
+  rsi_v:       "rsi(close, n_rsi)"
+  swing_hi:    "highest(ref(high, 1), n_swing)"   # 前 n_swing 根高点(不含当前 bar)
+  swing_lo:    "lowest(ref(low, 1), n_swing)"
+
+root: gate_pos
+
+nodes:
+  # ================= L0 持仓保护(sim 生效;打分模式 pos≡0 直落 default)
+  gate_pos:
+    type: quant
+    branches:
+      - when: "pos > 0"
+        goto: long_protect
+        label: holding_long
+      - when: "pos < 0"
+        goto: short_protect
+        label: holding_short
+    default:
+      goto: vol_gate
+      label: no_position
+
+  long_protect:
+    type: quant
+    branches:
+      - when: "close < entry_price - stop_n * atr_v"    # Turtle 2N 止损
+        goto: exit_flat
+        label: n_stop_long
+    default:
+      goto: vol_gate                                    # 未触发 → 正常评估,持仓与否交还给树
+      label: keep_long
+
+  short_protect:
+    type: quant
+    branches:
+      - when: "close > entry_price + stop_n * atr_v"
+        goto: exit_flat
+        label: n_stop_short
+    default:
+      goto: vol_gate
+      label: keep_short
+
+  # ================= L1 波动率闸门
+  vol_gate:
+    type: quant
+    branches:
+      - when: "vol_ratio < vol_floor"
+        goto: flat_idle
+        label: dead_market
+      - when: "vol_ratio > vol_cap"
+        goto: flat_chaos
+        label: vol_runaway
+    default:
+      goto: regime
+      label: vol_ok
+
+  # ================= L2 市场状态机(--soft 下 sigmoid 平滑切换状态)
+  regime:
+    type: quant
+    branches:
+      - when: "trend_slope > k_trend * atr_v"
+        strength: "sigmoid((trend_slope / atr_v - k_trend) * 60)"
+        goto: bull_ctx
+        label: trend_up
+      - when: "trend_slope < k_trend_dn * atr_v"
+        strength: "sigmoid((k_trend_dn - trend_slope / atr_v) * 60)"
+        goto: bear_ctx
+        label: trend_down
+    default:
+      goto: range_ctx
+      label: range_bound
+
+  # ================= L3a 趋势多引擎(Brooks)
+  bull_ctx:
+    type: quant
+    branches:
+      - when: "close > ema_t + k_ext * atr_v"           # 过度延伸:不追价
+        goto: bull_extended
+        label: overextended
+      - when: "close < ema_t"                           # 回调区
+        goto: bull_pullback
+        label: pullback_zone
+    default:
+      goto: bull_trend_zone                             # EMA20 ~ EMA20+2ATR 健康趋势区
+      label: with_trend
+
+  bull_extended:
+    type: quant
+    branches:
+      - when: "pos > 0"                                 # 已持仓 → 减仓拿 runner(顺势分批兑现)
+        goto: leaf_long_runner
+        label: hold_runner
+    default:
+      goto: flat_wait                                   # 空仓 → 等回调,绝不追延伸
+      label: no_chase
+
+  bull_pullback:
+    type: quant
+    branches:
+      - when: "rsi_v < rsi_bull_floor"                  # 回调过深,趋势质量存疑
+        goto: flat_deep_pb
+        label: pullback_too_deep
+      - when: "crossover(close, ema_f)"                 # 回踩后收复快线 = 回调结束信号
+        goto: bull_pb_bar
+        label: reclaim_fast_ema
+    default:
+      goto: flat_wait
+      label: await_trigger
+
+  bull_pb_bar:                                          # AND 语义通过节点串联实现
+    type: quant
+    branches:
+      - when: "close > open"                            # 趋势 bar 确认(阳线收复)
+        goto: llm_gate_long
+        label: bull_bar_confirm
+    default:
+      goto: flat_wait
+      label: weak_close
+
+  bull_trend_zone:
+    type: quant
+    branches:
+      - when: "pos > 0"                                 # 已在车上 → 拿住
+        goto: leaf_long_core
+        label: ride_trend
+      - when: "close > swing_hi"                        # 趋势区内微突破(swing_hi 不含当前 bar)
+        goto: bull_break_check
+        label: swing_breakout
+    default:
+      goto: flat_wait
+      label: no_setup
+
+  bull_break_check:
+    type: quant
+    branches:
+      - when: "volume > v_break * vol_ma"               # 放量突破 → 过消息闸,正常仓位
+        goto: llm_gate_long
+        label: volume_confirm
+    default:
+      goto: leaf_long_probe                             # 无量突破:已确认趋势中仍可小仓试探
+      label: low_vol_probe
+
+  llm_gate_long:
+    type: llm
+    inputs: [news_score, recent_headlines]
+    prompt: >-
+      技术面已确认做多信号(趋势回调结束,或放量突破)。请只基于所给消息面回答:
+      若存在与做多方向直接冲突的重大利空事件(监管打击、暴雷、系统性风险),回答 veto;
+      若消息面显著强化多头逻辑,回答 boost;其余一切情况一律回答 pass。
+    labels:
+      pass: leaf_long_core
+      boost: leaf_long_max
+      veto: flat_news
+    default: leaf_long_core                             # LLM 不可用/出错/弃权 → 纯技术执行
+
+  # ================= L3b 趋势空引擎(对称镜像)
+  bear_ctx:
+    type: quant
+    branches:
+      - when: "close < ema_t - k_ext * atr_v"
+        goto: bear_extended
+        label: overextended_dn
+      - when: "close > ema_t"
+        goto: bear_pullback
+        label: rally_zone
+    default:
+      goto: bear_trend_zone
+      label: with_trend_dn
+
+  bear_extended:
+    type: quant
+    branches:
+      - when: "pos < 0"
+        goto: leaf_short_runner
+        label: hold_runner_s
+    default:
+      goto: flat_wait
+      label: no_chase_dn
+
+  bear_pullback:
+    type: quant
+    branches:
+      - when: "rsi_v > rsi_bear_cap"                    # 反弹过强,空头趋势存疑
+        goto: flat_deep_pb
+        label: rally_too_strong
+      - when: "crossunder(close, ema_f)"                # 反弹后跌破快线
+        goto: bear_pb_bar
+        label: lose_fast_ema
+    default:
+      goto: flat_wait
+      label: await_trigger_s
+
+  bear_pb_bar:
+    type: quant
+    branches:
+      - when: "close < open"                            # 阴线确认
+        goto: llm_gate_short
+        label: bear_bar_confirm
+    default:
+      goto: flat_wait
+      label: weak_close_s
+
+  bear_trend_zone:
+    type: quant
+    branches:
+      - when: "pos < 0"
+        goto: leaf_short_core
+        label: ride_trend_s
+      - when: "close < swing_lo"                        # swing_lo 不含当前 bar
+        goto: bear_break_check
+        label: swing_breakdown
+    default:
+      goto: flat_wait
+      label: no_setup_s
+
+  bear_break_check:
+    type: quant
+    branches:
+      - when: "volume > v_break * vol_ma"
+        goto: llm_gate_short
+        label: volume_confirm_s
+    default:
+      goto: leaf_short_probe
+      label: low_vol_probe_s
+
+  llm_gate_short:
+    type: llm
+    inputs: [news_score, recent_headlines]
+    prompt: >-
+      技术面已确认做空信号(空头反弹结束,或放量破位)。请只基于所给消息面回答:
+      若存在与做空方向直接冲突的重大利好事件(超预期政策、重磅合作、流动性注入),回答 veto;
+      若消息面显著强化空头逻辑,回答 boost;其余一切情况一律回答 pass。
+    labels:
+      pass: leaf_short_core
+      boost: leaf_short_max
+      veto: flat_news
+    default: leaf_short_core
+
+  # ================= L3c 区间引擎(Brooks BLSH + Turtle 边界突破)
+  range_ctx:
+    type: quant
+    branches:
+      - when: "close > rng_hi"                          # 区间上沿突破(rng_hi 不含当前 bar)
+        goto: range_break_up
+        label: channel_break_up
+      - when: "close < rng_lo"
+        goto: range_break_dn
+        label: channel_break_dn
+      - when: "rng_pos < q_lo"                          # 区间下四分位:找低吸
+        strength: "auto(0.05)"                          # --soft 下边界模糊化
+        goto: fade_long_zone
+        label: near_floor
+      - when: "rng_pos > q_hi"
+        strength: "auto(0.05)"
+        goto: fade_short_zone
+        label: near_ceiling
+    default:
+      goto: flat_mid                                    # Brooks:区间中部没有 edge,不交易
+      label: range_middle
+
+  range_break_up:
+    type: quant
+    branches:
+      - when: "volume > v_break * vol_ma"
+        goto: llm_gate_long
+        label: range_bo_vol
+    default:
+      goto: flat_wait                                   # Brooks:多数突破失败,无量不追
+      label: suspect_break
+
+  range_break_dn:
+    type: quant
+    branches:
+      - when: "volume > v_break * vol_ma"
+        goto: llm_gate_short
+        label: range_bd_vol
+    default:
+      goto: flat_wait
+      label: suspect_break_dn
+
+  fade_long_zone:                                       # 高抛低吸不过 LLM 闸:短线技术 scalp
+    type: quant
+    branches:
+      - when: "rsi_v < rsi_os"
+        goto: fade_long_bar
+        label: oversold
+    default:
+      goto: flat_mid
+      label: no_edge_floor
+
+  fade_long_bar:
+    type: quant
+    branches:
+      - when: "close > open"                            # 反转 bar 确认,不接飞刀
+        goto: leaf_fade_long
+        label: reversal_bar_up
+    default:
+      goto: flat_mid
+      label: await_reversal
+
+  fade_short_zone:
+    type: quant
+    branches:
+      - when: "rsi_v > rsi_ob"
+        goto: fade_short_bar
+        label: overbought
+    default:
+      goto: flat_mid
+      label: no_edge_ceiling
+
+  fade_short_bar:
+    type: quant
+    branches:
+      - when: "close < open"
+        goto: leaf_fade_short
+        label: reversal_bar_dn
+    default:
+      goto: flat_mid
+      label: await_reversal_s
+
+# ================= 叶子:weight 编码信号质量先验,horizon 匹配持仓周期
+leaves:
+  # ---- flat 族:多个 id 是刻意的,让 Trace 路径统计能区分"为什么空仓" ----
+  exit_flat:    { stance: flat }      # 2N 止损离场
+  flat_idle:    { stance: flat }      # 死寂市
+  flat_chaos:   { stance: flat }      # 波动失控
+  flat_wait:    { stance: flat }      # 有上下文、无触发
+  flat_deep_pb: { stance: flat }      # 回调/反弹过深,趋势存疑
+  flat_news:    { stance: flat }      # LLM veto
+  flat_mid:     { stance: flat }      # 区间中部无 edge
+
+  # ---- 多头 ----
+  leaf_long_max:    { stance: long,  weight: 1.0, horizon: 24 }   # 技术 + 消息共振
+  leaf_long_core:   { stance: long,  weight: 0.8, horizon: 24 }   # 标准入场 / 持仓延续
+  leaf_long_probe:  { stance: long,  weight: 0.5, horizon: 16 }   # 无量突破试探仓
+  leaf_long_runner: { stance: long,  weight: 0.6, horizon: 24 }   # 延伸区减仓 runner
+
+  # ---- 空头 ----
+  leaf_short_max:    { stance: short, weight: 1.0, horizon: 24 }
+  leaf_short_core:   { stance: short, weight: 0.8, horizon: 24 }
+  leaf_short_probe:  { stance: short, weight: 0.5, horizon: 16 }
+  leaf_short_runner: { stance: short, weight: 0.6, horizon: 24 }
+
+  # ---- 区间高抛低吸:小仓、短 horizon ----
+  leaf_fade_long:  { stance: long,  weight: 0.5, horizon: 6 }
+  leaf_fade_short: { stance: short, weight: 0.5, horizon: 6 }
+
+# ================= sim 模式风控兜底(主止损在树内 L0,这里是灾难保险)
+risk:
+  stop_loss: 0.08          # 比 2N 宽得多:仅防 2N 逻辑失效(如 ATR 异常)时的尾部
+  max_hold_bars: 96        # 时间止损;不设 take_profit——让利润奔跑,
+  # 兑现交给 extension→runner 与 regime 切换

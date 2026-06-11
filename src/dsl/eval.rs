@@ -211,6 +211,13 @@ fn eval_call(name: &str, args: &[Expr], ctx: &Context) -> Result<Value> {
             need(&vals, 2, name)?;
             Ok(Value::Scalar(indicators::slope(&as_series(&vals[0])?, as_usize(&vals[1])?)))
         }
+        "ref" => {
+            need(&vals, 2, name)?;
+            let s = as_series(&vals[0])?;
+            let k = as_usize(&vals[1])?;
+            let end = s.len().saturating_sub(k);
+            Ok(Value::Series(s[..end].to_vec()))
+        }
         "highest" => {
             need(&vals, 2, name)?;
             Ok(Value::Scalar(indicators::highest(&as_series(&vals[0])?, as_usize(&vals[1])?)))
@@ -353,6 +360,38 @@ mod tests {
         assert_eq!(f("5 != 4"), Value::Bool(true));
         assert_eq!(f("5 == 5"), Value::Bool(true));
         assert_eq!(f("5 != 5"), Value::Bool(false));
+    }
+
+    #[test]
+    fn ref_shifts_series_for_turtle_breakout() {
+        let ctx = ctx_from_closes(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+        let f = |src: &str| eval(&parse_str(src).unwrap(), &ctx).unwrap();
+        // ref(s, k):去掉末 k 根 → 末元素即 k 根前的值
+        assert_eq!(f("ref(close, 1) == 4"), Value::Bool(true));
+        assert_eq!(f("ref(close, 0) == 5"), Value::Bool(true));
+        // Turtle 原义:close 高于"前 3 根"最高 → 可触发
+        assert_eq!(f("close > highest(ref(close, 1), 3)"), Value::Bool(true));
+        // 对照:含当前 bar 的写法恒假
+        assert_eq!(f("close > highest(close, 3)"), Value::Bool(false));
+    }
+
+    #[test]
+    fn ref_beyond_history_abstains() {
+        let ctx = ctx_from_closes(&[1.0, 2.0, 3.0]);
+        let f = |src: &str| eval(&parse_str(src).unwrap(), &ctx).unwrap();
+        // k ≥ 序列长度 → 空序列 → NaN → 所有比较弃权
+        assert_eq!(f("ref(close, 99) > 0"), Value::Bool(false));
+        assert_eq!(f("ref(close, 99) == ref(close, 99)"), Value::Bool(false));
+    }
+
+    #[test]
+    fn ref_wrong_arity_errors() {
+        let ctx = ctx_from_closes(&[1.0, 2.0, 3.0]);
+        let err = eval(&parse_str("ref(close)").unwrap(), &ctx).unwrap_err();
+        assert!(
+            err.to_string().contains("expects 2 args"),
+            "want arity error, got: {err}"
+        );
     }
 
     // H1 — Ge/Le hard eval
