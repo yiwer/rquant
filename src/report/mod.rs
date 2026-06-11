@@ -11,6 +11,7 @@ use std::io::Write;
 use std::path::Path;
 
 pub mod curve;
+pub mod risk;
 pub mod viz;
 
 /// 硬回测完整报告，可序列化为 JSON。
