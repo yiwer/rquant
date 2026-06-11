@@ -87,6 +87,33 @@ pub fn histogram_svg(hist: &Histogram, title: &str) -> String {
 
 const PALETTE: [&str; 6] = ["#1565c0", "#2e7d32", "#c62828", "#f9a825", "#6a1b9a", "#00838f"];
 
+/// 多线折线图（≤PALETTE 数线），PALETTE 着色 + 顶部图例；y 域 = 全体点 min/max。
+pub fn multi_line_chart(series: &[(String, Vec<(f64, f64)>)], title: &str) -> String {
+    let pad = 30.0;
+    let mut s = String::new();
+    let _ = write!(s, "<svg width=\"{W}\" height=\"{H}\" xmlns=\"http://www.w3.org/2000/svg\">");
+    let _ = write!(s, "<text x=\"8\" y=\"16\" font-size=\"13\">{title}</text>");
+    let all: Vec<f64> = series.iter().flat_map(|(_, pts)| pts.iter().map(|p| p.1)).collect();
+    if all.is_empty() {
+        let _ = write!(s, "<text x=\"8\" y=\"{}\">no data</text></svg>", H / 2);
+        return s;
+    }
+    let ymin = all.iter().copied().fold(f64::INFINITY, f64::min);
+    let ymax = all.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let n = series.iter().map(|(_, p)| p.len()).max().unwrap_or(2).max(2);
+    let px = |i: usize| pad + i as f64 / (n - 1) as f64 * (W as f64 - 2.0 * pad);
+    for (k, (name, pts)) in series.iter().enumerate() {
+        let color = PALETTE[k % PALETTE.len()];
+        let path: Vec<String> = pts.iter().enumerate().map(|(i, p)| format!("{:.1},{:.1}", px(i), ny(p.1, ymin, ymax, pad))).collect();
+        let _ = write!(s, "<polyline fill=\"none\" stroke=\"{}\" stroke-width=\"1.5\" points=\"{}\"/>", color, path.join(" "));
+        let lx = pad + k as f64 * 100.0;
+        let _ = write!(s, "<rect x=\"{:.0}\" y=\"22\" width=\"10\" height=\"10\" fill=\"{}\"/>", lx, color);
+        let _ = write!(s, "<text x=\"{:.0}\" y=\"31\" font-size=\"10\">{}</text>", lx + 14.0, name);
+    }
+    let _ = write!(s, "</svg>");
+    s
+}
+
 /// 叶子概率堆叠面积图：y 域固定 \[0,1\]，每层 polygon（上=本层累计、下=前层累计），图例置顶。
 pub fn stacked_area_chart(stack: &StackSeries, title: &str) -> String {
     let pad = 30.0;
@@ -322,5 +349,17 @@ mod tests {
         assert!(svg.contains("leaf_a"));
         assert!(svg.contains("leaf_b"));
         assert_eq!(svg, stacked_area_chart(&st, "t")); // 确定性
+    }
+
+    #[test]
+    fn multi_line_chart_two_lines_with_legend() {
+        let series = vec![
+            ("组合".to_string(), vec![(0.0, 1.0), (1.0, 1.05), (2.0, 1.02)]),
+            ("基准".to_string(), vec![(0.0, 1.0), (1.0, 0.98), (2.0, 0.99)]),
+        ];
+        let svg = multi_line_chart(&series, "t");
+        assert_eq!(svg.matches("<polyline").count(), 2);
+        assert!(svg.contains("组合") && svg.contains("基准"));
+        assert_eq!(svg, multi_line_chart(&series, "t")); // 确定性
     }
 }

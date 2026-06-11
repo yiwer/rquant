@@ -47,20 +47,20 @@ pub fn derive_series(traces: &[Trace], primary: &[Bar], fw: usize, cost: &CostMo
     EquitySeries { points, hist, skipped }
 }
 
-fn histogram(points: &[SeriesPoint]) -> Histogram {
-    const N: usize = 21;
-    if points.is_empty() {
+/// 对一组数值做固定 21 桶直方图（原 histogram(points) 的内核）。
+pub(crate) fn histogram_of(values: &[f64]) -> Histogram {
+    if values.is_empty() {
         return Histogram { bins: vec![] };
     }
-    let nets: Vec<f64> = points.iter().map(|p| p.net).collect();
-    let min = nets.iter().copied().fold(f64::INFINITY, f64::min);
-    let max = nets.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let min = values.iter().copied().fold(f64::INFINITY, f64::min);
+    let max = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     if (max - min).abs() < 1e-12 {
-        return Histogram { bins: vec![(min, max, nets.len())] };
+        return Histogram { bins: vec![(min, max, values.len())] };
     }
+    const N: usize = 21;
     let width = (max - min) / N as f64;
     let mut counts = [0usize; N];
-    for &x in &nets {
+    for &x in values {
         let mut k = ((x - min) / width) as usize;
         if k >= N {
             k = N - 1;
@@ -69,6 +69,11 @@ fn histogram(points: &[SeriesPoint]) -> Histogram {
     }
     let bins = (0..N).map(|k| (min + k as f64 * width, min + (k + 1) as f64 * width, counts[k])).collect();
     Histogram { bins }
+}
+
+fn histogram(points: &[SeriesPoint]) -> Histogram {
+    let nets: Vec<f64> = points.iter().map(|p| p.net).collect();
+    histogram_of(&nets)
 }
 
 /// 软序列：net = expected_net(Some)，累计 cum，expected_net 直方图；None 计 skipped。
