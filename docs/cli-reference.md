@@ -140,17 +140,34 @@ rquant report [OPTIONS]
 
 | 标志 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `--report <PATH>` | PathBuf | 必填 | `report.json` 或 `soft_report.json` 路径 |
+| `--report <PATH>` | PathBuf | 必填 | 报告 JSON 文件路径（hard/soft/sim/portfolio 各对应其产出） |
 | `--out <PATH>` | PathBuf | `report.html` | 输出 HTML 路径 |
-| `--traces <PATH>` | PathBuf | 可选 | traces JSONL 路径（硬模式用于画时间序列曲线） |
+| `--traces <PATH>` | PathBuf | 可选 | traces JSONL 路径（hard/soft/sim 模式用于画时间序列曲线） |
 | `--primary <PATH>` | PathBuf | 可选 | primary CSV（硬模式绘曲线时需要，与 `--traces` 配套） |
 | `--soft` | bool | `false` | 渲染软模式报告（`SoftReport` + `SoftStepRecord`） |
+| `--sim` | bool | `false` | 渲染 sim 模式报告（`SimReport` + 可选 `SimStepRecord` traces） |
+| `--portfolio` | bool | `false` | 渲染组合报告（`PortfolioReport`，自包含，无需 traces/primary） |
+
+`--soft` / `--sim` / `--portfolio` 三个标志**互斥**；同时指定两个以上时命令返回错误。不指定任何模式标志则默认为 hard 模式。
+
+### 四种渲染模式
+
+| 模式标志 | 输入文件 | 需要 `--traces`？ | 需要 `--primary`？ | 产出图表 |
+|---|---|---|---|---|
+| 无（hard 默认） | `Report` JSON（`backtest` 产出） | 可选（与 `--primary` 配套才绘曲线） | 可选（与 `--traces` 配套） | 累计前瞻收益曲线、收益分布直方图、叶子/节点条形图、walk-forward 折条形 |
+| `--soft` | `SoftReport` JSON（`backtest --soft` 产出） | 可选（有则绘净值曲线） | 忽略（会打印提示） | 累计期望收益曲线、expected_net 直方图、叶子平均概率条形、叶子概率堆叠面积 |
+| `--sim` | `SimReport` JSON（`backtest --sim` 产出） | 可选（有则绘净值/仓位曲线） | 忽略（会打印提示） | 净值曲线、仓位轨迹、回合收益直方图、回合表（前 50） |
+| `--portfolio` | `PortfolioReport` JSON（`portfolio` 产出） | 忽略（会打印提示） | 忽略（会打印提示） | 组合 vs 基准双线净值图、选中频率条形、持仓表（前 50） |
 
 ### 说明
 
 **硬模式**：`--traces` 与 `--primary` 需**同时给出**才能绘时间序列曲线（前瞻收益累计曲线）；只给 `--report` 则仅渲染聚合图表。
 
 **软模式（`--soft`）**：渲染 `SoftReport` JSON，`expected_net` 已内含于 traces 中，**不需要也不使用 `--primary`**。若指定了 `--primary`，会打印提示（`--primary ignored in --soft report`）但不报错。
+
+**sim 模式（`--sim`）**：渲染 `SimReport` JSON（`backtest --sim` 的产出）。给出 `--traces`（`backtest --sim --traces steps.jsonl` 写出的 `SimStepRecord` JSONL）时绘净值曲线与仓位轨迹；否则仅显示汇总指标和回合表。`--primary` 在此模式下无意义，会打印忽略提示。
+
+**组合模式（`--portfolio`）**：渲染 `PortfolioReport` JSON（`portfolio` 子命令的产出）。报告已自包含全部 holdings 序列，无需 `--traces` 或 `--primary`；两者均被静默忽略（打印提示）。
 
 ---
 

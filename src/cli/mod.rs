@@ -96,6 +96,12 @@ enum Cmd {
         /// Render a soft-mode report (soft_report.json + soft_traces.jsonl); no --primary needed
         #[arg(long, default_value_t = false)]
         soft: bool,
+        /// Render a sim_report.json (use with --traces for nav/pos curves)
+        #[arg(long, default_value_t = false)]
+        sim: bool,
+        /// Render a portfolio.json (self-contained)
+        #[arg(long, default_value_t = false)]
+        portfolio: bool,
     },
     /// Cross-sectional portfolio: run one tree across a universe, hold top-N equal-weight
     Portfolio {
@@ -190,8 +196,21 @@ pub async fn main() -> anyhow::Result<()> {
             crate::data::reader::write_bars_csv(&bars, &out)?;
             println!("wrote {} bars to {}", bars.len(), out.display());
         }
-        Cmd::Report { report, out, traces, primary, soft } => {
-            crate::report::render_report_files(&report, &out, traces.as_deref(), primary.as_deref(), soft)?;
+        Cmd::Report { report, out, traces, primary, soft, sim, portfolio } => {
+            let picked = [soft, sim, portfolio].iter().filter(|b| **b).count();
+            if picked > 1 {
+                return Err(anyhow::anyhow!("--soft / --sim / --portfolio are mutually exclusive"));
+            }
+            let mode = if soft {
+                crate::report::ReportMode::Soft
+            } else if sim {
+                crate::report::ReportMode::Sim
+            } else if portfolio {
+                crate::report::ReportMode::Portfolio
+            } else {
+                crate::report::ReportMode::Hard
+            };
+            crate::report::render_report_files(&report, &out, traces.as_deref(), primary.as_deref(), mode)?;
         }
         Cmd::Portfolio {
             tree, universe, top, rebalance, warmup, window, cost_bps, soft, aux, out, traces,

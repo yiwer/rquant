@@ -229,9 +229,17 @@ cargo run --release -- report --report report.json --out report.html \
 # 软模式（不需要 --primary）
 cargo run --release -- report --soft --report soft_report.json \
   --traces soft_traces.jsonl --out soft.html
+
+# sim 模式（用 --traces 提供净值/仓位曲线；无 traces 仅显示汇总与回合表）
+cargo run --release -- report --sim --report sim_report.json \
+  --traces sim_steps.jsonl --out sim.html
+
+# 组合模式（PortfolioReport 自包含，无需 traces/primary）
+cargo run --release -- report --portfolio --report portfolio.json --out portfolio.html
 ```
 
-软模式下 `--primary` 被忽略（附提示）；`expected_net` 已内含于 traces。
+`--soft` / `--sim` / `--portfolio` 三个模式标志互斥；不指定则默认 hard 模式。
+软/sim 模式下 `--primary` 被忽略（附提示）；组合模式下 `--traces` 与 `--primary` 均被忽略（附提示）。
 
 ---
 

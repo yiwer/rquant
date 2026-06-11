@@ -424,7 +424,7 @@ async fn render_report_files_soft_end_to_end() {
         html_f.path(),
         Some(traces_f.path()),
         None,
-        true,
+        rquant::report::ReportMode::Soft,
     )
     .unwrap();
 
@@ -890,4 +890,184 @@ async fn sim_legacy_tree_compat() {
         report.total_return.is_finite(),
         "legacy tree sim total_return must be finite"
     );
+}
+
+// T3 Step 3 — sim_report_html_renders: run_sim with traces, render ReportMode::Sim, assert HTML
+// contains <polyline (nav curve from steps) and 回合 (round-trip table).
+#[tokio::test]
+async fn sim_report_html_renders() {
+    const SIM_TREE: &str = r#"
+meta: { name: sim_html_e2e, forward_window: 1, stances: [long, flat] }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - when: "pos == 0 and close > 0"
+        goto: leaf_long
+        label: enter
+      - when: "pos > 0 and bars_held >= 8"
+        goto: leaf_flat
+        label: exit
+      - when: "pos > 0"
+        goto: leaf_long
+        label: hold
+    default: { goto: leaf_flat, label: idle }
+leaves:
+  leaf_long: { stance: long }
+  leaf_flat: { stance: flat }
+"#;
+
+    let tree_f = write_file(SIM_TREE, ".yaml");
+    let primary_f = write_file(&gen_primary_csv(), ".csv");
+    let context_f = write_file(&gen_context_csv(), ".csv");
+    let out_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+    let traces_f = tempfile::Builder::new().suffix(".jsonl").tempfile().unwrap();
+
+    let cfg = BacktestConfig {
+        tree_path: tree_f.path().to_path_buf(),
+        primary_path: primary_f.path().to_path_buf(),
+        context_path: context_f.path().to_path_buf(),
+        news_path: None,
+        out_path: out_f.path().to_path_buf(),
+        traces_path: Some(traces_f.path().to_path_buf()),
+        cost_bps: 10.0,
+        warmup: 5,
+        window: 100,
+        concurrency: 4,
+        holidays_path: None,
+        folds: 0,
+        aux_paths: vec![],
+    };
+
+    run_sim(&cfg, &LlmEvaluator::Disabled, false)
+        .await
+        .expect("run_sim should succeed");
+
+    let html_f = tempfile::Builder::new().suffix(".html").tempfile().unwrap();
+    rquant::report::render_report_files(
+        out_f.path(),
+        html_f.path(),
+        Some(traces_f.path()),
+        None,
+        rquant::report::ReportMode::Sim,
+    )
+    .unwrap();
+
+    let html = std::fs::read_to_string(html_f.path()).unwrap();
+    assert!(!html.is_empty(), "sim HTML must be non-empty");
+    assert!(html.contains("<polyline"), "sim HTML must contain nav curve polyline");
+    assert!(html.contains("回合"), "sim HTML must contain round-trip table");
+}
+
+// T3 Step 3 — portfolio_report_html_renders: run_portfolio, render ReportMode::Portfolio,
+// assert HTML has exactly 2 <polyline elements (portfolio + benchmark) and contains 基准.
+#[tokio::test]
+async fn portfolio_report_html_renders() {
+    use rquant::backtest::portfolio::{PortfolioConfig, run_portfolio};
+    use std::io::Write as _;
+
+    const MOMENTUM_TREE: &str = r#"
+meta: { name: momentum_html_e2e, forward_window: 1, stances: [long, flat] }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - when: "close > sma(close, 3)"
+        goto: leaf_long
+        label: up
+    default: { goto: leaf_flat, label: flat }
+leaves:
+  leaf_long: { stance: long, weight: 1.0 }
+  leaf_flat: { stance: flat }
+"#;
+
+    let days: Vec<u32> = (2u32..=11).collect();
+    let hm: &[(u32, u32)] = &[(9, 30), (10, 0), (10, 30), (11, 0)];
+    let mut timestamps = Vec::new();
+    for &d in &days {
+        for &(h, m) in hm {
+            use chrono::NaiveDate;
+            timestamps.push(
+                NaiveDate::from_ymd_opt(2024, 1, d)
+                    .unwrap()
+                    .and_hms_opt(h, m, 0)
+                    .unwrap(),
+            );
+        }
+    }
+
+    let write_bars_csv = |start: f64, pct: f64| -> tempfile::NamedTempFile {
+        let mut f = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+        writeln!(f, "time,open,high,low,close,volume").unwrap();
+        let mut price = start;
+        for ts in &timestamps {
+            writeln!(
+                f,
+                "{},{p:.6},{p:.6},{p:.6},{p:.6},1000",
+                ts.format("%Y-%m-%d %H:%M:%S"),
+                p = price
+            )
+            .unwrap();
+            price *= 1.0 + pct;
+        }
+        f.flush().unwrap();
+        f
+    };
+
+    let f_a = write_bars_csv(100.0, 0.01);
+    let f_b = write_bars_csv(100.0, 0.0);
+    let f_c = write_bars_csv(100.0, -0.01);
+
+    let mut univ_f = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+    writeln!(
+        univ_f,
+        "symbol,primary\nA,{}\nB,{}\nC,{}",
+        f_a.path().display(),
+        f_b.path().display(),
+        f_c.path().display()
+    )
+    .unwrap();
+    univ_f.flush().unwrap();
+
+    let tree_f = write_file(MOMENTUM_TREE, ".yaml");
+    let out_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+
+    let cfg = PortfolioConfig {
+        tree_path: tree_f.path().to_path_buf(),
+        universe_path: univ_f.path().to_path_buf(),
+        top: 1,
+        rebalance: 4,
+        warmup: 6,
+        window: 10,
+        cost_bps: 10.0,
+        soft: false,
+        aux_paths: Vec::new(),
+        out_path: out_f.path().to_path_buf(),
+        traces_path: None,
+    };
+
+    run_portfolio(&cfg, &LlmEvaluator::Disabled)
+        .await
+        .expect("run_portfolio should succeed");
+
+    let html_f = tempfile::Builder::new().suffix(".html").tempfile().unwrap();
+    rquant::report::render_report_files(
+        out_f.path(),
+        html_f.path(),
+        None,
+        None,
+        rquant::report::ReportMode::Portfolio,
+    )
+    .unwrap();
+
+    let html = std::fs::read_to_string(html_f.path()).unwrap();
+    assert!(!html.is_empty(), "portfolio HTML must be non-empty");
+    assert_eq!(
+        html.matches("<polyline").count(),
+        2,
+        "portfolio HTML must have exactly 2 polylines (portfolio + benchmark)"
+    );
+    assert!(html.contains("基准"), "portfolio HTML must contain 基准 legend");
 }

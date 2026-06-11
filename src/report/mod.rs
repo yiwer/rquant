@@ -139,69 +139,112 @@ pub fn print_soft_summary(report: &SoftReport) {
     println!("[warn] {}", m.overlap_warning);
 }
 
+/// report 子命令的渲染模式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReportMode { Hard, Soft, Sim, Portfolio }
+
 /// 读取回测产物并渲染自包含 HTML（CLI report 子命令的业务实现）。
-/// soft=true 时 primary 被忽略（expected_net 已在 traces 内；给了会 eprintln 提示）。
+/// Soft 模式时 primary 被忽略（expected_net 已在 traces 内；给了会 eprintln 提示）。
+/// Sim 模式时 primary 被忽略（同理）。
+/// Portfolio 模式时 traces/primary 均被忽略（PortfolioReport 自包含）。
 pub fn render_report_files(
     report_path: &Path,
     out_path: &Path,
     traces_path: Option<&Path>,
     primary_path: Option<&Path>,
-    soft: bool,
+    mode: ReportMode,
 ) -> Result<()> {
-    if soft {
-        let rep: SoftReport = serde_json::from_str(&std::fs::read_to_string(report_path)?)?;
-        if primary_path.is_some() {
-            eprintln!("[rquant] --primary ignored in --soft report (expected_net is in traces)");
+    match mode {
+        ReportMode::Soft => {
+            let rep: SoftReport = serde_json::from_str(&std::fs::read_to_string(report_path)?)?;
+            if primary_path.is_some() {
+                eprintln!("[rquant] --primary ignored in --soft report (expected_net is in traces)");
+            }
+            let (series, avg, stack) = match traces_path {
+                Some(tp) => {
+                    let content = std::fs::read_to_string(tp)?;
+                    let mut recs = Vec::new();
+                    for line in content.lines().filter(|l| !l.trim().is_empty()) {
+                        recs.push(serde_json::from_str::<crate::backtest::soft::SoftStepRecord>(line)?);
+                    }
+                    (
+                        crate::report::curve::derive_soft_series(&recs),
+                        crate::report::curve::avg_leaf_probs(&recs),
+                        Some(crate::report::curve::leaf_prob_stack(&recs)),
+                    )
+                }
+                None => (
+                    crate::report::curve::EquitySeries {
+                        points: vec![],
+                        hist: crate::report::curve::Histogram { bins: vec![] },
+                        skipped: 0,
+                    },
+                    vec![],
+                    None,
+                ),
+            };
+            let html = crate::report::viz::render_soft_html(&rep, &series, &avg, stack.as_ref());
+            std::fs::write(out_path, html)?;
+            println!("wrote soft HTML report to {}", out_path.display());
         }
-        let (series, avg, stack) = match traces_path {
-            Some(tp) => {
-                let content = std::fs::read_to_string(tp)?;
-                let mut recs = Vec::new();
-                for line in content.lines().filter(|l| !l.trim().is_empty()) {
-                    recs.push(serde_json::from_str::<crate::backtest::soft::SoftStepRecord>(line)?);
+        ReportMode::Hard => {
+            let json = std::fs::read_to_string(report_path)?;
+            let rep: Report = serde_json::from_str(&json)?;
+            let series = match (traces_path, primary_path) {
+                (Some(tp), Some(pp)) => {
+                    let content = std::fs::read_to_string(tp)?;
+                    let mut tr = Vec::new();
+                    for line in content.lines().filter(|l| !l.trim().is_empty()) {
+                        tr.push(serde_json::from_str::<crate::engine::trace::Trace>(line)?);
+                    }
+                    let bars = crate::data::reader::read_bars_csv(pp)?;
+                    let costs = crate::backtest::costs::CostModel { round_trip_bps: rep.cost_bps };
+                    Some(crate::report::curve::derive_series(&tr, &bars, rep.forward_window, &costs))
                 }
-                (
-                    crate::report::curve::derive_soft_series(&recs),
-                    crate::report::curve::avg_leaf_probs(&recs),
-                    Some(crate::report::curve::leaf_prob_stack(&recs)),
-                )
-            }
-            None => (
-                crate::report::curve::EquitySeries {
-                    points: vec![],
-                    hist: crate::report::curve::Histogram { bins: vec![] },
-                    skipped: 0,
-                },
-                vec![],
-                None,
-            ),
-        };
-        let html = crate::report::viz::render_soft_html(&rep, &series, &avg, stack.as_ref());
-        std::fs::write(out_path, html)?;
-        println!("wrote soft HTML report to {}", out_path.display());
-    } else {
-        let json = std::fs::read_to_string(report_path)?;
-        let rep: Report = serde_json::from_str(&json)?;
-        let series = match (traces_path, primary_path) {
-            (Some(tp), Some(pp)) => {
-                let content = std::fs::read_to_string(tp)?;
-                let mut tr = Vec::new();
-                for line in content.lines().filter(|l| !l.trim().is_empty()) {
-                    tr.push(serde_json::from_str::<crate::engine::trace::Trace>(line)?);
+                (None, None) => None,
+                _ => {
+                    eprintln!("[rquant] --traces and --primary must be given together to draw the curve; rendering aggregates only");
+                    None
                 }
-                let bars = crate::data::reader::read_bars_csv(pp)?;
-                let costs = crate::backtest::costs::CostModel { round_trip_bps: rep.cost_bps };
-                Some(crate::report::curve::derive_series(&tr, &bars, rep.forward_window, &costs))
+            };
+            let html = crate::report::viz::render_html(&rep, series.as_ref());
+            std::fs::write(out_path, html)?;
+            println!("wrote HTML report to {}", out_path.display());
+        }
+        ReportMode::Sim => {
+            let rep: crate::backtest::sim::SimReport =
+                serde_json::from_str(&std::fs::read_to_string(report_path)?)?;
+            if primary_path.is_some() {
+                eprintln!("[rquant] --primary ignored in --sim report (traces carry nav/pos)");
             }
-            (None, None) => None,
-            _ => {
-                eprintln!("[rquant] --traces and --primary must be given together to draw the curve; rendering aggregates only");
-                None
+            let steps: Option<Vec<crate::backtest::sim::SimStepRecord>> = match traces_path {
+                Some(tp) => {
+                    let content = std::fs::read_to_string(tp)?;
+                    let mut recs = Vec::new();
+                    for line in content.lines().filter(|l| !l.trim().is_empty()) {
+                        recs.push(serde_json::from_str::<crate::backtest::sim::SimStepRecord>(line)?);
+                    }
+                    Some(recs)
+                }
+                None => None,
+            };
+            let html = crate::report::viz::render_sim_html(&rep, steps.as_deref());
+            std::fs::write(out_path, html)?;
+            println!("wrote sim HTML report to {}", out_path.display());
+        }
+        ReportMode::Portfolio => {
+            let rep: crate::backtest::portfolio::PortfolioReport =
+                serde_json::from_str(&std::fs::read_to_string(report_path)?)?;
+            if traces_path.is_some() {
+                eprintln!("[rquant] --traces ignored in --portfolio report (PortfolioReport is self-contained)");
             }
-        };
-        let html = crate::report::viz::render_html(&rep, series.as_ref());
-        std::fs::write(out_path, html)?;
-        println!("wrote HTML report to {}", out_path.display());
+            if primary_path.is_some() {
+                eprintln!("[rquant] --primary ignored in --portfolio report");
+            }
+            let html = crate::report::viz::render_portfolio_html(&rep);
+            std::fs::write(out_path, html)?;
+            println!("wrote portfolio HTML report to {}", out_path.display());
+        }
     }
     Ok(())
 }
