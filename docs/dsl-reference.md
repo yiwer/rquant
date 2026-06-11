@@ -109,27 +109,38 @@ BinaryOp::Ne => { let (a,b) = ...; !a.is_nan() && !b.is_nan() && a != b }
 | `macd_hist(series, fast, slow, sig)` | +sig: int | 无 | MACD 柱 = macd_line − macd_signal | `macd_hist(close, 12, 26, 9)` |
 | `ref(series, k)` | series: Series, k: int≥0 | `k ≥ 长度` → 空序列 → NaN 弃权 | 去掉末 k 根（输出长度 = len−k），即"k 根前可见的序列"；`k=0` 恒等 | `highest(ref(high,1), 20)` |
 
+### 序列函数（续）——滚动窗口统计（返回 `Series`）
+
+| 函数 | 参数 | 头部行为 | 说明 | 示例 |
+|---|---|---|---|---|
+| `highest(series, n)` | series: Series, n: int | 宽容扩张窗（j<n 时取 [0..j] 最大值，无 NaN 前缀） | 逐位最近 n 根最高值（**含当前 bar**，见下方陷阱 A1）；窗口内 NaN 跳过；标量上下文取末位，语义与旧版相同 | `highest(high, 20)` |
+| `lowest(series, n)` | series: Series, n: int | 宽容扩张窗（同 highest） | 逐位最近 n 根最低值（**含当前 bar**）；标量上下文取末位 | `lowest(low, 20)` |
+| `std(series, n)` | series: Series, n: int | 严格：j+1<n → NaN | 逐位最近 n 根总体标准差（÷n）；标量上下文取末位 | `std(close, 20)` |
+| `slope(series, n)` | series: Series, n: int≥2 | 严格：j+1<n → NaN | 逐位最近 n 根 OLS 线性回归斜率（x=0..n-1，单位 = 输入单位/bar）；标量上下文取末位 | `slope(ema(close,20), 5)` |
+
+> **标量上下文语义零变**：highest/lowest/std/slope 现在返回 Series，但在比较表达式（`when: "highest(high,20) < close"`）外层仍会取末位标量——数值与旧版完全相同，旧 YAML 无需修改。新能力：在 `count`/`barssince` 的逐位条件内，它们作为滚动序列逐位比较（Task1 解锁）。
+
 ### 标量函数（返回 `Scalar`，单个 f64）
 
 | 函数 | 参数 | 不足时 | 说明 | 示例 |
 |---|---|---|---|---|
-| `slope(series, n)` | series: Series, n: int≥2 | NaN | 最近 n 根的线性回归斜率（OLS，x=0..n-1，单位 = 输入单位/bar） | `slope(ema(close,20), 5)` |
-| `highest(series, n)` | series: Series, n: int | NaN | 最近 n 根最高值（**含当前 bar**，见下方陷阱）；窗口内 NaN 跳过，无有限值时返回 NaN（弃权） | `highest(high, 20)` |
-| `lowest(series, n)` | series: Series, n: int | NaN | 最近 n 根最低值（**含当前 bar**）；NaN 行为同 highest | `lowest(low, 20)` |
-| `std(series, n)` | series: Series, n: int | NaN | 最近 n 根总体标准差（÷n） | `std(close, 20)` |
 | `sigmoid(x)` | x: Scalar | — | 1/(1+e^−x)，常用于 strength 表达式 | `sigmoid((close - sma(close,20)) / 0.5)` |
 | `abs(x)` | x: Scalar | — | 绝对值 | `abs(close - entry_price)` |
 | `max(a, b)` | a, b: Scalar | 任一 NaN → NaN | 较大值；**显式 NaN 传播**（不吃弃权） | `max(pos, 0.25)` |
 | `min(a, b)` | a, b: Scalar | 任一 NaN → NaN | 较小值；NaN 传播同 max | `min(1, pos + 0.25)` |
 | `count(cond, n)` | cond: 布尔表达式, n: int≥1 | 序列 < n → NaN | 末 n 位中 cond 为 true 的个数；cond **逐位**求值（见下节） | `count(close > ema(close,20), 10)` |
 | `barssince(cond)` | cond: 布尔表达式 | 从未 true → NaN | 距最近一次 cond=true 的 bar 数（当前 bar=0） | `barssince(crossover(close, sma(close,20)))` |
+| `valuewhen(cond, expr[, k])` | cond: 布尔表达式, expr: Series/Scalar, k: int≥0（默认 0） | 从未触发或次数不足 → NaN 弃权 | 最近第 k+1 次 cond=true 处的 expr 值（k=0 = 最近一次）；常用于事件锚定（回踩价、突破价） | `valuewhen(crossover(close, ema(close,8)), close)` |
 
-> **陷阱：`highest`/`lowest` 窗口含当前 bar**。`close > highest(high, n)` 恒假（窗口最大值 ≥ 当前 high ≥ 当前 close，严格大于永不成立）。表达 Turtle"超过前 N 根高点"的突破语义必须先用 `ref` 移掉当前 bar：
+> **陷阱 A1：`highest`/`lowest` 窗口含当前 bar**。`close > highest(high, n)` 在**裸窗（highest/lowest 的序列参数未经 ref 移位）+ 严格比较（`>`/`<`）** 时恒假——窗口最大值 ≥ 当前 high ≥ 当前 close，严格大于永不成立。注意：`close >= highest(close, n)` 表示"当前 bar 创 n 根新高"，是合法的创新高事件，**不触发此陷阱**。表达 Turtle"超过前 N 根高点"的突破语义必须先用 `ref` 移掉当前 bar：
 >
 > ```yaml
-> when: "close > highest(ref(high, 1), 20)"   # 突破前 20 根高点
+> when: "close > highest(ref(high, 1), 20)"   # 突破前 20 根高点（ref 移窗，合法）
 > when: "close < lowest(ref(low, 1), 20)"     # 跌破前 20 根低点
+> when: "close >= highest(close, 20)"         # 创 20 根新高（含当前 bar，合法）
 > ```
+>
+> 加载期 lint 会自动检测"裸价格序列 + 裸窗 + 严格比较"写法并打印告警（见"加载期 lint"一节）。
 
 ### 布尔函数（返回 `Bool`）
 
@@ -140,16 +151,19 @@ BinaryOp::Ne => { let (a,b) = ...; !a.is_nan() && !b.is_nan() && a != b }
 
 ---
 
-## 事件计数与逐位条件（`count` / `barssince`）
+## 事件计数与逐位条件（`count` / `barssince` / `valuewhen`）
 
-`count`/`barssince` 的条件参数不走「Series → 取末元素」归约，而是**逐位**求值成布尔序列：
+`count`/`barssince`/`valuewhen` 的条件参数不走「Series → 取末元素」归约，而是**逐位**求值成布尔序列：
 
 - 比较（`> < >= <= == !=`）：两侧序列**尾对齐**（取右端公共长度；标量广播），逐位比较；任一侧该位 NaN → 该位 false（NaN 弃权逐位生效）。
 - `and` / `or` / `not`：逐位组合。
 - `crossover(a, b)` / `crossunder(a, b)`：逐位事件序列——位 j 为 true 当且仅当前一位未越线且本位越线；首位与含 NaN 位恒 false。**注意与普通 `when` 上下文的标量版语义并存**：普通上下文里 crossover 只看末两位返回单个 Bool，条件序列上下文里它是整个窗口的事件序列。
+- **`highest`/`lowest`/`std`/`slope` 在逐位条件内是滚动序列**（DSL Phase-1 后）：`count(close >= highest(close, 20), 5)` 是合法的"5 根内创新高次数"，无需绕开。
 - 其余表达式形态（裸序列、算术结果）作为条件 → 求值报错。
 
-窗口纪律：布尔序列长度 < n（或 `barssince` 从未触发）→ 返回 NaN，外层比较自动弃权走 default。
+窗口纪律：布尔序列长度 < n（或 `barssince`/`valuewhen` 从未触发）→ 返回 NaN，外层比较自动弃权走 default。
+
+> **空转陷阱**：条件两侧均为标量形（如 `count(bars_held > 2, 5)`），逐位序列长度为 1，n>1 时 count 恒弃权。加载期 lint 会对此类写法告警（L2 规则，见"加载期 lint"一节）。
 
 ### 价格行为惯用法
 
@@ -162,7 +176,39 @@ when: "count(crossover(close, ema(close,8)), 20) == 2"
 when: "barssince(close > highest(ref(high,1), 20)) <= 5 and low > lowest(ref(low,1), 10)"
 # inside bar（无需 count，普通索引即可）
 when: "high < high[-1] and low > low[-1]"
+# 突破事件序列（Phase-1 后 highest 在逐位条件内是滚动序列，以下写法合法）：最近一次 Turtle 突破在 ≤5 根内
+when: "barssince(close > highest(ref(high,1), 20)) <= 5"
+# 事件锚定：最近一次上穿 EMA8 那根 bar 的收盘（measured move / 回踩锚）
+when: "close < valuewhen(crossover(close, ema(close,8)), close) * 0.99"
 ```
+
+---
+
+## 加载期 lint
+
+树加载时对全部 quant 节点分支的 `when` 表达式（及 `strength` / 叶子 `weight` 表达式）运行静态规则检查。发现问题时向 stderr 打印告警（`[rquant] tree lint:` 前缀），**不阻断加载**。规则保守：宁缺勿滥，不确定是否有问题时不报。
+
+### 规则 L1：恒假突破陷阱（A1 陷阱）
+
+```
+[rquant] tree lint: node 'gate' when "close > highest(high, 20)": 突破条件恒假——highest/lowest
+窗口含当前 bar；表达"前 N 根高/低点"请先 ref(series, 1) 移窗（docs/dsl-reference.md A1 陷阱）
+```
+
+**触发条件**：裸价格序列标识符（`close`/`open`/`high`/`low`，未经 `ref` 或索引移位）与 `highest`/`lowest`（首参同为裸价格序列）之间使用严格比较（`>` / `<`）或其镜像。
+
+**不触发**：`>=`/`<=` 比较（创新高事件合法）；首参经过 `ref(high,1)` 移位（Turtle 突破正确写法）。
+
+### 规则 L2：单长度条件空转
+
+```
+[rquant] tree lint: node 'gate' when "count(bars_held > 2, 5) >= 3": count(...) 条件两侧均为
+标量形——逐位布尔序列长度 1，将恒弃权空转；至少一侧需要序列（close/ema(...)/ref(...) 等）
+```
+
+**触发条件**：`count`/`barssince`/`valuewhen` 的条件表达式两侧均为标量形（数值字面量、持仓状态量 `pos`/`bars_held` 等），推断布尔序列长度必然为 1——`count(n>1)` 恒弃权、`barssince`/`valuewhen` 仅看 1 个位置。
+
+**不触发**：条件含任意 Series 形一侧（`close`/`ema(...)`/`highest(...)`/`ref(...)` 等），逐位序列长度来自数据窗口。
 
 ---
 

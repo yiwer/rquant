@@ -314,7 +314,7 @@ factors:
 
 - 内置标识符：`close` `open` `high` `low` `volume` `hour` `minute` `dow`
 - **持仓状态标识符（sim 专用保留名）**：`pos` `entry_price` `bars_held` `unreal_pnl` `max_price_since_entry` `min_price_since_entry`
-- 内置函数名：`sma` `ema` `wma` `rsi` `atr` `slope` `ref` `highest` `lowest` `crossover` `crossunder` `macd_line` `macd_signal` `macd_hist` `std` `sigmoid` `auto` `abs` `max` `min` `count` `barssince`
+- 内置函数名：`sma` `ema` `wma` `rsi` `atr` `slope` `ref` `highest` `lowest` `crossover` `crossunder` `macd_line` `macd_signal` `macd_hist` `std` `sigmoid` `auto` `abs` `max` `min` `count` `barssince` `valuewhen`
 
 与上述任一名字冲突，或在同一块中重复定义，均在加载时报错。
 
@@ -338,6 +338,7 @@ factors:
 9a. **aux 三段格式**：以 `aux.` 开头的标识符必须满足 `aux.<table>.<column>` 格式（恰好两个 `.`，表名与列名均非空且列名不含 `.`）；格式不合法在加载时报错，早于运行时。
 10. **叶子 weight 合法**：数值形式的 `weight` 若给出，必须满足 `0 < weight ≤ 1`，否则报错；表达式字符串形式在加载期仅校验语法与标识符合法性，运行时弃权值（0/NaN）均合法。
 11. **叶子 horizon ≥ 1**：`horizon` 若给出，必须 ≥ 1，否则报错。
+12. **语义陷阱 lint**：语义陷阱（恒假突破条件、单长度条件空转等）在加载期以 `[rquant] tree lint:` 前缀向 stderr 告警，不阻断加载。详见 [docs/dsl-reference.md 加载期 lint 一节](dsl-reference.md#加载期-lint)。
 
 ---
 
