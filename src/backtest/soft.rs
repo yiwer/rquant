@@ -214,6 +214,7 @@ pub async fn run_soft(cfg: &BacktestConfig, llm: &LlmEvaluator) -> Result<SoftRe
 #[cfg(test)]
 mod tests {
     use super::*;
+    use approx::assert_relative_eq;
     use crate::engine::soft::SoftTrace;
     use crate::tree::loader::load_tree_str;
     use chrono::NaiveDateTime;
@@ -447,5 +448,70 @@ leaves:
         let rec2 = SoftStepRecord { t, leaf_probs: BTreeMap::new(), expected_net: None };
         let back2: SoftStepRecord = serde_json::from_str(&serde_json::to_string(&rec2).unwrap()).unwrap();
         assert_eq!(back2.expected_net, None);
+    }
+
+    /// 构造 close=10.0 的决策 ctx（weight_at 用 close/20=0.5；无 sim 状态依赖）。
+    fn ctx_close10() -> crate::features::context::Context {
+        use crate::data::bar::Window;
+        let t = NaiveDateTime::parse_from_str("2024-01-02 09:45:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let bars = vec![bar("2024-01-02 09:45:00", 10.0, 10.0)];
+        crate::features::context::Context {
+            t,
+            primary: Window { bars: bars.clone() },
+            context: Window { bars },
+            news: None,
+            aux: BTreeMap::new(),
+            sim: crate::features::context::SimState::default(),
+        }
+    }
+
+    /// Expr weight 路径端到端：`weight = "min(1, close/20)"` 在 close=10 时求值为 0.5，
+    /// 期望净收益和 exposure 都是常量 weight=1.0 版本的一半。
+    #[test]
+    fn score_soft_expr_weight_scales_expectation() {
+        // 树：close>0 恒真 → leaf_l (long, weight = "min(1, close / 20)")
+        let tree_expr = load_tree_str(r#"
+meta: { name: t, forward_window: 1, stances: [long, flat] }
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "close > 0", goto: leaf_l, label: up } ]
+    default: { goto: leaf_f, label: flat }
+leaves:
+  leaf_l: { stance: long, weight: "min(1, close / 20)" }
+  leaf_f: { stance: flat }
+"#).unwrap();
+        // 对照树：weight 省略（默认 1.0）
+        let tree_const = load_tree_str(r#"
+meta: { name: t, forward_window: 1, stances: [long, flat] }
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "close > 0", goto: leaf_l, label: up } ]
+    default: { goto: leaf_f, label: flat }
+leaves:
+  leaf_l: { stance: long }
+  leaf_f: { stance: flat }
+"#).unwrap();
+        // 2 根 bar：i=0 决策（close=10.0），i=1 是前瞻（open/close=10.2）
+        let primary = vec![
+            bar("2024-01-02 14:45:00", 10.0, 10.0),
+            bar("2024-01-03 09:45:00", 10.2, 10.2),
+        ];
+        let costs = CostModel { round_trip_bps: 10.0 };
+        // 100% long 概率（close>0 恒真 → 全部压在 leaf_l）
+        let mut lp = BTreeMap::new();
+        lp.insert("leaf_l".to_string(), 1.0);
+        let soft = SoftTrace { t: primary[0].time, leaf_probs: lp };
+        // ctx 的 primary 末 close=10.0 → min(1, 10/20)=0.5
+        let ctx = ctx_close10();
+        let s_expr = score_soft(&soft, &tree_expr, &primary, 0, &costs, &ctx).unwrap();
+        let s_const = score_soft(&soft, &tree_const, &primary, 0, &costs, &ctx).unwrap();
+        // 常量 weight=1.0 → expr weight=0.5：期望和 exposure 各缩半
+        assert_relative_eq!(s_expr.expected_net, 0.5 * s_const.expected_net, epsilon = 1e-12);
+        assert_relative_eq!(s_expr.exposure,     0.5 * s_const.exposure,     epsilon = 1e-12);
+        assert_relative_eq!(s_expr.engaged,      0.5 * s_const.engaged,      epsilon = 1e-12);
     }
 }

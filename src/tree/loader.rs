@@ -120,6 +120,9 @@ pub struct Leaf {
 impl Leaf {
     /// 解析叶子权重：常量直接返回；表达式按 ctx 求值。
     /// 求值失败/非有限值 → 0.0（弃权 = 不持仓），有限值 clamp 到 [0,1]。
+    /// 注意：catch-all → 0.0 针对的是**运行时数据弃权**（NaN 预热/空仓哨兵）；
+    /// 配置类错误（未知标识符、aux 格式错）已由加载期 check_no_unknown_idents 左移。
+    /// 唯一例外是 aux 表未挂载（加载期无法知晓挂载情况）——该失败也会被映射为 0 仓位。
     pub fn weight_at(&self, ctx: &crate::features::context::Context) -> f64 {
         match &self.weight {
             Weight::Const(w) => *w,

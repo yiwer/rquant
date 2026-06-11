@@ -977,4 +977,69 @@ time,open,high,low,close,volume
         assert_eq!(report.trades[0].reason, "tree");
         assert_relative_eq!(report.trades[0].exit_px, 10.3); // b3 开盘执行
     }
+
+    /// Turtle 式金字塔：首仓 0.5，浮盈 1% 加到满仓；hold 用 weight:"pos" 维持现仓。
+    const PYRAMID_TREE: &str = r#"
+meta: { name: pyramid, forward_window: 1, stances: [long, flat] }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - when: "pos == 0 and close > 0"
+        goto: leaf_enter
+        label: enter
+      - when: "pos > 0 and pos < 1 and close > entry_price * 1.01"
+        goto: leaf_add
+        label: add_unit
+      - when: "pos > 0"
+        goto: leaf_hold
+        label: hold
+    default: { goto: leaf_flat, label: idle }
+leaves:
+  leaf_enter: { stance: long, weight: 0.5 }
+  leaf_add:   { stance: long, weight: "min(1, pos + 0.5)" }
+  leaf_hold:  { stance: long, weight: "pos" }
+  leaf_flat:  { stance: flat }
+"#;
+
+    /// 5 bar 跨 5 日：b0 决策入场→b1 执行 0.5；b1 持平→hold；b2 涨 2%→加仓→b3 执行 1.0。
+    fn write_pyramid_bars_csv() -> tempfile::NamedTempFile {
+        use std::io::Write as _;
+        let csv = "\
+time,open,high,low,close,volume
+2024-01-02 10:00:00,10.0,10.1,9.9,10.0,1000
+2024-01-03 10:00:00,10.0,10.1,9.9,10.0,1000
+2024-01-04 10:00:00,10.2,10.3,10.1,10.2,1000
+2024-01-05 10:00:00,10.2,10.4,10.1,10.3,1000
+2024-01-08 10:00:00,10.3,10.5,10.2,10.4,1000
+";
+        let mut f = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+        write!(f, "{csv}").unwrap();
+        f.flush().unwrap();
+        f
+    }
+
+    #[tokio::test]
+    async fn run_sim_pyramid_adds_units() {
+        let tree_f = write_tree_yaml(PYRAMID_TREE);
+        let bars_f = write_pyramid_bars_csv();
+        let out_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+        let traces_f = tempfile::Builder::new().suffix(".jsonl").tempfile().unwrap();
+        let cfg = make_cfg(&tree_f, &bars_f, &out_f, Some(&traces_f));
+        let report = run_sim(&cfg, &LlmEvaluator::Disabled, false).await.unwrap();
+        // 4 个决策点 target 阶梯：入场 0.5 → 维持 0.5 → 加仓 1.0 → 维持 1.0
+        let targets: Vec<f64> = std::fs::read_to_string(traces_f.path()).unwrap()
+            .lines().filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str::<SimStepRecord>(l).unwrap().target)
+            .collect();
+        assert_eq!(targets.len(), 4);
+        assert!((targets[0] - 0.5).abs() < 1e-9, "enter 0.5, got {}", targets[0]);
+        assert!((targets[1] - 0.5).abs() < 1e-9, "hold 0.5, got {}", targets[1]);
+        assert!((targets[2] - 1.0).abs() < 1e-9, "add to 1.0, got {}", targets[2]);
+        assert!((targets[3] - 1.0).abs() < 1e-9, "hold 1.0, got {}", targets[3]);
+        // 期末清算一个回合；回合记录首次入场价 10.0
+        assert_eq!(report.n_round_trips, 1);
+        assert_relative_eq!(report.trades[0].entry_px, 10.0);
+    }
 }

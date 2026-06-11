@@ -30,7 +30,7 @@ nodes:             # 节点映射（HashMap，YAML 键顺序不影响语义）
 leaves:            # 叶子映射
   leaf_id:
     stance: long | flat | short
-    weight: 0.5    # 可选，仓位大小 ∈ (0,1]，默认 1.0
+    weight: 0.5    # 可选；数值形式 ∈ (0,1]，或 DSL 表达式字符串（决策时求值），默认 1.0
     horizon: 8     # 可选，前瞻评分窗口（bar 数，≥1），默认 meta.forward_window
 ```
 
@@ -106,7 +106,7 @@ node_id:
 leaves:
   leaf_id:
     stance: long | flat | short
-    weight: 0.5    # 可选
+    weight: 0.5    # 可选；数值形式 ∈ (0,1]，或 DSL 表达式字符串
     horizon: 8     # 可选
 ```
 
@@ -115,12 +115,40 @@ leaves:
 | 字段 | 类型 | 默认值 | 范围 | 打分语义 |
 |---|---|---|---|---|
 | `stance` | `long\|flat\|short` | 必填 | — | 交易方向 |
-| `weight` | f64 | `1.0` | `(0, 1]` | 仓位大小；硬打分中 `gross/net × weight`；软打分中 `p × weight × net` |
+| `weight` | f64 或 DSL 字符串 | `1.0` | 见下方 | 仓位大小；硬打分中 `gross/net × weight`；软打分中 `p × weight × net` |
 | `horizon` | usize | `meta.forward_window` | `≥ 1` | 前瞻评分窗口（bar 数），覆盖树级全局值 |
+
+**`weight` 字段两种形式**：
+
+- `weight`：仓位大小。两种形式——
+  - **数值**：∈(0,1]，加载期校验（既有行为；0 非法）。
+  - **表达式字符串**：决策时对当时 Context 求值；求值失败或非有限值 → 0（弃权=不持仓，**表达式结果 0 合法**——与数值形式的 (0,1] 口径刻意不对称），有限值 clamp 到 [0,1]。可引用 params/factors 与 sim 状态量。引用 `pos` 即获得**相对调仓**语义：`"min(1, pos + 0.25)"` 加一单位、`"pos"` 维持现仓、`"max(0, pos - 0.25)"` 减一单位（结果 0 等价于平仓）。
+  - 注意：sim 状态量（pos/entry_price/极值等）只在 `--sim` 模式有真实值；打分/portfolio 模式恒为默认（pos=0 等），引用它们的表达式按默认值求值。
 
 **软模式 position 口径**：净仓位 `r` 取分布内所有叶子中最大 `horizon` 对应的 gross 收益（`max_h` 腿），以避免多腿不同窗口下的口径混用。
 
 **sim 模式叶子语义**：叶子表示**目标仓位**，不再用于前瞻打分。硬 sim：`target = stance_dir × weight`（`long=+1`、`flat=0`、`short=−1`，`weight` 默认 1.0）；软 sim：`target = Σ p(leaf) × stance_dir(leaf) × weight(leaf)`（期望净仓位 E）。`horizon` 在 sim 模式下不使用。
+
+### 金字塔加仓示例（Turtle 风格）
+
+```yaml
+params: { unit: 0.25 }
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "pos == 0 and close > highest(ref(high,1), 20)", goto: leaf_enter, label: enter }
+      - { when: "pos > 0 and pos < 1 and close > entry_price + 0.5 * atr(20)", goto: leaf_add, label: add_unit }
+      - { when: "pos > 0", goto: leaf_hold, label: hold }
+    default: { goto: leaf_flat, label: idle }
+leaves:
+  leaf_enter: { stance: long, weight: 0.25 }
+  leaf_add:   { stance: long, weight: "min(1, pos + unit)" }   # 每次加 1 单位，至多 4 单位
+  leaf_hold:  { stance: long, weight: "pos" }                  # 维持现仓
+  leaf_flat:  { stance: flat }
+```
+
+> 注：加仓后 `entry_price` 是加权均价，`entry_price + 0.5*atr` 的触发锚点会随加仓上移——与原版 Turtle「按上一加仓价」略有差异，需要精确锚点时用 `max_price_since_entry` 表达。
 
 ---
 
@@ -245,7 +273,7 @@ factors:
 8. **factors 无后向引用**：factors 表达式中只能引用前序定义的名字；引用后定义名字报错。
 9. **when/strength 无未知 Ident**：params/factors 内联展开后，残余裸 Ident 必须是内置标识符或合法 `aux.<表>.<列>` 三段标识符，否则报错（未知名左移到加载期）。
 9a. **aux 三段格式**：以 `aux.` 开头的标识符必须满足 `aux.<table>.<column>` 格式（恰好两个 `.`，表名与列名均非空且列名不含 `.`）；格式不合法在加载时报错，早于运行时。
-10. **叶子 weight ∈ (0,1]**：`weight` 若给出，必须满足 `0 < weight ≤ 1`，否则报错。
+10. **叶子 weight 合法**：数值形式的 `weight` 若给出，必须满足 `0 < weight ≤ 1`，否则报错；表达式字符串形式在加载期仅校验语法与标识符合法性，运行时弃权值（0/NaN）均合法。
 11. **叶子 horizon ≥ 1**：`horizon` 若给出，必须 ≥ 1，否则报错。
 
 ---
