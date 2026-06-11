@@ -1,3 +1,4 @@
+use crate::backtest::portfolio::{run_portfolio, print_portfolio_summary, PortfolioConfig};
 use crate::backtest::runner::{run, BacktestConfig};
 use crate::eval::llm::client::OpenAiLlm;
 use crate::eval::llm::{LlmConfig, LlmEvaluator};
@@ -96,6 +97,37 @@ enum Cmd {
         #[arg(long, default_value_t = false)]
         soft: bool,
     },
+    /// Cross-sectional portfolio: run one tree across a universe, hold top-N equal-weight
+    Portfolio {
+        #[arg(long)]
+        tree: PathBuf,
+        #[arg(long)]
+        universe: PathBuf,
+        #[arg(long, default_value_t = 5)]
+        top: usize,
+        #[arg(long, default_value_t = 16)]
+        rebalance: usize,
+        #[arg(long, default_value_t = 100)]
+        warmup: usize,
+        #[arg(long, default_value_t = 100)]
+        window: usize,
+        #[arg(long, default_value_t = 10.0)]
+        cost_bps: f64,
+        #[arg(long, default_value_t = false)]
+        soft: bool,
+        #[arg(long = "aux", value_name = "NAME=PATH")]
+        aux: Vec<String>,
+        #[arg(long, default_value = "portfolio.json")]
+        out: PathBuf,
+        #[arg(long)]
+        traces: Option<PathBuf>,
+        #[arg(long, default_value = "")]
+        llm_model: String,
+        #[arg(long, default_value = "")]
+        llm_base_url: String,
+        #[arg(long, default_value = ".rquant-cache/llm")]
+        llm_cache_dir: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -160,6 +192,51 @@ pub async fn main() -> anyhow::Result<()> {
         }
         Cmd::Report { report, out, traces, primary, soft } => {
             crate::report::render_report_files(&report, &out, traces.as_deref(), primary.as_deref(), soft)?;
+        }
+        Cmd::Portfolio {
+            tree, universe, top, rebalance, warmup, window, cost_bps, soft, aux, out, traces,
+            llm_model, llm_base_url, llm_cache_dir,
+        } => {
+            let api_key = std::env::var("RQUANT_LLM_API_KEY").unwrap_or_default();
+            let llm = if llm_enabled(&llm_model, &llm_base_url, &api_key) {
+                let cfg = LlmConfig {
+                    base_url: llm_base_url,
+                    api_key,
+                    model: llm_model,
+                    timeout_secs: 60,
+                    max_retries: 2,
+                    cache_dir: llm_cache_dir,
+                };
+                LlmEvaluator::OpenAi(OpenAiLlm::new(cfg)?)
+            } else {
+                eprintln!("[rquant] LLM not configured (need --llm-model, --llm-base-url, env RQUANT_LLM_API_KEY); LLM nodes will take their default branch.");
+                LlmEvaluator::Disabled
+            };
+            let mut aux_paths: Vec<(String, PathBuf)> = Vec::new();
+            for spec in &aux {
+                let (n, p) = spec
+                    .split_once('=')
+                    .ok_or_else(|| anyhow::anyhow!("--aux expects NAME=PATH, got '{spec}'"))?;
+                if aux_paths.iter().any(|(en, _)| en == n) {
+                    return Err(anyhow::anyhow!("duplicate --aux name '{n}'"));
+                }
+                aux_paths.push((n.to_string(), PathBuf::from(p)));
+            }
+            let pcfg = PortfolioConfig {
+                tree_path: tree,
+                universe_path: universe,
+                top,
+                rebalance,
+                warmup,
+                window,
+                cost_bps,
+                soft,
+                aux_paths,
+                out_path: out,
+                traces_path: traces,
+            };
+            let report = run_portfolio(&pcfg, &llm).await?;
+            print_portfolio_summary(&report);
         }
     }
     Ok(())

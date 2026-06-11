@@ -717,6 +717,146 @@ leaves:
     );
 }
 
+// E5 T4 — portfolio_full_chain: 3 synthetic symbols (A+1%/bar, B flat, C-1%/bar),
+// momentum tree (close > sma(close,3) → long else flat), top=1, rebalance=4, warmup=6,
+// cost_bps=10, LlmEvaluator::Disabled → all selected == "A", total_return > benchmark_return,
+// out JSON deserializes to PortfolioReport.
+#[tokio::test]
+async fn portfolio_full_chain() {
+    use rquant::backtest::portfolio::{PortfolioConfig, PortfolioReport, run_portfolio};
+    use rquant::eval::llm::LlmEvaluator;
+    use std::io::Write as _;
+
+    const MOMENTUM_TREE: &str = r#"
+meta: { name: momentum_e2e, forward_window: 1, stances: [long, flat] }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - when: "close > sma(close, 3)"
+        goto: leaf_long
+        label: up
+    default: { goto: leaf_flat, label: flat }
+leaves:
+  leaf_long: { stance: long, weight: 1.0 }
+  leaf_flat: { stance: flat }
+"#;
+
+    // Time grid: 10 days × 4 bars/day = 40 bars (warmup=6, rebalance=4 → rb_indices: 6,10,14,…)
+    let days: Vec<u32> = (2u32..=11).collect(); // Jan 2–11
+    let hm: &[(u32, u32)] = &[(9, 30), (10, 0), (10, 30), (11, 0)];
+    let mut timestamps = Vec::new();
+    for &d in &days {
+        for &(h, m) in hm {
+            use chrono::NaiveDate;
+            timestamps.push(
+                NaiveDate::from_ymd_opt(2024, 1, d)
+                    .unwrap()
+                    .and_hms_opt(h, m, 0)
+                    .unwrap(),
+            );
+        }
+    }
+
+    // Write bars CSV for one symbol: start price, pct change per bar
+    let write_bars_csv = |start: f64, pct: f64| -> tempfile::NamedTempFile {
+        let mut f = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+        writeln!(f, "time,open,high,low,close,volume").unwrap();
+        let mut price = start;
+        for ts in &timestamps {
+            writeln!(
+                f,
+                "{},{p:.6},{p:.6},{p:.6},{p:.6},1000",
+                ts.format("%Y-%m-%d %H:%M:%S"),
+                p = price
+            )
+            .unwrap();
+            price *= 1.0 + pct;
+        }
+        f.flush().unwrap();
+        f
+    };
+
+    let f_a = write_bars_csv(100.0, 0.01);   // A: +1%/bar
+    let f_b = write_bars_csv(100.0, 0.0);    // B: flat
+    let f_c = write_bars_csv(100.0, -0.01);  // C: -1%/bar
+
+    // Universe CSV
+    let mut univ_f = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+    writeln!(
+        univ_f,
+        "symbol,primary\nA,{}\nB,{}\nC,{}",
+        f_a.path().display(),
+        f_b.path().display(),
+        f_c.path().display()
+    )
+    .unwrap();
+    univ_f.flush().unwrap();
+
+    // Tree tempfile
+    let tree_f = write_file(MOMENTUM_TREE, ".yaml");
+
+    // Output files
+    let out_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+    let traces_f = tempfile::Builder::new().suffix(".jsonl").tempfile().unwrap();
+
+    let cfg = PortfolioConfig {
+        tree_path: tree_f.path().to_path_buf(),
+        universe_path: univ_f.path().to_path_buf(),
+        top: 1,
+        rebalance: 4,
+        warmup: 6,
+        window: 10,
+        cost_bps: 10.0,
+        soft: false,
+        aux_paths: Vec::new(),
+        out_path: out_f.path().to_path_buf(),
+        traces_path: Some(traces_f.path().to_path_buf()),
+    };
+
+    let report = run_portfolio(&cfg, &LlmEvaluator::Disabled)
+        .await
+        .expect("portfolio_full_chain: run_portfolio should succeed");
+
+    // All rebalances should select only "A"
+    for rec in &report.holdings {
+        assert_eq!(
+            rec.selected.len(),
+            1,
+            "expected 1 selected, got {:?}",
+            rec.selected
+        );
+        assert_eq!(
+            rec.selected[0].0, "A",
+            "expected A selected, got {}",
+            rec.selected[0].0
+        );
+    }
+
+    // Portfolio should beat benchmark (A outperforms equal-weight A/B/C)
+    assert!(
+        report.total_return > report.benchmark_return,
+        "total_return ({}) must exceed benchmark_return ({})",
+        report.total_return,
+        report.benchmark_return
+    );
+
+    // Out JSON must round-trip as PortfolioReport
+    let json_content = std::fs::read_to_string(out_f.path()).unwrap();
+    let parsed: PortfolioReport =
+        serde_json::from_str(&json_content).expect("out JSON must deserialize to PortfolioReport");
+    assert_eq!(parsed.tree_name, report.tree_name);
+    assert_eq!(parsed.n_rebalances, report.n_rebalances);
+
+    // At least 2 rebalances
+    assert!(
+        report.n_rebalances >= 2,
+        "expected n_rebalances >= 2, got {}",
+        report.n_rebalances
+    );
+}
+
 // E4 T5 — sim_legacy_tree_compat: legacy quant tree without pos conditions runs through --sim
 // without panic; naive rebalancing semantics (always long when above SMA) → Ok result.
 #[tokio::test]
