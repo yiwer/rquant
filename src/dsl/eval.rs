@@ -251,6 +251,16 @@ fn eval_call(name: &str, args: &[Expr], ctx: &Context) -> Result<Value> {
             }
             return Ok(Value::Scalar(cond[cond.len() - n..].iter().filter(|&&b| b).count() as f64));
         }
+        "barssince" => {
+            if args.len() != 1 {
+                return Err(Error::Eval(format!("barssince expects 1 arg, got {}", args.len())));
+            }
+            let cond = eval_bool_series(&args[0], ctx)?;
+            return Ok(Value::Scalar(match cond.iter().rposition(|&b| b) {
+                Some(j) => (cond.len() - 1 - j) as f64,
+                None => f64::NAN, // 可见窗口内从未触发 → 弃权
+            }));
+        }
         _ => {}
     }
     let vals: Result<Vec<Value>> = args.iter().map(|a| eval(a, ctx)).collect();
@@ -606,6 +616,8 @@ mod tests {
         // 序列不足 n → NaN 弃权（所有比较 false）
         assert_eq!(f("count(close > 0, 99) > 0"), Value::Bool(false));
         assert_eq!(f("count(close > 0, 99) == count(close > 0, 99)"), Value::Bool(false));
+        // 双标量条件 → 长度 1 布尔序列 → n>1 时弃权（语义锁定）
+        assert_eq!(f("count(highest(close,3) > lowest(close,3), 5) > 0"), Value::Bool(false));
         // 条件不是布尔表达式 → Err
         assert!(eval(&parse_str("count(close, 3)").unwrap(), &ctx).is_err());
         // 错参数量 → Err
@@ -633,5 +645,20 @@ mod tests {
         ctx.sim = crate::features::context::SimState { pos: 0.5, entry_price: 10.0, bars_held: 3, unreal_pnl: -0.02 };
         assert_eq!(f("pos > 0 and bars_held >= 3", &ctx), Value::Bool(true));
         assert_eq!(f("unreal_pnl < -0.01 and entry_price == 10", &ctx), Value::Bool(true));
+    }
+
+    #[test]
+    fn barssince_last_true_distance() {
+        let ctx = ctx_from_closes(&[1.0, 5.0, 2.0, 3.0, 4.0]);
+        let f = |src: &str| eval(&parse_str(src).unwrap(), &ctx).unwrap();
+        // close>4 仅在 idx1（5.0）为 true → 距末位 3 根
+        assert_eq!(f("barssince(close > 4) == 3"), Value::Bool(true));
+        // 当前 bar 即 true → 0
+        assert_eq!(f("barssince(close > 3.5) == 0"), Value::Bool(true));
+        // 从未 true → NaN 弃权
+        assert_eq!(f("barssince(close > 99) >= 0"), Value::Bool(false));
+        // 非布尔条件 / 错参数量 → Err
+        assert!(eval(&parse_str("barssince(close)").unwrap(), &ctx).is_err());
+        assert!(eval(&parse_str("barssince(close > 0, 1)").unwrap(), &ctx).is_err());
     }
 }
