@@ -17,6 +17,7 @@ pub mod backtest;
 pub mod report;
 pub mod factor;
 pub mod optimize;
+pub mod signal;
 pub mod cli;
 
 pub type Result<T> = std::result::Result<T, Error>;
