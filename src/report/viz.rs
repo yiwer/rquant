@@ -163,7 +163,7 @@ pub fn render_html(report: &Report, series: Option<&EquitySeries>) -> String {
     let _ = write!(s, "<tr><th>active n</th><td>{}</td></tr>", m.active.count);
     let _ = write!(s, "<tr><th>active mean_net</th><td>{:.4}</td></tr>", m.active.mean_net);
     let _ = write!(s, "<tr><th>active hit%</th><td>{:.1}</td></tr>", m.active.hit_rate * 100.0);
-    let _ = write!(s, "<tr><th>active t</th><td>{:.2}</td></tr>", m.active.t_stat);
+    let _ = write!(s, "<tr><th>active t</th><td>{}</td></tr>", m.active.t_stat.map_or("—".to_string(), |v| format!("{:.2}", v)));
     let _ = write!(s, "<tr><th>buy&amp;hold</th><td>{:.4}</td></tr>", m.buy_and_hold);
     let _ = write!(s, "<tr><th>gaps (missing/partial)</th><td>{} / {}</td></tr>", report.gaps.missing_trading_days.len(), report.gaps.partial_days.len());
     let _ = write!(s, "</table>");
@@ -213,7 +213,7 @@ pub fn render_soft_html(report: &SoftReport, series: &EquitySeries, avg_leaf: &[
     let _ = write!(s, "<tr><th>engaged n</th><td>{}</td></tr>", m.engaged.count);
     let _ = write!(s, "<tr><th>engaged mean_net</th><td>{:.4}</td></tr>", m.engaged.mean_net);
     let _ = write!(s, "<tr><th>engaged hit%</th><td>{:.1}</td></tr>", m.engaged.hit_rate * 100.0);
-    let _ = write!(s, "<tr><th>engaged t</th><td>{:.2}</td></tr>", m.engaged.t_stat);
+    let _ = write!(s, "<tr><th>engaged t</th><td>{}</td></tr>", m.engaged.t_stat.map_or("—".to_string(), |v| format!("{:.2}", v)));
     let _ = write!(s, "<tr><th>position n</th><td>{}</td></tr>", m.position.count);
     let _ = write!(s, "<tr><th>position mean_net</th><td>{:.4}</td></tr>", m.position.mean_net);
     let _ = write!(s, "<tr><th>buy&amp;hold</th><td>{:.4}</td></tr>", m.buy_and_hold);
@@ -249,7 +249,7 @@ pub fn render_sim_html(report: &SimReport, steps: Option<&[SimStepRecord]>) -> S
     let _ = write!(s, "<!doctype html><html><head><meta charset=\"utf-8\"><title>rquant sim report: {}</title>", report.tree_name);
     let _ = write!(s, "<style>body{{font-family:system-ui,Arial,sans-serif;margin:24px;max-width:720px}}table{{border-collapse:collapse}}td,th{{border:1px solid #ddd;padding:4px 8px;text-align:right}}th{{text-align:left}}.warn{{background:#fff3cd;border:1px solid #ffe08a;padding:8px;border-radius:4px;margin:12px 0}}svg{{border:1px solid #eee;margin:8px 0}}</style></head><body>");
     let _ = write!(s, "<h1>rquant sim report: {}</h1>", report.tree_name);
-    // headline 表 7 行
+    // headline 表
     let _ = write!(s, "<table><tr><th>metric</th><th>value</th></tr>");
     let _ = write!(s, "<tr><th>total_return</th><td>{:.4}</td></tr>", report.total_return);
     let _ = write!(s, "<tr><th>max_drawdown</th><td>{:.4}</td></tr>", report.max_drawdown);
@@ -258,6 +258,26 @@ pub fn render_sim_html(report: &SimReport, steps: Option<&[SimStepRecord]>) -> S
     let _ = write!(s, "<tr><th>avg_hold_bars</th><td>{:.1}</td></tr>", report.avg_hold_bars);
     let _ = write!(s, "<tr><th>turnover</th><td>{:.4}</td></tr>", report.turnover);
     let _ = write!(s, "<tr><th>buy&amp;hold</th><td>{:.4}</td></tr>", report.buy_and_hold);
+    // 风险指标行
+    let opt_fmt = |v: Option<f64>| v.map_or("—".to_string(), |x| format!("{:.2}", x));
+    let var_fmt = |v: f64| format!("{:+.4}", v);
+    if let Some(r) = &report.risk {
+        let _ = write!(s, "<tr><th>年化收益</th><td>{}</td></tr>", opt_fmt(r.ann_return));
+        let _ = write!(s, "<tr><th>年化波动</th><td>{}</td></tr>", opt_fmt(r.ann_vol));
+        let _ = write!(s, "<tr><th>Sharpe</th><td>{}</td></tr>", opt_fmt(r.sharpe));
+        let _ = write!(s, "<tr><th>Sortino</th><td>{}</td></tr>", opt_fmt(r.sortino));
+        let _ = write!(s, "<tr><th>Calmar</th><td>{}</td></tr>", opt_fmt(r.calmar));
+        let _ = write!(s, "<tr><th>VaR95</th><td>{}</td></tr>", var_fmt(r.var95));
+        let _ = write!(s, "<tr><th>CVaR95</th><td>{}</td></tr>", var_fmt(r.cvar95));
+    } else {
+        let _ = write!(s, "<tr><th>年化收益</th><td>—</td></tr>");
+        let _ = write!(s, "<tr><th>年化波动</th><td>—</td></tr>");
+        let _ = write!(s, "<tr><th>Sharpe</th><td>—</td></tr>");
+        let _ = write!(s, "<tr><th>Sortino</th><td>—</td></tr>");
+        let _ = write!(s, "<tr><th>Calmar</th><td>—</td></tr>");
+        let _ = write!(s, "<tr><th>VaR95</th><td>—</td></tr>");
+        let _ = write!(s, "<tr><th>CVaR95</th><td>—</td></tr>");
+    }
     let _ = write!(s, "</table>");
     // 净值/仓位曲线 or 占位
     match steps {
@@ -298,7 +318,7 @@ pub fn render_portfolio_html(report: &PortfolioReport) -> String {
     let _ = write!(s, "<!doctype html><html><head><meta charset=\"utf-8\"><title>rquant portfolio report: {}</title>", report.tree_name);
     let _ = write!(s, "<style>body{{font-family:system-ui,Arial,sans-serif;margin:24px;max-width:720px}}table{{border-collapse:collapse}}td,th{{border:1px solid #ddd;padding:4px 8px;text-align:right}}th{{text-align:left}}.warn{{background:#fff3cd;border:1px solid #ffe08a;padding:8px;border-radius:4px;margin:12px 0}}svg{{border:1px solid #eee;margin:8px 0}}</style></head><body>");
     let _ = write!(s, "<h1>rquant portfolio report: {}</h1>", report.tree_name);
-    // headline 表 7 行
+    // headline 表
     let _ = write!(s, "<table><tr><th>metric</th><th>value</th></tr>");
     let _ = write!(s, "<tr><th>total_return</th><td>{:.4}</td></tr>", report.total_return);
     let _ = write!(s, "<tr><th>benchmark_return</th><td>{:.4}</td></tr>", report.benchmark_return);
@@ -307,6 +327,26 @@ pub fn render_portfolio_html(report: &PortfolioReport) -> String {
     let _ = write!(s, "<tr><th>turnover</th><td>{:.4}</td></tr>", report.turnover);
     let _ = write!(s, "<tr><th>n_rebalances</th><td>{}</td></tr>", report.n_rebalances);
     let _ = write!(s, "<tr><th>avg_members</th><td>{:.2}</td></tr>", report.avg_members);
+    // 风险指标行
+    let opt_fmt = |v: Option<f64>| v.map_or("—".to_string(), |x| format!("{:.2}", x));
+    let var_fmt = |v: f64| format!("{:+.4}", v);
+    if let Some(r) = &report.risk {
+        let _ = write!(s, "<tr><th>年化收益</th><td>{}</td></tr>", opt_fmt(r.ann_return));
+        let _ = write!(s, "<tr><th>年化波动</th><td>{}</td></tr>", opt_fmt(r.ann_vol));
+        let _ = write!(s, "<tr><th>Sharpe</th><td>{}</td></tr>", opt_fmt(r.sharpe));
+        let _ = write!(s, "<tr><th>Sortino</th><td>{}</td></tr>", opt_fmt(r.sortino));
+        let _ = write!(s, "<tr><th>Calmar</th><td>{}</td></tr>", opt_fmt(r.calmar));
+        let _ = write!(s, "<tr><th>VaR95</th><td>{}</td></tr>", var_fmt(r.var95));
+        let _ = write!(s, "<tr><th>CVaR95</th><td>{}</td></tr>", var_fmt(r.cvar95));
+    } else {
+        let _ = write!(s, "<tr><th>年化收益</th><td>—</td></tr>");
+        let _ = write!(s, "<tr><th>年化波动</th><td>—</td></tr>");
+        let _ = write!(s, "<tr><th>Sharpe</th><td>—</td></tr>");
+        let _ = write!(s, "<tr><th>Sortino</th><td>—</td></tr>");
+        let _ = write!(s, "<tr><th>Calmar</th><td>—</td></tr>");
+        let _ = write!(s, "<tr><th>VaR95</th><td>—</td></tr>");
+        let _ = write!(s, "<tr><th>CVaR95</th><td>—</td></tr>");
+    }
     let _ = write!(s, "</table>");
     // 组合 vs 基准双线
     let nav_series: Vec<(f64, f64)> = report.holdings.iter().enumerate().map(|(i, h)| (i as f64, h.nav)).collect();
@@ -463,6 +503,7 @@ mod tests {
             tree_name: "simviz".into(), cost_bps: 10.0, total_return: 0.1, max_drawdown: 0.05,
             n_round_trips: 2, win_rate: 0.5, avg_hold_bars: 2.0, turnover: 4.0, buy_and_hold: 0.02,
             trades: vec![trip(0.05), trip(-0.01)],
+            risk: None,
         };
         let steps = vec![
             SimStepRecord { t: t0, target: 1.0, pos: 1.0, nav: 1.0 },
@@ -491,6 +532,7 @@ mod tests {
             n_rebalances: 3, avg_members: 1.0, total_return: 0.06, max_drawdown: 0.02,
             turnover: 3.0, benchmark_return: 0.01,
             holdings: vec![h(1.0, 1.0, "A"), h(1.03, 1.0, "A"), h(1.06, 1.01, "B")],
+            risk: None,
         };
         let a = render_portfolio_html(&rep);
         assert_eq!(a, render_portfolio_html(&rep));

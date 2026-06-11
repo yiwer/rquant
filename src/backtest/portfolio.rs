@@ -139,6 +139,8 @@ pub struct PortfolioReport {
     pub turnover: f64,
     pub benchmark_return: f64,
     pub holdings: Vec<HoldingsRecord>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub risk: Option<crate::report::risk::RiskMetrics>,
 }
 
 /// 组合回测配置。
@@ -343,6 +345,11 @@ pub async fn run_portfolio(cfg: &PortfolioConfig, llm: &LlmEvaluator) -> Result<
     let total_return = nav - 1.0;
     let benchmark_return = bnav - 1.0;
 
+    // 风险指标：从 holdings 的 (t, nav) 序列计算
+    let nav_series: Vec<(NaiveDateTime, f64)> =
+        holdings.iter().map(|h| (h.t, h.nav)).collect();
+    let risk = crate::report::risk::risk_metrics(&nav_series, max_drawdown);
+
     let report = PortfolioReport {
         tree_name: tree.meta.name.clone(),
         cost_bps: cfg.cost_bps,
@@ -355,6 +362,7 @@ pub async fn run_portfolio(cfg: &PortfolioConfig, llm: &LlmEvaluator) -> Result<
         turnover: total_turnover,
         benchmark_return,
         holdings,
+        risk,
     };
 
     // ── 6. 写输出 ────────────────────────────────────────────────────────────
@@ -387,6 +395,17 @@ pub fn print_portfolio_summary(report: &PortfolioReport) {
     println!("换手率      : {:.4}", report.turnover);
     println!("调仓次数    : {}", report.n_rebalances);
     println!("平均成员数  : {:.2}", report.avg_members);
+    if let Some(r) = &report.risk {
+        let fmt_opt = |v: Option<f64>| v.map_or("—".to_string(), |x| format!("{:.2}", x));
+        let fmt_var = |v: f64| format!("{:+.4}", v);
+        println!("年化收益    : {}", fmt_opt(r.ann_return));
+        println!("年化波动    : {}", fmt_opt(r.ann_vol));
+        println!("Sharpe      : {}", fmt_opt(r.sharpe));
+        println!("Sortino     : {}", fmt_opt(r.sortino));
+        println!("Calmar      : {}", fmt_opt(r.calmar));
+        println!("VaR95       : {}", fmt_var(r.var95));
+        println!("CVaR95      : {}", fmt_var(r.cvar95));
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -603,6 +622,21 @@ leaves:
         let result = score_symbol(&primary, &primary, &BTreeMap::new(), &tree, &llm, false, t, 10)
             .await.unwrap();
         assert!(result.is_none());
+    }
+
+    // ── compat test ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn portfolio_report_compat_old_json_without_risk() {
+        // 旧 JSON 无 risk 字段 → 反序列化成功且 risk == None
+        let json = r#"{
+            "tree_name": "t", "cost_bps": 5.0, "top_n": 1, "rebalance": 4,
+            "n_rebalances": 2, "avg_members": 1.0, "total_return": 0.1,
+            "max_drawdown": 0.05, "turnover": 2.0, "benchmark_return": 0.05,
+            "holdings": []
+        }"#;
+        let report: PortfolioReport = serde_json::from_str(json).unwrap();
+        assert!(report.risk.is_none(), "old JSON without risk should deserialize to risk=None");
     }
 
     // ── run_portfolio 集成测试 ────────────────────────────────────────────────

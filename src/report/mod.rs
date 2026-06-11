@@ -62,12 +62,12 @@ pub fn print_summary(report: &Report) {
     println!("forward_window={} cost_bps={}", report.forward_window, report.cost_bps);
     println!("decisions={} scored={}", m.total_decisions, m.scored);
     println!(
-        "active  : n={} mean_net={:.4} hit={:.1}% t={:.2}",
+        "active  : n={} mean_net={:.4} hit={:.1}%",
         m.active.count,
         m.active.mean_net,
         m.active.hit_rate * 100.0,
-        m.active.t_stat
     );
+    println!("t统计量   : {}", m.active.t_stat.map_or("—".to_string(), |v| format!("{:.2}", v)));
     println!(
         "T+1 exec: n={} mean_net={:.4} hit={:.1}%",
         m.t1_executable.count,
@@ -120,12 +120,13 @@ pub fn print_soft_summary(report: &SoftReport) {
     println!("forward_window={} cost_bps={}", report.forward_window, report.cost_bps);
     println!("decisions={} scored={}", m.total_decisions, m.scored);
     println!(
-        "engaged : n={} mean_expected_net={:.4} hit={:.1}% t={:.2}",
-        m.engaged.count, m.engaged.mean_net, m.engaged.hit_rate * 100.0, m.engaged.t_stat
+        "engaged : n={} mean_expected_net={:.4} hit={:.1}%",
+        m.engaged.count, m.engaged.mean_net, m.engaged.hit_rate * 100.0,
     );
+    println!("t统计量   : {}", m.engaged.t_stat.map_or("—".to_string(), |v| format!("{:.2}", v)));
     println!(
-        "position: n={} mean_net={:.4} hit={:.1}% t={:.2}",
-        m.position.count, m.position.mean_net, m.position.hit_rate * 100.0, m.position.t_stat
+        "position: n={} mean_net={:.4} hit={:.1}%",
+        m.position.count, m.position.mean_net, m.position.hit_rate * 100.0,
     );
     println!("buy&hold={:.4}", m.buy_and_hold);
     if let Some(wf) = &report.walk_forward {

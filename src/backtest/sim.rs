@@ -193,6 +193,8 @@ pub struct SimReport {
     pub turnover: f64,
     pub buy_and_hold: f64,
     pub trades: Vec<RoundTrip>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub risk: Option<crate::report::risk::RiskMetrics>,
 }
 
 /// 逐 bar 决策记录（traces JSONL 行）。
@@ -357,6 +359,11 @@ pub async fn run_sim(cfg: &BacktestConfig, llm: &LlmEvaluator, soft: bool) -> Re
     let max_drawdown = acc.max_drawdown;
     let turnover = acc.turnover;
 
+    // 风险指标：从 step_records 的 (t, nav) 序列计算
+    let nav_series: Vec<(chrono::NaiveDateTime, f64)> =
+        step_records.iter().map(|r| (r.t, r.nav)).collect();
+    let risk = crate::report::risk::risk_metrics(&nav_series, max_drawdown);
+
     let report = SimReport {
         tree_name: tree.meta.name.clone(),
         cost_bps: cfg.cost_bps,
@@ -368,6 +375,7 @@ pub async fn run_sim(cfg: &BacktestConfig, llm: &LlmEvaluator, soft: bool) -> Re
         turnover,
         buy_and_hold,
         trades: trips,
+        risk,
     };
 
     // ── 写输出 ───────────────────────────────────────────────────────────────
@@ -421,6 +429,17 @@ pub fn print_sim_summary(report: &SimReport) {
     println!("平均持仓期: {:.1} bars", report.avg_hold_bars);
     println!("换手率    : {:.4}", report.turnover);
     println!("买入持有  : {:.4}", report.buy_and_hold);
+    if let Some(r) = &report.risk {
+        let fmt_opt = |v: Option<f64>| v.map_or("—".to_string(), |x| format!("{:.2}", x));
+        let fmt_var = |v: f64| format!("{:+.4}", v);
+        println!("年化收益  : {}", fmt_opt(r.ann_return));
+        println!("年化波动  : {}", fmt_opt(r.ann_vol));
+        println!("Sharpe    : {}", fmt_opt(r.sharpe));
+        println!("Sortino   : {}", fmt_opt(r.sortino));
+        println!("Calmar    : {}", fmt_opt(r.calmar));
+        println!("VaR95     : {}", fmt_var(r.var95));
+        println!("CVaR95    : {}", fmt_var(r.cvar95));
+    }
 }
 
 #[cfg(test)]
@@ -785,6 +804,19 @@ time,open,high,low,close,volume
             trace_lines, 5,
             "traces line count should equal decision count (5), got {trace_lines}"
         );
+    }
+
+    #[test]
+    fn sim_report_compat_old_json_without_risk() {
+        // 旧 JSON 无 risk 字段 → 反序列化成功且 risk == None
+        let json = r#"{
+            "tree_name": "t", "cost_bps": 5.0, "total_return": 0.1,
+            "max_drawdown": 0.05, "n_round_trips": 2, "win_rate": 0.5,
+            "avg_hold_bars": 3.0, "turnover": 4.0, "buy_and_hold": 0.02,
+            "trades": []
+        }"#;
+        let report: SimReport = serde_json::from_str(json).unwrap();
+        assert!(report.risk.is_none(), "old JSON without risk should deserialize to risk=None");
     }
 
     #[tokio::test]

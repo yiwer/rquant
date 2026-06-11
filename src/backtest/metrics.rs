@@ -18,8 +18,10 @@ pub struct SignalStat {
     pub hit_rate: f64,
     /// 净收益标准差。
     pub std: f64,
-    /// t 统计量；受前瞻窗口重叠影响，样本自相关导致其偏乐观，勿据此判断显著性。
-    pub t_stat: f64,
+    /// t 统计量（sample std / √n；n<2 或 std≈0 → None）。
+    /// 受前瞻窗口重叠影响，样本自相关导致其偏乐观，勿据此判断显著性。
+    #[serde(default)]
+    pub t_stat: Option<f64>,
 }
 
 /// 硬回测全量度量。
@@ -48,14 +50,14 @@ pub struct Metrics {
 pub(crate) fn signal_stat(nets: &[f64]) -> SignalStat {
     let count = nets.len();
     if count == 0 {
-        return SignalStat { count: 0, mean_net: 0.0, hit_rate: 0.0, std: 0.0, t_stat: 0.0 };
+        return SignalStat { count: 0, mean_net: 0.0, hit_rate: 0.0, std: 0.0, t_stat: None };
     }
     let mean = nets.iter().sum::<f64>() / count as f64;
     let var = nets.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / count as f64;
     let std = var.sqrt();
     let wins = nets.iter().filter(|x| **x > 0.0).count();
     let hit_rate = wins as f64 / count as f64;
-    let t_stat = if std == 0.0 { 0.0 } else { mean / (std / (count as f64).sqrt()) };
+    let t_stat = crate::report::risk::t_stat(nets);
     SignalStat { count, mean_net: mean, hit_rate, std, t_stat }
 }
 
@@ -142,5 +144,37 @@ mod tests {
         assert_eq!(m.t1_executable.count, 1);
         assert_eq!(m.by_leaf.get("leaf_l").unwrap().count, 2);
         assert_eq!(*m.node_label_counts.get("a::up").unwrap(), 3);
+    }
+
+    #[test]
+    fn signal_stat_t_stat_matches_risk_t_stat() {
+        use approx::assert_relative_eq;
+        // 已知样本 [0.04, -0.03]：t_stat via risk::t_stat
+        let nets = [0.04_f64, -0.03];
+        let stat = signal_stat(&nets);
+        let expected = crate::report::risk::t_stat(&nets);
+        assert_eq!(stat.t_stat, expected, "SignalStat.t_stat must match risk::t_stat");
+        // 当 nets 非空且 std>0 时结果是 Some
+        assert!(stat.t_stat.is_some());
+        // 空样本 → None
+        let empty = signal_stat(&[]);
+        assert!(empty.t_stat.is_none());
+        // 单元素 → None
+        let single = signal_stat(&[1.0]);
+        assert!(single.t_stat.is_none());
+        // std≈0 → None
+        let uniform = signal_stat(&[2.0, 2.0, 2.0]);
+        assert!(uniform.t_stat.is_none());
+        // 已知闭式：[1.0, 2.0, 3.0] mean=2, sample_std=1 → t=2√3
+        let known = signal_stat(&[1.0, 2.0, 3.0]);
+        assert_relative_eq!(known.t_stat.unwrap(), 2.0 * 3.0_f64.sqrt(), epsilon = 1e-12);
+    }
+
+    #[test]
+    fn signal_stat_old_json_compat_without_t_stat() {
+        // 旧 JSON 无 t_stat 字段 → serde default = None
+        let json = r#"{"count":2,"mean_net":0.005,"hit_rate":0.5,"std":0.01}"#;
+        let stat: SignalStat = serde_json::from_str(json).unwrap();
+        assert!(stat.t_stat.is_none(), "old JSON without t_stat must deserialize to None");
     }
 }
