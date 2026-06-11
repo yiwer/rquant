@@ -1038,8 +1038,9 @@ time,open,high,low,close,volume
         assert!((targets[1] - 0.5).abs() < 1e-9, "hold 0.5, got {}", targets[1]);
         assert!((targets[2] - 1.0).abs() < 1e-9, "add to 1.0, got {}", targets[2]);
         assert!((targets[3] - 1.0).abs() < 1e-9, "hold 1.0, got {}", targets[3]);
-        // 期末清算一个回合；回合记录首次入场价 10.0
+        // 期末清算一个回合；回合记录首次入场价 10.0，高水位仓位 1.0（加满）
         assert_eq!(report.n_round_trips, 1);
         assert_relative_eq!(report.trades[0].entry_px, 10.0);
+        assert_relative_eq!(report.trades[0].max_abs_pos, 1.0);
     }
 }

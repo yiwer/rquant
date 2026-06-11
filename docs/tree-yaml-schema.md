@@ -124,6 +124,7 @@ leaves:
   - **数值**：∈(0,1]，加载期校验（既有行为；0 非法）。
   - **表达式字符串**：决策时对当时 Context 求值；求值失败或非有限值 → 0（弃权=不持仓，**表达式结果 0 合法**——与数值形式的 (0,1] 口径刻意不对称），有限值 clamp 到 [0,1]。可引用 params/factors 与 sim 状态量。引用 `pos` 即获得**相对调仓**语义：`"min(1, pos + 0.25)"` 加一单位、`"pos"` 维持现仓、`"max(0, pos - 0.25)"` 减一单位（结果 0 等价于平仓）。
   - 注意：sim 状态量（pos/entry_price/极值等）只在 `--sim` 模式有真实值；打分/portfolio 模式恒为默认（pos=0 等），引用它们的表达式按默认值求值。
+  - 带引号的纯数字（`weight: "0.5"`，或经 params 替换坍缩成字面量的 `weight: "unit"`）在加载期被识别为**常量**，套用与数值形式相同的 (0,1] 校验——引号不能绕过范围检查。
 
 **软模式 position 口径**：净仓位 `r` 取分布内所有叶子中最大 `horizon` 对应的 gross 收益（`max_h` 腿），以避免多腿不同窗口下的口径混用。
 
@@ -216,6 +217,8 @@ risk:
 | `max_hold_bars` | `bars_held ≥ max_hold_bars` | `target=0`，reason="max_hold" |
 
 三者按 stop→tp→max_hold 顺序检查，命中即短路，优先于树决策（reason="tree"）。非 sim 模式下 `risk:` 块被解析但不使用。
+
+> 风控触发时 `target=0` 直接产生，**不经过树遍历，也不求值任何叶子 `weight` 表达式**——金字塔类 weight 表达式与 `risk:` 块组合时，离场 bar 上 weight 表达式被完全旁路。
 
 ---
 

@@ -223,7 +223,18 @@ pub fn load_tree_str(src: &str) -> Result<Tree> {
                 let e = parse_str(s).map_err(|e| Error::Tree(format!("leaf '{id}' weight: {e}")))?;
                 let e = substitute(&e, &env);
                 check_no_unknown_idents(&e, &format!("leaf '{id}' weight"))?;
-                Weight::Expr(e)
+                // 带引号的纯数字（"0.5"，或 params 替换后坍缩成字面量的 "unit"）
+                // 按常量处理，套用与数值形式相同的 (0,1] 加载期校验——防止引号绕过范围检查
+                if let Expr::Number(w) = e {
+                    if !(w > 0.0 && w <= 1.0) {
+                        return Err(Error::Tree(format!(
+                            "leaf '{id}' weight must be in (0,1], got {w}"
+                        )));
+                    }
+                    Weight::Const(w)
+                } else {
+                    Weight::Expr(e)
+                }
             }
             Some(_) => {
                 return Err(Error::Tree(format!(
@@ -760,6 +771,13 @@ leaves:
         // 未知标识符 / 坏语法 → 加载错
         assert!(load_tree_str(&ok.replace("pos + unit", "nope + 1")).is_err());
         assert!(load_tree_str(&ok.replace("min(1, pos + unit)", "min(1,")).is_err());
+        // 带引号的纯数字坍缩为 Const 并套用 (0,1] 校验——引号不能绕过范围检查
+        let quoted = load_tree_str(&ok.replace("min(1, pos + unit)", "0.5")).unwrap();
+        assert!(matches!(quoted.leaves["leaf_l"].weight, Weight::Const(w) if (w - 0.5).abs() < 1e-12));
+        assert!(load_tree_str(&ok.replace("min(1, pos + unit)", "1.5")).is_err());
+        // params 替换后坍缩成字面量的同理
+        let collapsed = load_tree_str(&ok.replace("min(1, pos + unit)", "unit")).unwrap();
+        assert!(matches!(collapsed.leaves["leaf_l"].weight, Weight::Const(w) if (w - 0.25).abs() < 1e-12));
     }
 
     #[test]
