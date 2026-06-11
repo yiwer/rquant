@@ -29,11 +29,11 @@ CSV 文件
 
 ### 3. DSL 层（`src/dsl/`）
 
-实现量化谓词的词法分析（`lexer.rs`）、语法分析（`parser.rs`，Pratt 算符优先解析）、AST（`ast.rs`，`Expr` 枚举）与求值（`eval.rs`）。支持三种求值模式：`eval` 返回 `Value`（Scalar/Series/Bool）；`eval_bool` 用于分支 when；`eval_scalar` 用于 strength；`eval_fuzzy` 用于 `strength: "auto"`（Gödel 模糊逻辑）。NaN 弃权语义：所有比较（包括 `==` / `!=`）在任一操作数为 NaN 时返回 false，预热期自动弃权走 default。
+实现量化谓词的词法分析（`lexer.rs`）、语法分析（`parser.rs`，Pratt 算符优先解析）、AST（`ast.rs`，`Expr` 枚举，含 `Cached` 因子缓存槽变体）与求值（`eval.rs`）。支持三种求值模式：`eval` 返回 `Value`（Scalar/Series/Bool）；`eval_bool` 用于分支 when；`eval_scalar` 用于 strength；`eval_fuzzy` 用于 `strength: "auto"`（Gödel 模糊逻辑）。`count`/`barssince` 的条件参数走独立的逐位布尔序列求值（`eval_bool_series`，尾对齐 + NaN 逐位弃权）。因子经 `Expr::Cached` 槽位在 `Context.eval_cache` 中按决策点 memoize（同因子多处引用只真算一次）。NaN 弃权语义：所有比较（包括 `==` / `!=`）在任一操作数为 NaN 时返回 false，预热期自动弃权走 default。
 
 ### 4. 树层（`src/tree/`）
 
-`schema.rs` 定义 YAML 的 serde 类型（`TreeSpec`/`NodeSpec`/`BranchSpec`/`LeafSpec`/`Meta`/`Stance`）；`loader.rs` 将 YAML 编译为运行时树（`Tree`），同时解析所有 DSL 表达式、解析 `strength`（`Strength::Expr` / `Strength::Auto(scale)`），并执行完整的五项校验：root 必须是节点、无悬空引用、所有节点可达、DAG 无环、叶子 stance 在 `meta.stances` 内。报错精确到节点 id 与表达式内容。
+`schema.rs` 定义 YAML 的 serde 类型（`TreeSpec`/`NodeSpec`/`BranchSpec`/`LeafSpec`/`JudgeSpec`/`Meta`/`Stance`）；`loader.rs` 将 YAML 编译为运行时树（`Tree`），同时解析所有 DSL 表达式、解析 `strength`（`Strength::Expr` / `Strength::Auto(scale)`）、解析叶子 `weight`（常量或决策时求值的 DSL 表达式，`Weight::Const`/`Weight::Expr`）、物化 `judges` 引用（label→goto 落点 + `judge:<名>` 缓存 scope）、给因子体包 `Cached` 缓存槽，并执行完整的五项校验：root 必须是节点、无悬空引用、所有节点可达、DAG 无环、叶子 stance 在 `meta.stances` 内。报错精确到节点 id 与表达式内容。
 
 ### 5. 评估器层（`src/eval/`）
 
