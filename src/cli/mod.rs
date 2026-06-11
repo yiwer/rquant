@@ -2,6 +2,7 @@ use crate::backtest::portfolio::{run_portfolio, print_portfolio_summary, Portfol
 use crate::backtest::runner::{run, BacktestConfig};
 use crate::eval::llm::client::OpenAiLlm;
 use crate::eval::llm::{LlmConfig, LlmEvaluator};
+use crate::factor::{FactorConfig, FactorSpecItem, run_factor, print_factor_summary};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -106,6 +107,28 @@ enum Cmd {
         #[arg(long, default_value_t = false)]
         portfolio: bool,
     },
+    /// Cross-sectional factor workbench: IC/RankIC, decay, quantile layers, correlation
+    Factor {
+        #[arg(long)]
+        universe: PathBuf,
+        /// Repeatable: --factor "name=DSL expr"
+        #[arg(long = "factor", value_name = "NAME=EXPR")]
+        factor: Vec<String>,
+        #[arg(long, default_value_t = 16)]
+        sample: usize,
+        #[arg(long, default_value_t = 16)]
+        horizon: usize,
+        #[arg(long, default_value_t = 5)]
+        layers: usize,
+        #[arg(long, default_value_t = 100)]
+        warmup: usize,
+        #[arg(long, default_value_t = 100)]
+        window: usize,
+        #[arg(long, default_value = "factor_report.json")]
+        out: PathBuf,
+        #[arg(long)]
+        html: Option<PathBuf>,
+    },
     /// Cross-sectional portfolio: run one tree across a universe, hold top-N equal-weight
     Portfolio {
         #[arg(long)]
@@ -189,6 +212,47 @@ pub async fn main() -> anyhow::Result<()> {
             } else {
                 let report = run(&cfg, &llm).await?;
                 crate::report::print_summary(&report);
+            }
+        }
+        Cmd::Factor { universe, factor, sample, horizon, layers, warmup, window, out, html } => {
+            if factor.is_empty() {
+                return Err(anyhow::anyhow!("--factor: at least one factor expression is required (use --factor 'name=expr')"));
+            }
+            let mut factors: Vec<FactorSpecItem> = Vec::new();
+            for spec in &factor {
+                let eq_pos = spec.find('=').ok_or_else(|| {
+                    anyhow::anyhow!("--factor expects 'NAME=EXPR', got '{spec}' (missing '=')")
+                })?;
+                let name = &spec[..eq_pos];
+                let expr = &spec[eq_pos + 1..];
+                if name.is_empty() {
+                    return Err(anyhow::anyhow!("--factor: factor name must not be empty in '{spec}'"));
+                }
+                if expr.is_empty() {
+                    return Err(anyhow::anyhow!("--factor: factor expression must not be empty in '{spec}'"));
+                }
+                if factors.iter().any(|f| f.name == name) {
+                    return Err(anyhow::anyhow!("--factor: duplicate factor name '{name}'"));
+                }
+                factors.push(FactorSpecItem { name: name.to_string(), expr: expr.to_string() });
+            }
+            let cfg = FactorConfig {
+                universe_path: universe,
+                factors,
+                sample,
+                horizon,
+                layers,
+                warmup,
+                window,
+                out_path: out,
+                html_path: html.clone(),
+            };
+            let report = run_factor(&cfg)?;
+            print_factor_summary(&report);
+            if let Some(html_path) = html {
+                let html_str = crate::report::viz::render_factor_html(&report);
+                std::fs::write(&html_path, &html_str)?;
+                println!("wrote factor HTML report to {}", html_path.display());
             }
         }
         Cmd::Fetch { symbol, scale, out, datalen, base_url, adjust } => {

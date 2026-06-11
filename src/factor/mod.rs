@@ -551,6 +551,86 @@ pub fn run_factor(cfg: &FactorConfig) -> Result<FactorReport> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 打印摘要
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// 打印因子检验摘要到 stdout（格式匹配既有 print_summary 风格）。
+pub fn print_factor_summary(report: &FactorReport) {
+    let fmt_opt = |v: Option<f64>| v.map_or("—".to_string(), |x| format!("{:.4}", x));
+    let fmt_opt2 = |v: Option<f64>| v.map_or("—".to_string(), |x| format!("{:.2}", x));
+
+    println!(
+        "=== rquant factor workbench: {} factor(s), sample={}, horizon={}, layers={} ===",
+        report.factors.len(),
+        report.sample,
+        report.horizon,
+        report.layers_q,
+    );
+    println!("n_symbols={} n_sample_points={}", report.n_symbols, report.n_sample_points);
+
+    for fs in &report.factors {
+        println!("─── factor: {} [{}] ─────────────────────────────", fs.name, fs.expr);
+        println!("  n_periods={} n_skipped={}", fs.n_periods, fs.n_skipped);
+        println!(
+            "  RankIC  mean={} ICIR={} t={} pos%={}",
+            fmt_opt(fs.rank_ic_mean),
+            fmt_opt2(fs.rank_icir),
+            fmt_opt2(fs.rank_ic_t),
+            fs.rank_ic_pos_share.map_or("—".to_string(), |x| format!("{:.1}%", x * 100.0)),
+        );
+        println!(
+            "  IC      mean={} ICIR={} t={} pos%={}",
+            fmt_opt(fs.ic_mean),
+            fmt_opt2(fs.icir),
+            fmt_opt2(fs.ic_t),
+            fs.ic_pos_share.map_or("—".to_string(), |x| format!("{:.1}%", x * 100.0)),
+        );
+        // IC 衰减一行
+        let decay_str: Vec<String> = fs
+            .ic_decay
+            .iter()
+            .map(|(h, v)| format!("h={}:{}", h, fmt_opt(*v)))
+            .collect();
+        println!("  decay   {}", decay_str.join(" "));
+
+        // 分层
+        if let Some(ls) = &fs.layers {
+            let ann_str: Vec<String> = ls
+                .ann_returns
+                .iter()
+                .enumerate()
+                .map(|(i, v)| format!("Q{}:{}", i + 1, fmt_opt(*v)))
+                .collect();
+            println!(
+                "  layers  {} → spread total={} ann={} Sharpe={}",
+                ann_str.join(" "),
+                fmt_opt(Some(ls.spread_total)),
+                fmt_opt(ls.spread_ann),
+                fmt_opt2(ls.spread_sharpe),
+            );
+            println!("  monotonicity={}", fmt_opt2(ls.monotonicity));
+        } else {
+            println!("  layers  —");
+        }
+    }
+
+    // 相关性矩阵
+    if let Some(corr) = &report.corr {
+        println!("─── correlation matrix ─────────────────────────────────");
+        // 标题行
+        let header: Vec<String> = corr.names.iter().map(|n| format!("{:>8}", n)).collect();
+        println!("         {}", header.join(" "));
+        for (i, row) in corr.values.iter().enumerate() {
+            let cells: Vec<String> = row
+                .iter()
+                .map(|v| format!("{:>8}", fmt_opt2(*v)))
+                .collect();
+            println!("  {:>6}  {}", corr.names[i], cells.join(" "));
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 测试
 // ─────────────────────────────────────────────────────────────────────────────
 
