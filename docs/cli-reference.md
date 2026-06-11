@@ -454,6 +454,84 @@ LLM 缓存按 `(model, base_url, system_prompt, node_id, rendered_inputs)` 键�
 
 ---
 
+## `signal` 子命令
+
+```
+rquant signal [OPTIONS] --tree <TREE> --state <STATE> (--primary <PATH> | --universe <PATH>)
+```
+
+生成当日交易信号。两种模式**互斥**：
+- **单标的模式**（`--primary`）：增量重放历史 bar → 纸面模拟账户 → 当日悬挂信号。
+- **组合模式**（`--universe`）：横截面打分 → top-N 等权目标 → 交易清单（增/减/调仓/持平）。
+
+### 标志一览
+
+| 标志 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `--tree <PATH>` | PathBuf | 必填 | 决策树 YAML 文件路径 |
+| `--state <PATH>` | PathBuf | 必填 | 纸交易 state JSON 路径（不存在时自动创建；见下方"state 文件语义"） |
+| `--primary <PATH>` | PathBuf | 单标的必填 | 主周期 K 线 CSV 路径（与 `--universe` 互斥） |
+| `--context <PATH>` | PathBuf | 可选 | 大周期 K 线 CSV 路径（单标的模式；缺省退化为 `--primary`） |
+| `--universe <PATH>` | PathBuf | 组合必填 | universe CSV 路径（与 `--primary` 互斥；格式同 `portfolio` 子命令） |
+| `--top <usize>` | usize | `5` | 组合模式：每期最多持仓标的数（top-N 等权） |
+| `--fetch <SYMBOL>` | string | 可选 | 运行前先 fetch 指定标的（仅单标的模式；与 `--primary` 配合写入 CSV） |
+| `--scale <u32>` | u32 | `60` | K 线周期（分钟）；仅 `--fetch` 时生效 |
+| `--datalen <u32>` | u32 | `1023` | 最多拉取 bar 数；仅 `--fetch` 时生效（新浪上限 1023） |
+| `--adjust <string>` | string | `none` | 复权方式：`none` / `qfq`；仅 `--fetch` 时生效 |
+| `--soft` | bool | `false` | 软遍历模式（`E = Σp·w·dir`）；与单标的/组合均可组合 |
+| `--commit` | bool | `false` | 将新 state 写回 `--state` 文件；不加则为 dry-run，只打印不落盘 |
+| `--out <PATH>` | PathBuf | 可选 | 若给出则将信号 JSON 写入该路径（不影响 `--commit` 语义） |
+| `--warmup <usize>` | usize | `100` | 预热 bar 数；跳过前 N 根 bar 再开始出决策 |
+| `--window <usize>` | usize | `100` | Context 历史窗口大小（每时点最多取最近 N 根 bar） |
+| `--cost-bps <f64>` | f64 | `10.0` | 往返成本（基点）；用于纸面账户 nav 计算 |
+| `--news <PATH>` | PathBuf | 可选 | 新闻 CSV（供 LLM 节点；格式同 `backtest`） |
+| `--aux NAME=PATH（可重复）` | string | — | 挂载外部 aux 序列；DSL 通过 `aux.<name>.<column>` 引用 |
+| `--llm-model <string>` | string | `""` | LLM 模型名（空则 Disabled） |
+| `--llm-base-url <string>` | string | `""` | LLM API base URL |
+| `--llm-cache-dir <PATH>` | PathBuf | `.rquant-cache/llm` | LLM 缓存目录 |
+
+### 模式互斥规则
+
+| 情况 | 结果 |
+|---|---|
+| `--primary` 与 `--universe` 同时给出 | 非零退出，stderr 提示"exactly one of" |
+| `--primary` 与 `--universe` 都不给 | 非零退出，同上 |
+| `--fetch` 与 `--universe` 同时给出 | 非零退出，stderr 提示 `--fetch requires --primary` |
+
+`--scale` / `--datalen` / `--adjust` 仅在 `--fetch` 存在时有意义，其他情况下被忽略。
+
+### state 文件语义
+
+state 文件以 JSON 格式落盘，人可读。**关键不变量与守卫**：
+
+**版本守卫（version）**
+- state 内嵌 `version` 字段（当前 = 1）。版本不符时命令报错拒绝运行，不静默重置。
+- 如需强制重建：手动删除 state 文件，下一次运行自动以 fresh 状态初始化。
+
+**树名守卫（tree_name）**
+- state 内嵌 `tree_name`（等于加载树的 `meta.name`）。若 `--tree` 指向不同的树（`meta.name` 不同），命令以错误退出，提示 tree_name 不匹配，拒绝将旧树的 state 误用于新树。
+
+**损坏拒绝（corrupt）**
+- 文件存在但内容非法 JSON（包括**空文件**）→ 报错"signal state corrupt"，**不**静默返回 fresh 状态。
+- 意图：防止磁盘写坏/截断导致悄悄丢失历史持仓。
+
+**`last_time`：悬挂决策语义**
+- `last_time` 记录已记账的最后**决策 bar** 时间，永远落后最新 bar 一根。
+- 原因：末尾 bar（`i = len−1`）称为"悬挂决策"——其执行价（次开盘）尚不存在，只出信号不记账。
+- 每次运行时，重放循环跳过 `time ≤ last_time` 的 bar，仅累积新增的可记账决策，保证**增量重放 ≡ 全量重放**（split==full 不变量）。
+- **实践含义**：日内多次运行同一数据（幂等性）→ `bars_replayed=0`，信号不变，state 不变。
+
+### 纸面账户边界声明
+
+`signal` 引擎模拟的纸面账户（paper sim）基于以下假设，与实盘存在差距，使用前请知悉：
+
+- **成交价口径**：决策于 bar i 收盘，模拟成交于 bar i+1 开盘（T+1 执行，与 `backtest --sim` 同口径）。
+- **成本口径**：往返 `cost_bps` 基点，单边 `cost_bps / 2`，不区分印花税与佣金。
+- **假设历史信号全部按 sim 口径成交**：无停牌、无涨跌停、无盘中滑点。实盘中若存在停牌或涨/跌停，纸面 nav 将虚高（实际无法成交）。
+- **无期末清算**：持仓在历史重放中滚动，不在 session 末尾强制平仓。
+
+---
+
 ## 环境变量
 
 | 变量 | 说明 |

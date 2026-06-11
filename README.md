@@ -374,6 +374,42 @@ LLM 调用 `temperature=0`，按 `sha256(model, base_url, system_prompt, node_id
 
 ---
 
+## 纸面盘（`signal`）与每日一条命令
+
+`signal` 子命令是研究闭环的最后一环：用当日最新 K 线增量重放历史、输出今日信号，结合人工下单形成完整的纸面交易流水。
+
+**研究闭环**
+
+```
+factor 检验  →  入树  →  optimize 校准  →  backtest/sim 含成本复检  →  signal 纸面盘  →  （人工下单）
+    ↑                                                                          |
+    └──────────────────────────────── 因子/参数迭代调整 ──────────────────────┘
+```
+
+### 每日一条命令（PowerShell）
+
+```powershell
+cargo run --release -- signal `
+  --tree examples/regime_adaptive_1.yaml `
+  --fetch sh600519 --scale 60 --adjust qfq `
+  --primary data\p.csv `
+  --state paper.json --commit `
+  --out signal.json
+```
+
+首次运行时 `paper.json` 不存在，自动以 fresh 状态初始化。`--commit` 将信号后的账户快照写回 `paper.json`；省略 `--commit` 则为 dry-run，只打印不落盘。
+
+### Windows 任务计划程序（收盘后自动执行）
+
+```
+schtasks /create /sc daily /st 15:30 /tn rquant-signal ^
+  /tr "cargo run --manifest-path E:\rust-app\rquant\Cargo.toml --release -- signal --tree examples/regime_adaptive_1.yaml --fetch sh600519 --scale 60 --adjust qfq --primary data\p.csv --state paper.json --commit --out signal.json"
+```
+
+A 股收盘时间 15:00，建议定时任务设为 15:30 确保数据已更新。可改用编译好的 `rquant.exe` 替换 `cargo run`，减少启动时间。
+
+---
+
 ## 构建与测试
 
 ```bash

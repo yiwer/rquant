@@ -5,6 +5,13 @@ use std::collections::HashMap;
 use std::io::Write;
 use rquant::backtest::soft::run_soft;
 use rquant::optimize::{OptimizeConfig, OptimizeReport, run_optimize};
+use rquant::signal::{
+    run_signal_single, run_signal_portfolio,
+    read_paper_state, write_paper_state,
+    write_holdings_state,
+    SignalSingleConfig, SignalPortfolioConfig,
+    TradeAction,
+};
 
 fn write_file(content: &str, suffix: &str) -> tempfile::NamedTempFile {
     let mut f = tempfile::Builder::new().suffix(suffix).tempfile().unwrap();
@@ -1556,4 +1563,339 @@ leaves:
         "portfolio HTML must have exactly 2 polylines (portfolio + benchmark)"
     );
     assert!(html.contains("基准"), "portfolio HTML must contain 基准 legend");
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// F-9 Task 5 e2e tests
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Enter/hold/exit tree 与 gen_primary_csv (32 bar, 4 days × 8 bars) 相同的合成树。
+/// warmup=5, 全量 bars_replayed = 26 (i=5..30, loop 5..31, 共 26 根可记账决策 bar)。
+/// Day-1 前缀 = 前 16 bar (2 天 × 8, len=16)，loop warmup..len-1 = 5..15 → i=5..=14 (10 根)。
+/// Day-2 增量 = 从 state_1 跑全量 (len=32)，loop 5..31，跳过 i<=14，实际重放 i=15..=30 → 16 根。
+/// 断言：split==full 不变量（serde_json::Value 相等）+ 第二跑精确值 bars_replayed=16。
+fn signal_enter_hold_exit_tree() -> String {
+    r#"
+meta: { name: sig_e2e, forward_window: 1, stances: [long, flat] }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - when: "pos == 0 and close > 0"
+        goto: leaf_long
+        label: enter
+      - when: "pos > 0 and bars_held >= 5"
+        goto: leaf_flat
+        label: exit
+      - when: "pos > 0"
+        goto: leaf_long
+        label: hold
+    default: { goto: leaf_flat, label: idle }
+leaves:
+  leaf_long: { stance: long }
+  leaf_flat: { stance: flat }
+"#
+    .to_string()
+}
+
+fn signal_gen_primary_csv() -> String {
+    // 32 bars: 4 days × 8 bars/day, 09:45 start, every 15 min
+    let mut s = String::from("time,open,high,low,close,volume\n");
+    let mut idx = 0usize;
+    for day in 0..4usize {
+        for k in 0..8usize {
+            let price = 10.0 + 0.1 * idx as f64;
+            let hour = 9 + (45 + k * 15) / 60;
+            let minute = (45 + k * 15) % 60;
+            s.push_str(&format!(
+                "2024-01-{:02} {:02}:{:02}:00,{p},{p},{p},{p},1000\n",
+                2 + day, hour, minute, p = price
+            ));
+            idx += 1;
+        }
+    }
+    s
+}
+
+fn signal_gen_context_csv() -> String {
+    String::from(
+        "time,open,high,low,close,volume\n\
+         2024-01-02 10:30:00,10.0,10.0,10.0,10.0,1\n\
+         2024-01-02 11:30:00,10.1,10.1,10.1,10.1,1\n\
+         2024-01-03 10:30:00,10.2,10.2,10.2,10.2,1\n\
+         2024-01-04 10:30:00,10.3,10.3,10.3,10.3,1\n\
+         2024-01-05 10:30:00,10.4,10.4,10.4,10.4,1\n",
+    )
+}
+
+fn make_single_cfg(
+    tree_path: &std::path::Path,
+    primary_path: &std::path::Path,
+    context_path: &std::path::Path,
+    state_path: &std::path::Path,
+) -> SignalSingleConfig {
+    SignalSingleConfig {
+        tree_path: tree_path.to_path_buf(),
+        primary_path: primary_path.to_path_buf(),
+        context_path: context_path.to_path_buf(),
+        news_path: None,
+        aux_paths: vec![],
+        window: 100,
+        warmup: 5,
+        cost_bps: 10.0,
+        soft: false,
+        state_path: state_path.to_path_buf(),
+    }
+}
+
+// F-9 T5 — signal_two_day_paper_flow:
+// 合成 32-bar 上行数据 (4 days × 8 bars)，cut 前 16 bars 作"第一天"前缀。
+// Step A: 第一天（16 bar 前缀）→ state_day1（bars_replayed=10，i=5..14）
+// Step B: --commit → write_paper_state → 再跑全量 → state_full2（bars_replayed=15，i=15..30）
+// split==full 不变量：全量 fresh state_full 与 split 后的 state_full2 的 serde_json::Value 相等。
+// 精确断言：第二跑 bars_replayed == 15（硬算：warmup=5, 全量 len=32, day-1 prefix len=16;
+//   day-1 可记账 bar: i=5..14 共 10 根（state day1 last_time = bar[14].time）;
+//   day-2 增量: i=15..30 共 15 根 → bars_replayed_2 = 15）。
+#[tokio::test]
+async fn signal_two_day_paper_flow() {
+    let tree_f = write_file(&signal_enter_hold_exit_tree(), ".yaml");
+    let full_csv = signal_gen_primary_csv();
+    let context_csv = signal_gen_context_csv();
+    let context_f = write_file(&context_csv, ".csv");
+    let full_f = write_file(&full_csv, ".csv");
+    let tmp = tempfile::tempdir().unwrap();
+
+    // ── A: full fresh run (baseline) ────────────────────────────────────────
+    let state_full_path = tmp.path().join("state_full.json");
+    let cfg_full = make_single_cfg(tree_f.path(), full_f.path(), context_f.path(), &state_full_path);
+    let (_sig_full, state_full) = run_signal_single(&cfg_full, &LlmEvaluator::Disabled)
+        .await
+        .unwrap();
+
+    // ── B: day-1 prefix = first 16 bars (header + 16 data rows) ────────────
+    let lines: Vec<&str> = full_csv.lines().collect();
+    // lines[0] = header, lines[1..=16] = bar[0..15]
+    let prefix_csv = std::iter::once(lines[0])
+        .chain(lines[1..=16].iter().copied())
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    let prefix_f = write_file(&prefix_csv, ".csv");
+
+    let state_day1_path = tmp.path().join("state_day1.json");
+    let cfg_day1 = make_single_cfg(tree_f.path(), prefix_f.path(), context_f.path(), &state_day1_path);
+    let (_sig_day1, state_day1) = run_signal_single(&cfg_day1, &LlmEvaluator::Disabled)
+        .await
+        .unwrap();
+
+    // ── Simulate --commit: write_paper_state ──────────────────────────────
+    write_paper_state(&state_day1_path, &state_day1).unwrap();
+
+    // ── C: second run from state_day1, on full data ──────────────────────
+    let state_full2_path = tmp.path().join("state_full2.json");
+    std::fs::copy(&state_day1_path, &state_full2_path).unwrap();
+
+    let cfg_full2 = make_single_cfg(tree_f.path(), full_f.path(), context_f.path(), &state_full2_path);
+    let (sig_full2, state_full2) = run_signal_single(&cfg_full2, &LlmEvaluator::Disabled)
+        .await
+        .unwrap();
+
+    // ── split==full invariant ─────────────────────────────────────────────
+    let val_full = serde_json::to_value(&state_full).unwrap();
+    let val_full2 = serde_json::to_value(&state_full2).unwrap();
+    assert_eq!(
+        val_full, val_full2,
+        "split==full invariant FAILED:\nfull={val_full}\nfull2={val_full2}"
+    );
+
+    // ── second run bars_replayed == 16 (precise) ─────────────────────────
+    // warmup=5, full len=32, day-1 prefix len=16
+    // day-1 accountable: i=5..14 → loop warmup..len-1 = 5..15, so i=5..=14 (10 bars),
+    //   last_time = bar[14].time
+    // day-2 incremental: full len=32, loop 5..31, skip i<=14, replay i=15..=30 → 16 bars
+    assert_eq!(
+        sig_full2.paper.bars_replayed, 16,
+        "second run must replay exactly 16 new accountable bars (i=15..30), got {}",
+        sig_full2.paper.bars_replayed
+    );
+
+    // ── verify read_paper_state round-trip ───────────────────────────────
+    let loaded = read_paper_state(&state_full2_path, "sig_e2e")
+        .unwrap()
+        .expect("state_full2 must exist after second run");
+    assert_eq!(loaded.tree_name, "sig_e2e");
+}
+
+// F-9 T5 — signal_portfolio_diff_chain:
+// 3-symbol universe (uniform tree → all long, weight=0.5, score=0.5)
+// Run 1: empty state → all 3 symbols Buy → write_holdings_state (--commit)
+// Run 2: same data → all Hold (持仓与目标一致)
+#[tokio::test]
+async fn signal_portfolio_diff_chain() {
+    const UNIFORM_TREE: &str = r#"
+meta: { name: port_e2e, forward_window: 1, stances: [long] }
+root: router
+nodes:
+  router:
+    type: quant
+    branches: []
+    default: { goto: leaf_long, label: uniform }
+leaves:
+  leaf_long: { stance: long, weight: 0.5 }
+"#;
+
+    let tree_f = write_file(UNIFORM_TREE, ".yaml");
+
+    // 3 symbols, each with 8 bars on the same day
+    let bars_csv = {
+        let mut s = String::from("time,open,high,low,close,volume\n");
+        for i in 0..8usize {
+            let price = 10.0 + 0.1 * i as f64;
+            let hour = 9 + (45 + i * 15) / 60;
+            let minute = (45 + i * 15) % 60;
+            s.push_str(&format!(
+                "2024-01-02 {:02}:{:02}:00,{p},{p},{p},{p},1000\n",
+                hour, minute, p = price
+            ));
+        }
+        s
+    };
+
+    let tmp = tempfile::tempdir().unwrap();
+    let f_a = write_file(&bars_csv, ".csv");
+    let f_b = write_file(&bars_csv, ".csv");
+    let f_c = write_file(&bars_csv, ".csv");
+
+    let mut universe_content = String::from("symbol,primary\n");
+    universe_content.push_str(&format!("A,{}\n", f_a.path().to_string_lossy()));
+    universe_content.push_str(&format!("B,{}\n", f_b.path().to_string_lossy()));
+    universe_content.push_str(&format!("C,{}\n", f_c.path().to_string_lossy()));
+    let universe_f = write_file(&universe_content, ".csv");
+
+    let state_path = tmp.path().join("hold_state.json");
+
+    let cfg = SignalPortfolioConfig {
+        tree_path: tree_f.path().to_path_buf(),
+        universe_path: universe_f.path().to_path_buf(),
+        top: 3,
+        window: 100,
+        warmup: 0,
+        cost_bps: 0.0,
+        soft: false,
+        aux_paths: vec![],
+        state_path: state_path.clone(),
+    };
+
+    // ── Run 1: empty state → expect 3 Buy signals ─────────────────────────
+    let (sig1, state1) = run_signal_portfolio(&cfg, &LlmEvaluator::Disabled)
+        .await
+        .unwrap();
+
+    assert_eq!(sig1.targets.len(), 3, "3 symbols should all be selected");
+    // All symbols should be Buy from empty holdings
+    for trade in &sig1.trades {
+        assert_eq!(
+            trade.action,
+            TradeAction::Buy,
+            "first run from empty state: {} should be Buy, got {:?}",
+            trade.symbol,
+            trade.action
+        );
+    }
+    // Verify weights (equal weight = 1/3)
+    for (_, w) in &sig1.targets {
+        assert!(
+            (w - 1.0 / 3.0).abs() < 1e-12,
+            "equal weight should be 1/3, got {w}"
+        );
+    }
+
+    // ── Simulate --commit: write_holdings_state ───────────────────────────
+    write_holdings_state(&state_path, &state1).unwrap();
+
+    // ── Run 2: state loaded → all Hold ────────────────────────────────────
+    let (sig2, _state2) = run_signal_portfolio(&cfg, &LlmEvaluator::Disabled)
+        .await
+        .unwrap();
+
+    assert_eq!(sig2.targets.len(), 3, "run 2 should still select 3 symbols");
+    for trade in &sig2.trades {
+        assert_eq!(
+            trade.action,
+            TradeAction::Hold,
+            "second run with matching holdings: {} should be Hold, got {:?}",
+            trade.symbol,
+            trade.action
+        );
+    }
+}
+
+// F-9 T5 — signal_cli_mutex:
+// CLI 互斥校验（子进程）：
+// 1. --primary + --universe → 非零退出，stderr 含互斥措辞
+// 2. --universe + --fetch → 非零退出，stderr 含 fetch 仅单口径报错
+#[test]
+fn signal_cli_mutex() {
+    let bin = env!("CARGO_BIN_EXE_rquant");
+    let tmp = tempfile::tempdir().unwrap();
+
+    // 为满足 clap 解析（--tree/--state 是必填），给一个虚路径；互斥校验在加载前执行
+    let fake_tree = tmp.path().join("fake.yaml");
+    let fake_state = tmp.path().join("fake_state.json");
+    let fake_primary = tmp.path().join("fake_primary.csv");
+    let fake_universe = tmp.path().join("fake_universe.csv");
+
+    // ── case 1: --primary + --universe → exactly-one-of error ───────────
+    let out1 = std::process::Command::new(bin)
+        .args([
+            "signal",
+            "--tree",
+            fake_tree.to_str().unwrap(),
+            "--state",
+            fake_state.to_str().unwrap(),
+            "--primary",
+            fake_primary.to_str().unwrap(),
+            "--universe",
+            fake_universe.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to spawn rquant");
+
+    assert!(
+        !out1.status.success(),
+        "signal --primary + --universe must exit non-zero"
+    );
+    let stderr1 = String::from_utf8_lossy(&out1.stderr);
+    assert!(
+        stderr1.contains("primary") || stderr1.contains("universe"),
+        "stderr must mention 'primary' or 'universe' in mutex error, got: {stderr1}"
+    );
+
+    // ── case 2: --universe + --fetch → fetch requires --primary error ────
+    let out2 = std::process::Command::new(bin)
+        .args([
+            "signal",
+            "--tree",
+            fake_tree.to_str().unwrap(),
+            "--state",
+            fake_state.to_str().unwrap(),
+            "--universe",
+            fake_universe.to_str().unwrap(),
+            "--fetch",
+            "sh600519",
+        ])
+        .output()
+        .expect("failed to spawn rquant");
+
+    assert!(
+        !out2.status.success(),
+        "signal --universe + --fetch must exit non-zero"
+    );
+    let stderr2 = String::from_utf8_lossy(&out2.stderr);
+    // Either "exactly one" mutex error (primary missing) or "--fetch requires --primary"
+    assert!(
+        stderr2.contains("primary") || stderr2.contains("fetch") || stderr2.contains("universe"),
+        "stderr must mention relevant flags in error, got: {stderr2}"
+    );
 }
