@@ -507,6 +507,8 @@ mod tests {
         // NaN 传播：预热期 sma 为 NaN → max/min 必须返回 NaN（弃权），不得吃掉 NaN
         assert_eq!(f("max(sma(close, 10), 1) > 0"), Value::Bool(false));
         assert_eq!(f("min(sma(close, 10), 1) < 99"), Value::Bool(false));
+        // abs 对 NaN 输入也应弃权（预热期 sma 为 NaN）
+        assert_eq!(f("abs(sma(close, 10)) > 0"), Value::Bool(false));
         // 错参数量
         assert!(eval(&parse_str("abs(1, 2)").unwrap(), &ctx).is_err());
         assert!(eval(&parse_str("max(1)").unwrap(), &ctx).is_err());
