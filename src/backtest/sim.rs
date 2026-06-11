@@ -176,6 +176,69 @@ pub fn finalize(
     closed
 }
 
+/// 开仓回合快照（持久化用；OpenTrip 为私有故转换住本文件）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TripSnapshot {
+    pub entry_t: NaiveDateTime,
+    pub entry_px: f64,
+    pub open_nav: f64,
+    pub max_abs_pos: f64,
+}
+
+/// SimAccount 可序列化快照（entry_price NaN ↔ None：serde_json 不允许 NaN）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountSnapshot {
+    pub pos: f64,
+    pub entry_price: Option<f64>,
+    pub bars_held: usize,
+    pub nav: f64,
+    pub peak_nav: f64,
+    pub max_drawdown: f64,
+    pub turnover: f64,
+    pub last_increase_date: Option<NaiveDate>,
+    pub trip: Option<TripSnapshot>,
+}
+
+impl SimAccount {
+    pub fn snapshot(&self) -> AccountSnapshot {
+        AccountSnapshot {
+            pos: self.pos,
+            entry_price: if self.entry_price.is_nan() { None } else { Some(self.entry_price) },
+            bars_held: self.bars_held,
+            nav: self.nav,
+            peak_nav: self.peak_nav,
+            max_drawdown: self.max_drawdown,
+            turnover: self.turnover,
+            last_increase_date: self.last_increase_date,
+            trip: self.trip.as_ref().map(|t| TripSnapshot {
+                entry_t: t.entry_t,
+                entry_px: t.entry_px,
+                open_nav: t.open_nav,
+                max_abs_pos: t.max_abs_pos,
+            }),
+        }
+    }
+
+    pub fn restore(s: &AccountSnapshot) -> SimAccount {
+        SimAccount {
+            pos: s.pos,
+            entry_price: s.entry_price.unwrap_or(f64::NAN),
+            bars_held: s.bars_held,
+            nav: s.nav,
+            peak_nav: s.peak_nav,
+            max_drawdown: s.max_drawdown,
+            turnover: s.turnover,
+            last_increase_date: s.last_increase_date,
+            trip: s.trip.as_ref().map(|t| OpenTrip {
+                entry_t: t.entry_t,
+                entry_px: t.entry_px,
+                open_nav: t.open_nav,
+                max_abs_pos: t.max_abs_pos,
+            }),
+        }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SimReport / SimStepRecord / run_sim / print_sim_summary
 // ─────────────────────────────────────────────────────────────────────────────
@@ -840,5 +903,30 @@ time,open,high,low,close,volume
             first_reason, "stop",
             "first trip reason should be 'stop', got '{first_reason}'"
         );
+    }
+
+    #[test]
+    fn account_snapshot_roundtrip_preserves_everything() {
+        // 持仓中账户（含 open trip）
+        let mut acc = SimAccount::default();
+        sim_step(&mut acc, 10.0, 10.0, 10.5, t("2024-01-02 10:00:00"), 0.7, 0.001, "tree");
+        let snap = acc.snapshot();
+        assert_eq!(snap.entry_price, Some(10.0));
+        let json = serde_json::to_string(&snap).unwrap(); // NaN 不出现 → 序列化成功
+        let back: AccountSnapshot = serde_json::from_str(&json).unwrap();
+        let acc2 = SimAccount::restore(&back);
+        // 恢复后继续走一步，与原账户走同一步结果一致
+        let mut a1 = acc;
+        let mut a2 = acc2;
+        let r1 = sim_step(&mut a1, 10.5, 10.6, 10.4, t("2024-01-03 10:00:00"), 0.0, 0.001, "tree");
+        let r2 = sim_step(&mut a2, 10.5, 10.6, 10.4, t("2024-01-03 10:00:00"), 0.0, 0.001, "tree");
+        assert_eq!(r1.is_some(), r2.is_some());
+        assert!((a1.nav - a2.nav).abs() < 1e-15 && (a1.pos - a2.pos).abs() < 1e-15);
+        assert_eq!(a1.bars_held, a2.bars_held);
+        // 空仓账户：entry NaN → snapshot None → restore NaN
+        let flat = SimAccount::default();
+        let s = flat.snapshot();
+        assert!(s.entry_price.is_none() && s.trip.is_none());
+        assert!(SimAccount::restore(&s).entry_price.is_nan());
     }
 }
