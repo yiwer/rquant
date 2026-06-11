@@ -13,6 +13,7 @@ rquant <SUBCOMMAND>
   backtest    在本地 CSV K 线上运行回测（可选 LLM 节点）
   fetch       从新浪财经拉取 K 线到本地 CSV
   report      把回测产物（JSON + traces）渲染为自包含 HTML
+  portfolio   横截面组合：同一棵树逐标的打分，持仓 top-N 等权
 ```
 
 ---
@@ -150,6 +151,74 @@ rquant report [OPTIONS]
 **硬模式**：`--traces` 与 `--primary` 需**同时给出**才能绘时间序列曲线（前瞻收益累计曲线）；只给 `--report` 则仅渲染聚合图表。
 
 **软模式（`--soft`）**：渲染 `SoftReport` JSON，`expected_net` 已内含于 traces 中，**不需要也不使用 `--primary`**。若指定了 `--primary`，会打印提示（`--primary ignored in --soft report`）但不报错。
+
+---
+
+## `portfolio` 子命令
+
+```
+rquant portfolio [OPTIONS] --tree <TREE> --universe <UNIVERSE>
+```
+
+对 universe 内每只标的跑同一棵树，逐期取横截面 top-N 等权持仓，输出组合净值报告。
+
+### 标志一览
+
+| 标志 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `--tree <PATH>` | PathBuf | 必填 | 决策树 YAML 文件路径（与 `backtest` 同格式） |
+| `--universe <PATH>` | PathBuf | 必填 | universe CSV 文件路径（见下方格式） |
+| `--top <usize>` | usize | `5` | 每期最多持仓标的数（top-N 等权） |
+| `--rebalance <usize>` | usize | `16` | 调仓间隔（timeline bar 数）；`warmup` 后每隔 `rebalance` 根 bar 调仓一次 |
+| `--warmup <usize>` | usize | `100` | 跳过前 N 根 timeline bar，与 `backtest --warmup` 语义一致 |
+| `--window <usize>` | usize | `100` | 传入 Context 的窗口大小（每时点最多取最近 N 根 bar） |
+| `--cost-bps <f64>` | f64 | `10.0` | 单次调仓换手成本（基点）；`nav *= 1 − rate × turnover` |
+| `--soft` | bool | `false` | 启用软遍历打分（`E = Σp·w·dir`）；否则用硬叶分数（`dir × weight`）|
+| `--aux NAME=PATH（可重复）` | string | — | 挂载外部 aux 序列；DSL 经 `aux.<name>.<column>` 引用 |
+| `--out <PATH>` | PathBuf | `portfolio.json` | 输出 `PortfolioReport` JSON 路径 |
+| `--traces <PATH>` | PathBuf | 可选 | 若给出则写逐期 holdings JSONL（每行一个 `HoldingsRecord`） |
+| `--llm-model <string>` | string | `""` | LLM 模型名（与 `backtest` 同；空则 Disabled） |
+| `--llm-base-url <string>` | string | `""` | LLM API base URL |
+| `--llm-cache-dir <PATH>` | PathBuf | `.rquant-cache/llm` | LLM 响应缓存目录 |
+
+### universe CSV 格式
+
+```
+symbol,primary[,context]
+sh600000,data/sh600000_60m.csv
+sh600036,data/sh600036_60m.csv,data/sh600036_daily.csv
+sz000001,data/sz000001_60m.csv
+```
+
+- **首行必须是表头**：至少两列 `symbol,primary`；可选第三列 `context`（大周期 bar，缺省回退为 primary）。
+- `symbol` 非空且全局唯一（重复报错）。
+- `primary` / `context` 为相对于当前工作目录的路径（与命令行其他 `--xxx PATH` 一致）。
+- 读入后按 `symbol` 字典序排序（影响并列分数的确定性打破顺序）。
+
+### 新鲜度与停牌语义
+
+**新鲜（fresh）**：某标的在调仓时间点 `t` 恰有 bar（即 `time == t`）时视为可交易。
+
+- **不新鲜（停牌）**：当期评分跳过，不进入候选集；若之前已持有，按最后已知收盘价（`last_close_at(t)`）计价，不产生收益也不计换手。
+- **选股池**：每调仓点仅在新鲜标的中取分数 > 0 的 top-N；若新鲜标的不足 N 只，实际持仓数为新鲜且分数 > 0 的标的数（可 < N）。
+
+### 基准口径
+
+基准为 **universe 等权组合**（每调仓点对所有 `last_close_at(t)` 存在的标的等权重置，无成本）。与策略组合采用完全相同的 timeline 和调仓节奏，结果可直接相减得超额收益。
+
+### 输出摘要示例
+
+```
+=== rquant PORTFOLIO: strength_demo ===
+cost_bps=10  top_n=2  rebalance=8
+总收益率    : -0.1650
+基准收益率  : -0.2504
+超额收益    : 0.0854
+最大回撤    : 0.2979
+换手率      : 106.0000
+调仓次数    : 121
+平均成员数  : 1.40
+```
 
 ---
 

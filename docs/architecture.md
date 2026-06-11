@@ -49,13 +49,15 @@ CSV 文件
 
 `sim.rs` 实现第三种运行模式——**顺序权益模拟**（`--sim`）：`SimAccount` 持有持仓/净值/峰值等状态；`sim_step` 按三段记账（旧仓段、成本段、新仓段）步进，内含 T+1 同日禁减仓约束；`finalize` 期末强制清算；`run_sim` 顺序（无并发）逐 bar 调度树遍历 + 风控覆盖 + `sim_step`，输出 `SimReport`（含 `Vec<RoundTrip>` 回合列表）与可选逐步 traces。成本口径：单边 `(cost_bps/2)/1e4 × |Δ|`，一进一出合计往返成本；T+1 口径：同自然日加仓当日禁减仓（整体顺延）。完整记账语义见 `docs/superpowers/specs/2026-06-10-rquant-e4-sim-design.md` §3。
 
+`portfolio.rs` 实现**第四种入口——横截面组合层**（`portfolio` 子命令）：在单标的三种模式（前瞻打分/软打分/模拟）之上，增加跨标的编排能力。核心流程：① `build_timeline` 合并 universe 所有标的 bar 时间的有序并集；② 每个调仓点 `t` 对各标的调用 `score_symbol`（复用 `build_context` + `traverse`/`traverse_soft`），不新鲜（停牌）标的返回 `None` 当期出局；③ `select_top(scores, n)` 取分数 > 0 的降序前 N（并列按 symbol 字典序打破），构造等权 `w_new`；④ `turnover_between(w_old, w_new)` 算换手，`nav *= 1 − rate × tv`，再用 `accrue(weights, px_start, px_end)` 算区间收益；⑤ 基准为每调仓点对所有有价格的标的无成本等权重置。停牌持仓成员以 `last_close_at` 最后已知价计价，贡献零收益（防御）。输出 `PortfolioReport`（含 `holdings: Vec<HoldingsRecord>`）与可选 traces JSONL。
+
 ### 8. 报告层（`src/report/`）
 
 `mod.rs` 定义 `Report`/`SoftReport` 的序列化结构，实现 JSON 写出（`serde_json::to_string_pretty`，确定性）与 JSONL trace 写出；`curve.rs` 从 traces 推导累计前瞻收益曲线、直方图、叶子概率堆叠；`viz.rs` 将所有数据渲染为自包含 HTML（内联 SVG）。
 
 ### 9. 命令行层（`src/cli/`）
 
-`mod.rs` 用 clap 定义三个子命令（`backtest`/`fetch`/`report`），调用各层业务函数，处理 LLM 配置（三项非空则启用 `OpenAiLlm`，否则 `Disabled`），将软/硬模式路由到对应的 runner 与报告函数。
+`mod.rs` 用 clap 定义四个子命令（`backtest`/`fetch`/`report`/`portfolio`），调用各层业务函数，处理 LLM 配置（三项非空则启用 `OpenAiLlm`，否则 `Disabled`），将软/硬模式路由到对应的 runner 与报告函数；`portfolio` 臂解析 `--aux`、构造 `PortfolioConfig` 并调用 `run_portfolio` + `print_portfolio_summary`。
 
 ---
 
@@ -83,12 +85,24 @@ Context { primary, context, news }
  │              └─ soft_metrics  →  SoftMetrics
  │                   └─ write_soft_report + write_soft_traces_jsonl
  │
- └─ 模拟 (--sim): 顺序，无并发，每 bar 注入 SimState
-      ├─ 硬: traverse(tree, ctx, llm)  →  target = stance×weight
-      └─ 软: traverse_soft(tree, ctx, llm)  →  target = Σp·w·dir
-           └─ 风控覆盖 (stop/tp/max_hold)  →  sim_step(&mut SimAccount, ...)
-                └─ finalize  →  SimReport { total_return, max_drawdown, trades, … }
-                     └─ print_sim_summary
+ ├─ 模拟 (--sim): 顺序，无并发，每 bar 注入 SimState
+ │    ├─ 硬: traverse(tree, ctx, llm)  →  target = stance×weight
+ │    └─ 软: traverse_soft(tree, ctx, llm)  →  target = Σp·w·dir
+ │         └─ 风控覆盖 (stop/tp/max_hold)  →  sim_step(&mut SimAccount, ...)
+ │              └─ finalize  →  SimReport { total_return, max_drawdown, trades, … }
+ │                   └─ print_sim_summary
+ │
+ └─ 横截面组合 (portfolio): 多标的，每调仓点并发打分
+      │  build_timeline(all_bars)  →  Vec<NaiveDateTime>
+      │  for t in rebalance_points:
+      │    score_symbol(primary, context, aux, tree, llm, soft, t, window)
+      │      → None (停牌/不新鲜) | Some(score)
+      │    select_top(scores, top_n)  →  Vec<(symbol, score)>  等权 w_new
+      │    turnover_between(w_old, w_new) → tv;  nav *= 1 − rate·tv
+      │    accrue(weights, px_start, px_end)  →  period_return
+      │    nav *= 1 + period_return
+      └─ PortfolioReport { total_return, benchmark_return, max_drawdown, … }
+           └─ print_portfolio_summary
 
 report JSON + traces JSONL
  │  render_report_files
@@ -114,6 +128,7 @@ report JSON + traces JSONL
 | HTML 可视化（累计曲线、直方图、堆叠图） | `report/viz.rs`、`report/curve.rs` |
 | 新浪 fetcher（`fetch` 子命令） | `data/sina.rs`、`cli/mod.rs` |
 | 持仓状态模拟（`--sim`，顺序权益模拟） | `backtest/sim.rs`、`cli/mod.rs` |
+| 横截面组合（`portfolio` 子命令，top-N 等权） | `data/universe.rs`、`backtest/portfolio.rs`、`cli/mod.rs` |
 
 ### 设计中提及但尚未实现
 

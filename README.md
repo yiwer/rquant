@@ -160,6 +160,53 @@ Buy & Hold:    +9.01%
 
 ---
 
+## 横截面组合（`portfolio`）
+
+对 universe 内每只标的运行同一棵树，横截面取分数最高的 top-N 等权持仓，按调仓间隔换仓，输出组合净值与等权基准对比。
+
+```bash
+# 1. 准备 universe CSV（两列最少，第三列 context 可选）
+cat > universe.csv <<'EOF'
+symbol,primary
+sh600000,data/sh600000_60m.csv
+sh600036,data/sh600036_60m.csv
+sz000001,data/sz000001_60m.csv
+sz000002,data/sz000002_60m.csv
+EOF
+
+# 2. 运行组合回测（软打分，top-2，每 8 根 timeline bar 调仓）
+cargo run --release -- portfolio \
+  --tree examples/strength_tree.yaml \
+  --universe universe.csv \
+  --top 2 --rebalance 8 --warmup 60 \
+  --soft --out port.json
+```
+
+universe CSV 格式：首行 `symbol,primary[,context]`；`symbol` 非空且唯一；`primary` 为主周期 bar CSV 路径，`context` 缺省回退为 `primary`。
+
+**诚实边界**
+
+- 分数（硬：`dir×weight`；软：`E=Σp·w·dir`）是伪概率，仅用于**排序**，不是期望收益。
+- 持仓**等权**：无分数加权、无波动率中性化。
+- **纯多头**：仅持有分数 > 0 的标的；分数 ≤ 0 或停牌标的当期出局。
+- **T+1 不强制**：组合层按 timeline bar 节奏调仓，无同日禁减仓约束（与 `--sim` 不同）。如相邻调仓点为同一自然日，会在 stderr 打印一次提示。
+- **停牌出局**：不新鲜标的当期不纳入候选；若已持有则按最后已知价计价，贡献零收益。
+
+| 标志 | 默认值 | 说明 |
+|---|---|---|
+| `--tree` | 必填 | 决策树 YAML |
+| `--universe` | 必填 | universe CSV |
+| `--top` | `5` | 每期最多持仓数 |
+| `--rebalance` | `16` | 调仓间隔（timeline bar 数） |
+| `--warmup` | `100` | 跳过前 N 根 timeline bar |
+| `--window` | `100` | Context 历史窗口大小 |
+| `--cost-bps` | `10.0` | 换手成本（基点） |
+| `--soft` | false | 软遍历打分 |
+| `--out` | `portfolio.json` | 报告 JSON |
+| `--traces` | — | 逐期 holdings JSONL（可选） |
+
+---
+
 ## fetch
 
 ```bash
