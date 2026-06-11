@@ -1165,6 +1165,145 @@ leaves:
     assert!(html.contains("回合"), "sim HTML must contain round-trip table");
 }
 
+// F1 T5 — factor_full_chain: 6-symbol synthetic universe (ascending growth rates),
+// dual factors mom=close/ref(close,4)-1 and rev=ref(close,4)/close-1,
+// run_factor → JSON deserializes to FactorReport; mom rank_ic_mean > 0.9, rev < -0.9;
+// corr[0][1] < -0.9; render_factor_html contains "RankIC".
+#[test]
+fn factor_full_chain() {
+    use chrono::NaiveDate;
+    use rquant::factor::{FactorConfig, FactorReport, FactorSpecItem, run_factor};
+    use std::io::Write as _;
+
+    // ── fixture helpers ────────────────────────────────────────────────────────
+    // 12 days × 4 bars/day = 48 bars (same pattern as factor/mod.rs tests)
+    let days: Vec<u32> = (2u32..=13).collect();
+    let hm: Vec<(u32, u32)> = vec![(9, 30), (10, 0), (10, 30), (11, 0)];
+    let mut timestamps = Vec::new();
+    for &d in &days {
+        for &(h, m) in &hm {
+            timestamps.push(
+                NaiveDate::from_ymd_opt(2024, 1, d)
+                    .unwrap()
+                    .and_hms_opt(h, m, 0)
+                    .unwrap(),
+            );
+        }
+    }
+
+    // Write a price CSV for a symbol with constant growth rate g
+    let write_price_csv = |g: f64| -> tempfile::NamedTempFile {
+        let mut f = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+        writeln!(f, "time,open,high,low,close,volume").unwrap();
+        let mut price = 10.0f64;
+        for ts in &timestamps {
+            writeln!(
+                f,
+                "{},{:.8},{:.8},{:.8},{:.8},1000",
+                ts.format("%Y-%m-%d %H:%M:%S"),
+                price,
+                price,
+                price,
+                price
+            )
+            .unwrap();
+            price *= 1.0 + g;
+        }
+        f.flush().unwrap();
+        f
+    };
+
+    // 6 symbols with ascending growth rates → momentum factor ranks align with returns
+    let growth_rates = [0.001f64, 0.002, 0.003, 0.004, 0.005, 0.006];
+    let symbols = ["e2e_s1", "e2e_s2", "e2e_s3", "e2e_s4", "e2e_s5", "e2e_s6"];
+    let bar_files: Vec<_> = growth_rates.iter().map(|&g| write_price_csv(g)).collect();
+
+    // Universe CSV
+    let mut univ_f = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+    writeln!(univ_f, "symbol,primary").unwrap();
+    for (sym, bf) in symbols.iter().zip(bar_files.iter()) {
+        writeln!(univ_f, "{},{}", sym, bf.path().to_str().unwrap()).unwrap();
+    }
+    univ_f.flush().unwrap();
+
+    // Output files
+    let out_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+    let html_f = tempfile::Builder::new().suffix(".html").tempfile().unwrap();
+
+    // ── run_factor ─────────────────────────────────────────────────────────────
+    let cfg = FactorConfig {
+        universe_path: univ_f.path().to_path_buf(),
+        factors: vec![
+            FactorSpecItem {
+                name: "mom".into(),
+                expr: "close/ref(close,4)-1".into(),
+            },
+            FactorSpecItem {
+                name: "rev".into(),
+                expr: "ref(close,4)/close-1".into(),
+            },
+        ],
+        sample: 4,
+        horizon: 4,
+        layers: 3,
+        warmup: 8,
+        window: 20,
+        out_path: out_f.path().to_path_buf(),
+        html_path: Some(html_f.path().to_path_buf()),
+    };
+
+    let report = run_factor(&cfg).expect("factor_full_chain: run_factor should succeed");
+
+    // ── JSON round-trip ────────────────────────────────────────────────────────
+    let json_content = std::fs::read_to_string(out_f.path()).unwrap();
+    let parsed: FactorReport =
+        serde_json::from_str(&json_content).expect("out JSON must deserialize to FactorReport");
+    assert_eq!(parsed.factors.len(), 2, "should have 2 factors in parsed report");
+
+    // ── mom: rank_ic_mean > 0.9 ────────────────────────────────────────────────
+    let mom = &report.factors[0];
+    assert_eq!(mom.name, "mom");
+    let mom_rim = mom.rank_ic_mean.expect("mom rank_ic_mean should be Some");
+    assert!(
+        mom_rim > 0.9,
+        "mom rank_ic_mean should be > 0.9 (monotone growth rates), got {mom_rim}"
+    );
+
+    // ── rev: rank_ic_mean < -0.9 ───────────────────────────────────────────────
+    let rev = &report.factors[1];
+    assert_eq!(rev.name, "rev");
+    let rev_rim = rev.rank_ic_mean.expect("rev rank_ic_mean should be Some");
+    assert!(
+        rev_rim < -0.9,
+        "rev rank_ic_mean should be < -0.9 (reverse of monotone growth), got {rev_rim}"
+    );
+
+    // ── corr[0][1] < -0.9 (mom and rev are exact inverses) ────────────────────
+    let corr = report.corr.as_ref().expect("corr should be Some for 2 factors");
+    let c01 = corr.values[0][1].expect("corr[0][1] should be Some");
+    assert!(
+        c01 < -0.9,
+        "corr[0][1] (mom vs rev) should be < -0.9, got {c01}"
+    );
+
+    // ── render HTML and check "RankIC" ─────────────────────────────────────────
+    let html_str = rquant::report::viz::render_factor_html(&report);
+    std::fs::write(html_f.path(), &html_str).unwrap();
+    let html_content = std::fs::read_to_string(html_f.path()).unwrap();
+    assert!(
+        html_content.contains("RankIC"),
+        "factor HTML must contain 'RankIC'"
+    );
+    assert!(
+        html_content.contains("<!doctype html>"),
+        "factor HTML must be a valid HTML document"
+    );
+    assert!(
+        html_content.contains("<polyline"),
+        "factor HTML must contain at least one polyline (IC decay chart)"
+    );
+}
+
 // T3 Step 3 — portfolio_report_html_renders: run_portfolio, render ReportMode::Portfolio,
 // assert HTML has exactly 2 <polyline elements (portfolio + benchmark) and contains 基准.
 #[tokio::test]

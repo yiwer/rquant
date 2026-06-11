@@ -215,6 +215,55 @@ universe CSV 格式：首行 `symbol,primary[,context]`；`symbol` 非空且唯�
 
 ---
 
+## 因子检验（`factor`）
+
+对 universe 中所有标的做横截面因子检验：IC/RankIC 汇总、IC 衰减阶梯、Q 分层回测（含 Top−Bottom 价差）、多因子相关性矩阵，输出 JSON + print + 可选 HTML。
+
+```bash
+# 准备 universe（与 portfolio 同格式）
+cat > universe.csv <<'EOF'
+symbol,primary
+sh600000,data/sh600000_60m.csv
+sh600036,data/sh600036_60m.csv
+sz000001,data/sz000001_60m.csv
+sz000002,data/sz000002_60m.csv
+EOF
+
+# 检验动量因子与 RSI
+cargo run --release -- factor \
+  --universe universe.csv \
+  --factor "mom20=close/ref(close,20)-1" \
+  --factor "rsi14=rsi(close,14)" \
+  --sample 8 --horizon 8 --warmup 60 \
+  --out factor_report.json --html factor_report.html
+```
+
+**研究循环定位**
+
+```
+factor 检验  →  入树  →  backtest/portfolio 含成本复检
+    ↑                              |
+    └──────── 因子迭代调参 ─────────┘
+```
+
+1. **factor 检验**：快速横截面评估因子的 RankIC/ICIR/单调性/冗余度（gross 口径，无成本）。
+2. **入树**：满足门槛（`|RankIC| > 0.03` 且 `|ICIR| > 0.3`）的因子写入决策树 DSL（`when`/`strength` 条件）。
+3. **backtest/portfolio 含成本复检**：加入 `--cost-bps` 后验证 edge 依然显著，再进入策略生产。
+
+**判读要点**
+
+| 指标 | 门槛 | 说明 |
+|---|---|---|
+| `rank_ic_mean` | `|.| > 0.03` | 横截面预测能力 |
+| `rank_icir` | `|.| > 0.3` | 信号稳定性（剔除运气） |
+| `monotonicity` | `|.| > 0.8` | 分层结构是否单调 |
+| `spread_sharpe` | `|.| > 1` | 多空价差质量（强因子） |
+| 两因子相关 | `> 0.7` | 冗余，留 `|ICIR|` 高者 |
+
+负 `rank_ic_mean` = 反向因子，同样有效，进树时取负即可。
+
+---
+
 ## fetch
 
 ```bash

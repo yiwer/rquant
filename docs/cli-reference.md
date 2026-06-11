@@ -14,6 +14,7 @@ rquant <SUBCOMMAND>
   fetch       从新浪财经拉取 K 线到本地 CSV
   report      把回测产物（JSON + traces）渲染为自包含 HTML
   portfolio   横截面组合：同一棵树逐标的打分，持仓 top-N 等权
+  factor      横截面因子检验：IC/RankIC、衰减阶梯、分层回测、相关性矩阵
 ```
 
 ---
@@ -247,6 +248,85 @@ cost_bps=10  top_n=2  rebalance=8
 调仓次数    : 121
 平均成员数  : 1.40
 ```
+
+---
+
+## `factor` 子命令
+
+```
+rquant factor [OPTIONS] --universe <UNIVERSE>
+```
+
+横截面单/多因子检验：对 universe 内所有标的按指定采样间隔取截面，计算 IC/RankIC 汇总、IC 衰减阶梯、Q 分层回测（含 Top−Bottom 价差）、因子相关性矩阵，输出 JSON + print + 可选 HTML。
+
+### 标志一览
+
+| 标志 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `--universe <PATH>` | PathBuf | 必填 | universe CSV 文件路径（与 `portfolio` 同格式：`symbol,primary[,context]`） |
+| `--factor NAME=EXPR`（可重复） | string | 必填（至少一个） | 因子定义，格式 `名称=DSL表达式`；`name` 唯一非空，`expr` 加载期 DSL 解析校验 |
+| `--sample <usize>` | usize | `16` | 采样间隔 K（每隔 K 根 timeline bar 取一个横截面） |
+| `--horizon <usize>` | usize | `16` | 主前瞻期 H（forward_return gross 的主档距离；IC/分层使用此档） |
+| `--layers <usize>` | usize | `5` | 分层数 Q（横截面按因子值升序分 Q 等分，前 n%Q 层 +1） |
+| `--warmup <usize>` | usize | `100` | 跳过 timeline 前 N 根 bar（指标预热） |
+| `--window <usize>` | usize | `100` | Context 历史窗口大小（每时点最多取最近 N 根 bar） |
+| `--out <PATH>` | PathBuf | `factor_report.json` | 输出 `FactorReport` JSON 路径 |
+| `--html <PATH>` | PathBuf | 可选 | 若给出则写自包含 HTML 报告（衰减折线/分层条形/spread 净值/相关矩阵） |
+
+### 输出字段表（FactorReport JSON）
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `n_symbols` | usize | universe 标的数 |
+| `n_sample_points` | usize | 实际采样期数（warmup 后 step K） |
+| `sample` | usize | 参数回显 |
+| `horizon` | usize | 参数回显 |
+| `layers_q` | usize | 参数回显 |
+| `factors` | Vec\<FactorStats\> | 每因子统计（见下方 FactorStats 子表） |
+| `corr` | Option\<CorrMatrix\> | ≥2 因子时的横截面相关性矩阵（`names` + `values`） |
+
+**FactorStats 子表**
+
+| 字段 | 说明 | None 语义 |
+|---|---|---|
+| `name` / `expr` | 因子名 / DSL 表达式 | — |
+| `n_periods` | 进入 IC 统计的有效期数 | 全期跳过 → 0 |
+| `n_skipped` | 有效对 < max(Q,5) 被跳过的期数 | — |
+| `ic_mean` / `ic_std` / `icir` / `ic_t` / `ic_pos_share` | Pearson IC 汇总 | 无有效期 → 全 None |
+| `rank_ic_mean` / `rank_ic_std` / `rank_icir` / `rank_ic_t` / `rank_ic_pos_share` | Spearman RankIC 汇总 | 同上 |
+| `ic_decay` | `Vec<(horizon, Option<f64>)>` | 每阶梯均值 RankIC；无有效期 → None |
+| `layers` | `Option<LayerStats>` | n_periods=0 时为 None |
+
+**LayerStats 子表**
+
+| 字段 | 说明 | None 语义 |
+|---|---|---|
+| `q` | 分层数 | — |
+| `ann_returns` | 各层（低→高因子）年化收益 | 时间跨度 < 30 天 → None |
+| `spread_total` | top−bottom 累计净值 −1（带符号） | — |
+| `spread_ann` / `spread_sharpe` | spread 年化收益 / Sharpe | 时间跨度 < 30 天 → None |
+| `monotonicity` | Spearman(层序号, 层期均收益)，[-1,1] | n < 2 时 None |
+| `spread_nav` | spread 净值时间序列（用于 HTML 曲线） | — |
+
+### 判读标准（spec §5）
+
+**入树门槛**
+- `|RankIC| > 0.03` 且 `|ICIR| > 0.3` → 因子统计显著，值得纳入决策树。
+- 两条均未满足的因子通常为噪声，不建议入树。
+
+**强因子**
+- `|单调性（monotonicity）| > 0.8` 且 `|spread Sharpe| > 1` → 分层结构稳定，多头因子可直接作为 `when` 条件或 `strength` 权重。
+
+**方向**
+- `rank_ic_mean > 0` → 正向使用（高因子值 → 高收益）。
+- `rank_ic_mean < 0` → 反向使用（低因子值 → 高收益）；此类因子同样有效，进树时 DSL 表达式取负或用反向比较即可。
+
+**冗余剔除**
+- 两因子横截面 Spearman 相关 `> 0.7` → 高度冗余；同时入树对信号贡献有限，建议仅保留 `|ICIR|` 更高者。
+
+### Gross 口径提醒
+
+`factor` 子命令收益口径为 **forward_return gross（无成本）**。Gross RankIC 测量的是因子信号强度，**不反映含成本的实际可交易收益**。**入树后必须经 `backtest` 或 `portfolio` 含成本复检**（`--cost-bps` 涵盖往返滑点与佣金），确认扣费后 edge 依然显著再投入策略生产。
 
 ---
 
