@@ -20,9 +20,9 @@ pub async fn traverse(tree: &Tree, ctx: &Context, llm: &LlmEvaluator) -> Result<
             .ok_or_else(|| Error::Engine(format!("dangling node '{current}'")))?;
         let decision = match node {
             Node::Quant { branches, default } => eval_quant(branches, default, ctx)?,
-            Node::Llm { inputs, prompt, labels, default, scope: _ } => {
+            Node::Llm { inputs, prompt, labels, default, scope } => {
                 let ln = LlmNode { inputs, prompt, labels, default };
-                llm.eval_llm(&current, &ln, ctx).await?
+                llm.eval_llm(scope.as_deref().unwrap_or(&current), &ln, ctx).await?
             }
         };
         path.push(StepRecord {
@@ -109,5 +109,48 @@ leaves:
         let tr = traverse(&tree, &ctx(&[1.0, 2.0, 3.0]), &ev).await.unwrap();
         assert_eq!(tr.leaf, "leaf_l");
         assert!(matches!(tr.stance, Stance::Long));
+    }
+
+    const SHARED_JUDGE_TREE: &str = r#"
+meta: { name: t, forward_window: 3, stances: [long, flat, short] }
+judges:
+  veto:
+    prompt: "veto?"
+    labels: [bad, ok]
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "close > 100", goto: g_hi, label: hi } ]
+    default: { goto: g_lo, label: lo }
+  g_hi:
+    type: llm
+    judge: veto
+    map: { ok: leaf_l }
+    default: leaf_f
+  g_lo:
+    type: llm
+    judge: veto
+    map: { ok: leaf_s }
+    default: leaf_f
+leaves:
+  leaf_l: { stance: long }
+  leaf_s: { stance: short }
+  leaf_f: { stance: flat }
+"#;
+
+    #[tokio::test]
+    async fn shared_judge_nodes_resolve_via_judge_scope() {
+        let tree = load_tree_str(SHARED_JUDGE_TREE).unwrap();
+        // stub 以 scope（judge:veto）为键——一个答案同时驱动两个调用点，证明判定已与落点解耦
+        let ev = LlmEvaluator::Stub(StubLlm {
+            answers: HashMap::from([("judge:veto".to_string(), "ok".to_string())]),
+        });
+        // close=1 → 走 g_lo → ok → leaf_s
+        let tr = traverse(&tree, &ctx(&[1.0, 1.0, 1.0]), &ev).await.unwrap();
+        assert_eq!(tr.leaf, "leaf_s");
+        // close=200 → 走 g_hi → 同一判定 → leaf_l（不同落点）
+        let tr2 = traverse(&tree, &ctx(&[200.0, 200.0, 200.0]), &ev).await.unwrap();
+        assert_eq!(tr2.leaf, "leaf_l");
     }
 }

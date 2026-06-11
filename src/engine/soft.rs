@@ -29,9 +29,9 @@ pub async fn traverse_soft(tree: &Tree, ctx: &Context, llm: &LlmEvaluator) -> Re
             .ok_or_else(|| Error::Engine(format!("dangling node '{id}'")))?;
         let dist: Vec<(String, f64)> = match node {
             Node::Quant { branches, default } => quant_branch_dist(branches, default, ctx)?,
-            Node::Llm { inputs, prompt, labels, default, scope: _ } => {
+            Node::Llm { inputs, prompt, labels, default, scope } => {
                 let ln = LlmNode { inputs, prompt, labels, default };
-                let (dist, _rationale) = llm.eval_llm_dist(&id, &ln, ctx).await?;
+                let (dist, _rationale) = llm.eval_llm_dist(scope.as_deref().unwrap_or(&id), &ln, ctx).await?;
                 dist
             }
         };
@@ -254,5 +254,47 @@ leaves:
         assert!(st.leaf_probs.contains_key("leaf_f"));
         let sum: f64 = st.leaf_probs.values().sum();
         assert!((sum - 1.0).abs() < 1e-9);
+    }
+
+    // 与 traversal.rs tests 的 SHARED_JUDGE_TREE 内容相同——tests 模块私有，按计划纪律重复定义
+    const SHARED_JUDGE_TREE: &str = r#"
+meta: { name: t, forward_window: 3, stances: [long, flat, short] }
+judges:
+  veto:
+    prompt: "veto?"
+    labels: [bad, ok]
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "close > 100", goto: g_hi, label: hi } ]
+    default: { goto: g_lo, label: lo }
+  g_hi:
+    type: llm
+    judge: veto
+    map: { ok: leaf_l }
+    default: leaf_f
+  g_lo:
+    type: llm
+    judge: veto
+    map: { ok: leaf_s }
+    default: leaf_f
+leaves:
+  leaf_l: { stance: long }
+  leaf_s: { stance: short }
+  leaf_f: { stance: flat }
+"#;
+
+    #[tokio::test]
+    async fn soft_shared_judge_uses_judge_scope() {
+        let tree = load_tree_str(SHARED_JUDGE_TREE).unwrap();
+        let ev = LlmEvaluator::Stub(StubLlm {
+            answers: HashMap::from([("judge:veto".to_string(), "ok".to_string())]),
+        });
+        let st = traverse_soft(&tree, &ctx(&[1.0, 1.0, 1.0]), &ev).await.unwrap();
+        // stub 普通 label 协议：ok → {ok: 0.9}，残余 0.1 → default
+        // close=1 → g_lo：ok→leaf_s 0.9；残余 0.1 → leaf_f
+        assert!((st.leaf_probs["leaf_s"] - 0.9).abs() < 1e-9);
+        assert!((st.leaf_probs["leaf_f"] - 0.1).abs() < 1e-9);
     }
 }

@@ -100,6 +100,66 @@ node_id:
 
 ---
 
+## `judges` 块（可选）
+
+`judges` 块声明可复用的判定器，供多个 llm 节点通过 `judge:` 引用，实现**判定与落点解耦**：同一判定（prompt + labels + inputs）在多个路径节点复用，但每个节点可配置不同的 label→goto 落点映射。
+
+### 语法示例
+
+```yaml
+judges:
+  veto:
+    prompt: "veto?"
+    labels: [bad, ok]
+    inputs: []          # 可选，默认 []
+
+nodes:
+  g_hi:
+    type: llm
+    judge: veto         # 引用 judges 块中的 veto 定义
+    map: { ok: leaf_l } # label→goto 映射（未映射的 label 落 default）
+    default: leaf_f
+  g_lo:
+    type: llm
+    judge: veto
+    map: { ok: leaf_s } # 同一 judge，不同落点
+    default: leaf_f
+```
+
+### 物化语义
+
+加载时，`judge:` 形式的节点被**物化**为等价的内联 llm 节点：
+
+- `prompt`、`labels`、`inputs` 来自 judge 定义。
+- 每个 judge label 都分配落点：`map` 中已映射的 label → 指定 goto；未映射的 label → 节点 `default`。
+- `map` 可**整体省略**（等价于空映射）——所有 judge label 均落 `default`，是全部弃权/否决的合法形态。
+- 物化后每个节点的 `labels` 键集 = judge.labels（完整集合），使共享同一 judge 的多个节点渲染串一致。
+
+### 校验清单
+
+| 规则 | 错误示例 |
+|---|---|
+| judge 名必须在 `judges` 块中存在 | `judge: nope` 而 nope 未定义 |
+| judge 形式不得同时设置 `prompt`/`labels`/`inputs` | `judge: veto` + `prompt: "x"` → 报错 |
+| `map` 键必须 ⊆ judge.labels | `map: { nope: leaf_f }` 而 nope 不在 labels → 报错 |
+| judge.labels 必须非空 | `labels: []` → 报错 |
+| `map` 只能配合 `judge` 使用 | 内联节点（无 `judge:`）设置 `map:` → 报错 |
+
+### 缓存语义
+
+共享 judge 的节点渲染串一致，且缓存/求值作用域（scope）统一为 `judge:<名>`（而非节点 id）。因此：
+
+- **每 bar 每 judge 至多触发一次 LLM 调用**（硬遍历：走到的唯一节点；软遍历：首次评估后结果复用）。
+- 落点差异（不同 `map`）完全在本地 label→goto 映射层处理，不产生额外 LLM 调用或缓存条目。
+- `StubLlm` 测试时以 `judge:<名>` 为答案键，例如 `answers: HashMap::from([("judge:veto".to_string(), "ok".to_string())])` 可同时驱动所有引用 `veto` 的节点。
+
+### 注意事项
+
+- 同名 judge 重复定义时后者静默覆盖前者（serde_yaml HashMap 行为，与 `nodes`/`leaves` 一致）。
+- `judges` 块整体可省略（等价于空映射），树可以全部使用内联 llm 节点。
+
+---
+
 ## `leaves`
 
 ```yaml

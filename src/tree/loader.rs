@@ -554,6 +554,19 @@ leaves:
     }
 
     #[test]
+    fn judge_node_with_empty_map_routes_all_to_default() {
+        let src = JUDGE_TREE.replace("map: { veto: leaf_f, pass: leaf_l }\n    default: leaf_f", "default: leaf_f");
+        let tree = load_tree_str(&src).unwrap();
+        match tree.nodes.get("g1").unwrap() {
+            Node::Llm { labels, .. } => {
+                assert_eq!(labels["veto"], "leaf_f");
+                assert_eq!(labels["pass"], "leaf_f");
+            }
+            _ => panic!("expected llm node"),
+        }
+    }
+
+    #[test]
     fn judge_validation_rejects_bad_forms() {
         // 未知 judge
         assert!(load_tree_str(&JUDGE_TREE.replace("judge: news_veto", "judge: nope")).is_err());
