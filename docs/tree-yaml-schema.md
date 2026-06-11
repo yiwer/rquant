@@ -222,12 +222,12 @@ factors:
 以下名字**不得**用作 `params`/`factors` 的键：
 
 - 内置标识符：`close` `open` `high` `low` `volume` `hour` `minute` `dow`
-- **持仓状态标识符（sim 专用保留名）**：`pos` `entry_price` `bars_held` `unreal_pnl`
-- 内置函数名：`sma` `ema` `wma` `rsi` `atr` `slope` `highest` `lowest` `crossover` `crossunder` `macd_line` `macd_signal` `macd_hist` `std` `sigmoid` `auto`
+- **持仓状态标识符（sim 专用保留名）**：`pos` `entry_price` `bars_held` `unreal_pnl` `max_price_since_entry` `min_price_since_entry`
+- 内置函数名：`sma` `ema` `wma` `rsi` `atr` `slope` `ref` `highest` `lowest` `crossover` `crossunder` `macd_line` `macd_signal` `macd_hist` `std` `sigmoid` `auto` `abs` `max` `min` `count` `barssince`
 
 与上述任一名字冲突，或在同一块中重复定义，均在加载时报错。
 
-> 持仓标识符 `pos`/`entry_price`/`bars_held`/`unreal_pnl` 在非 sim 模式下取默认值（`pos=0`、`bars_held=0`、`unreal_pnl=0`、`entry_price=NaN`），因此同一棵树可以在打分模式和 sim 模式下都运行——打分模式时 `pos==0` 永远为真，分支退化为 flat 路径，不影响前瞻评分语义。`entry_price` 为 NaN 时所有比较运算返回 false（NaN 弃权），空仓状态下引用它的条件自动弃权走 default。
+> 持仓标识符 `pos`/`entry_price`/`bars_held`/`unreal_pnl` 在非 sim 模式下取默认值（`pos=0`、`bars_held=0`、`unreal_pnl=0`、`entry_price=NaN`），因此同一棵树可以在打分模式和 sim 模式下都运行——打分模式时 `pos==0` 永远为真，分支退化为 flat 路径，不影响前瞻评分语义。`entry_price` 为 NaN 时所有比较运算返回 false（NaN 弃权），空仓状态下引用它的条件自动弃权走 default；`max_price_since_entry`/`min_price_since_entry` 同此纪律（空仓/非 sim 恒为 NaN）。
 
 ---
 

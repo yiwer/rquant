@@ -28,12 +28,12 @@
 | `bars_held` | `Context.sim`（sim 模式） | 当前持仓已持 bar 数（标量，从开仓收盘后的第 1 根起计）；非 sim 模式默认 `0.0` |
 | `unreal_pnl` | `Context.sim`（sim 模式） | 浮动损益率 `(close/entry_price−1)×sign(pos)`（标量）；空仓或非 sim 模式默认 `0.0` |
 | `max_price_since_entry` | `Context.sim`（sim 模式） | 入场以来（含入场执行 bar）最高 `high`（标量）；空仓/非 sim 为 NaN → 比较弃权。Chandelier：`close < max_price_since_entry - 3*atr(22)` |
-| `min_price_since_entry` | `Context.sim`（sim 模式） | 入场以来最低 `low`（标量）；空仓 NaN。MFE/MAE 自行推导：`max_price_since_entry/entry_price - 1` |
+| `min_price_since_entry` | `Context.sim`（sim 模式） | 入场以来最低 `low`（标量）；空仓/非 sim 为 NaN → 比较弃权。MFE/MAE 自行推导：`max_price_since_entry/entry_price - 1` |
 | `aux.<表名>.<列名>` | 挂载的外部 aux 表 | `--aux <表名>=path.csv` 中 `<列名>` 对应的数值序列（time≤t 截断后的可见部分） |
 
-`resolve_series`（`eval.rs`）实现上述解析：前缀 `aux.` 存在时路由到对应 `AuxView`，前缀 `ctx.` 存在时路由到 `ctx.context`，否则路由到 `ctx.primary`。`hour`/`minute`/`dow` 与 `pos`/`entry_price`/`bars_held`/`unreal_pnl` 在 `eval` 的 `Ident` 臂中优先匹配，直接从 `ctx` 读取，不参与序列解析。
+`resolve_series`（`eval.rs`）实现上述解析：前缀 `aux.` 存在时路由到对应 `AuxView`，前缀 `ctx.` 存在时路由到 `ctx.context`，否则路由到 `ctx.primary`。`hour`/`minute`/`dow` 与 `pos`/`entry_price`/`bars_held`/`unreal_pnl`/`max_price_since_entry`/`min_price_since_entry` 在 `eval` 的 `Ident` 臂中优先匹配，直接从 `ctx` 读取，不参与序列解析。
 
-> **`entry_price` NaN 弃权**：空仓时 `entry_price = NaN`，与 NaN 的任何比较（`>`/`<`/`==`/`!=`）均返回 `false`。因此 `entry_price > 0` 在空仓时永远为 false，可安全用于分支条件而无需额外判空。
+> **`entry_price` NaN 弃权**：空仓时 `entry_price = NaN`，与 NaN 的任何比较（`>`/`<`/`==`/`!=`）均返回 `false`。因此 `entry_price > 0` 在空仓时永远为 false，可安全用于分支条件而无需额外判空。同理，`max_price_since_entry`/`min_price_since_entry` 在入场决策点（`pos` 尚为 0）亦为 NaN——首个有效值在入场执行 bar 收盘后、下一个决策点才可见。
 
 ```yaml
 # 示例：只在早盘（9:45–11:30）且非周五入场
