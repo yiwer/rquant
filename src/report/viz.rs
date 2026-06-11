@@ -1,5 +1,7 @@
 use crate::report::{Report, SoftReport};
 use crate::report::curve::{EquitySeries, Histogram, StackSeries};
+use crate::backtest::sim::{SimReport, SimStepRecord};
+use crate::backtest::portfolio::PortfolioReport;
 use std::fmt::Write;
 
 const W: u32 = 640;
@@ -241,6 +243,103 @@ pub fn render_soft_html(report: &SoftReport, series: &EquitySeries, avg_leaf: &[
     s
 }
 
+/// 自包含 HTML 报告：单标的 sim 回测（净值曲线、仓位轨迹、回合直方图、回合表）。
+pub fn render_sim_html(report: &SimReport, steps: Option<&[SimStepRecord]>) -> String {
+    let mut s = String::new();
+    let _ = write!(s, "<!doctype html><html><head><meta charset=\"utf-8\"><title>rquant sim report: {}</title>", report.tree_name);
+    let _ = write!(s, "<style>body{{font-family:system-ui,Arial,sans-serif;margin:24px;max-width:720px}}table{{border-collapse:collapse}}td,th{{border:1px solid #ddd;padding:4px 8px;text-align:right}}th{{text-align:left}}.warn{{background:#fff3cd;border:1px solid #ffe08a;padding:8px;border-radius:4px;margin:12px 0}}svg{{border:1px solid #eee;margin:8px 0}}</style></head><body>");
+    let _ = write!(s, "<h1>rquant sim report: {}</h1>", report.tree_name);
+    // headline 表 7 行
+    let _ = write!(s, "<table><tr><th>metric</th><th>value</th></tr>");
+    let _ = write!(s, "<tr><th>total_return</th><td>{:.4}</td></tr>", report.total_return);
+    let _ = write!(s, "<tr><th>max_drawdown</th><td>{:.4}</td></tr>", report.max_drawdown);
+    let _ = write!(s, "<tr><th>n_round_trips</th><td>{}</td></tr>", report.n_round_trips);
+    let _ = write!(s, "<tr><th>win_rate</th><td>{:.1}%</td></tr>", report.win_rate * 100.0);
+    let _ = write!(s, "<tr><th>avg_hold_bars</th><td>{:.1}</td></tr>", report.avg_hold_bars);
+    let _ = write!(s, "<tr><th>turnover</th><td>{:.4}</td></tr>", report.turnover);
+    let _ = write!(s, "<tr><th>buy&amp;hold</th><td>{:.4}</td></tr>", report.buy_and_hold);
+    let _ = write!(s, "</table>");
+    // 净值/仓位曲线 or 占位
+    match steps {
+        Some(steps_slice) => {
+            let nav_pts: Vec<(f64, f64)> = steps_slice.iter().enumerate().map(|(i, r)| (i as f64, r.nav)).collect();
+            let pos_pts: Vec<(f64, f64)> = steps_slice.iter().enumerate().map(|(i, r)| (i as f64, r.pos)).collect();
+            let _ = write!(s, "{}", line_chart(&nav_pts, "净值曲线（顺序权益）"));
+            let _ = write!(s, "{}", line_chart(&pos_pts, "仓位轨迹"));
+        }
+        None => {
+            let _ = write!(s, "<p>（未提供 --traces，省略净值/仓位曲线）</p>");
+        }
+    }
+    // 回合收益分布直方图
+    let trip_returns: Vec<f64> = report.trades.iter().map(|t| t.trip_return).collect();
+    let hist = crate::report::curve::histogram_of(&trip_returns);
+    let _ = write!(s, "{}", histogram_svg(&hist, "回合收益分布"));
+    // 回合表
+    let _ = write!(s, "<table><tr><th>entry_t</th><th>exit_t</th><th>entry_px</th><th>exit_px</th><th>trip_return</th><th>bars_held</th><th>reason</th></tr>");
+    for t in report.trades.iter().take(50) {
+        let _ = write!(s,
+            "<tr><td>{}</td><td>{}</td><td>{:.4}</td><td>{:.4}</td><td>{:.4}</td><td>{}</td><td>{}</td></tr>",
+            t.entry_t, t.exit_t, t.entry_px, t.exit_px, t.trip_return, t.bars_held, t.reason
+        );
+    }
+    let _ = write!(s, "</table>");
+    if report.trades.len() > 50 {
+        let _ = write!(s, "<p>（共 {} 回合，仅显示前 50）</p>", report.trades.len());
+    }
+    let _ = write!(s, "</body></html>");
+    s
+}
+
+/// 自包含 HTML 报告：横截面组合（组合 vs 基准双线净值、选中频率、持仓表）。
+pub fn render_portfolio_html(report: &PortfolioReport) -> String {
+    use std::collections::BTreeMap;
+    let mut s = String::new();
+    let _ = write!(s, "<!doctype html><html><head><meta charset=\"utf-8\"><title>rquant portfolio report: {}</title>", report.tree_name);
+    let _ = write!(s, "<style>body{{font-family:system-ui,Arial,sans-serif;margin:24px;max-width:720px}}table{{border-collapse:collapse}}td,th{{border:1px solid #ddd;padding:4px 8px;text-align:right}}th{{text-align:left}}.warn{{background:#fff3cd;border:1px solid #ffe08a;padding:8px;border-radius:4px;margin:12px 0}}svg{{border:1px solid #eee;margin:8px 0}}</style></head><body>");
+    let _ = write!(s, "<h1>rquant portfolio report: {}</h1>", report.tree_name);
+    // headline 表 7 行
+    let _ = write!(s, "<table><tr><th>metric</th><th>value</th></tr>");
+    let _ = write!(s, "<tr><th>total_return</th><td>{:.4}</td></tr>", report.total_return);
+    let _ = write!(s, "<tr><th>benchmark_return</th><td>{:.4}</td></tr>", report.benchmark_return);
+    let _ = write!(s, "<tr><th>超额收益</th><td>{:.4}</td></tr>", report.total_return - report.benchmark_return);
+    let _ = write!(s, "<tr><th>max_drawdown</th><td>{:.4}</td></tr>", report.max_drawdown);
+    let _ = write!(s, "<tr><th>turnover</th><td>{:.4}</td></tr>", report.turnover);
+    let _ = write!(s, "<tr><th>n_rebalances</th><td>{}</td></tr>", report.n_rebalances);
+    let _ = write!(s, "<tr><th>avg_members</th><td>{:.2}</td></tr>", report.avg_members);
+    let _ = write!(s, "</table>");
+    // 组合 vs 基准双线
+    let nav_series: Vec<(f64, f64)> = report.holdings.iter().enumerate().map(|(i, h)| (i as f64, h.nav)).collect();
+    let bnav_series: Vec<(f64, f64)> = report.holdings.iter().enumerate().map(|(i, h)| (i as f64, h.benchmark_nav)).collect();
+    let series = vec![
+        ("组合".to_string(), nav_series),
+        ("基准".to_string(), bnav_series),
+    ];
+    let _ = write!(s, "{}", multi_line_chart(&series, "组合 vs 基准净值（x=调仓序）"));
+    // 选中频率
+    let n_rb = report.n_rebalances.max(1);
+    let mut freq_map: BTreeMap<String, usize> = BTreeMap::new();
+    for h in &report.holdings {
+        for (sym, _) in &h.selected {
+            *freq_map.entry(sym.clone()).or_insert(0) += 1;
+        }
+    }
+    let freq_items: Vec<(String, f64)> = freq_map.iter().map(|(k, v)| (k.clone(), *v as f64 / n_rb as f64)).collect();
+    let _ = write!(s, "{}", bar_chart(&freq_items, "选中频率"));
+    // 持仓表
+    let _ = write!(s, "<table><tr><th>t</th><th>selected</th></tr>");
+    for h in report.holdings.iter().take(50) {
+        let sel_str: Vec<String> = h.selected.iter().map(|(sym, score)| format!("{}({:.3})", sym, score)).collect();
+        let _ = write!(s, "<tr><td>{}</td><td>{}</td></tr>", h.t, sel_str.join(", "));
+    }
+    let _ = write!(s, "</table>");
+    if report.holdings.len() > 50 {
+        let _ = write!(s, "<p>（共 {} 调仓记录，仅显示前 50）</p>", report.holdings.len());
+    }
+    let _ = write!(s, "</body></html>");
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,6 +448,56 @@ mod tests {
         assert!(svg.contains("leaf_a"));
         assert!(svg.contains("leaf_b"));
         assert_eq!(svg, stacked_area_chart(&st, "t")); // 确定性
+    }
+
+    #[test]
+    fn render_sim_html_with_and_without_steps() {
+        use crate::backtest::sim::{RoundTrip, SimReport, SimStepRecord};
+        use chrono::NaiveDate;
+        let t0 = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap().and_hms_opt(10, 0, 0).unwrap();
+        let trip = |r: f64| RoundTrip {
+            entry_t: t0, exit_t: t0, entry_px: 10.0, exit_px: 10.0,
+            max_abs_pos: 1.0, trip_return: r, bars_held: 2, reason: "tree".into(),
+        };
+        let rep = SimReport {
+            tree_name: "simviz".into(), cost_bps: 10.0, total_return: 0.1, max_drawdown: 0.05,
+            n_round_trips: 2, win_rate: 0.5, avg_hold_bars: 2.0, turnover: 4.0, buy_and_hold: 0.02,
+            trades: vec![trip(0.05), trip(-0.01)],
+        };
+        let steps = vec![
+            SimStepRecord { t: t0, target: 1.0, pos: 1.0, nav: 1.0 },
+            SimStepRecord { t: t0, target: 1.0, pos: 1.0, nav: 1.02 },
+        ];
+        let a = render_sim_html(&rep, Some(&steps));
+        assert_eq!(a, render_sim_html(&rep, Some(&steps))); // 确定性
+        assert!(a.contains("<!doctype html>") && a.contains("simviz"));
+        assert!(a.contains("<polyline")); // 净值曲线
+        assert!(a.contains("<rect"));     // 直方图
+        assert!(a.contains("tree"));      // 回合表
+        let b = render_sim_html(&rep, None);
+        assert!(!b.contains("<polyline") && b.contains("未提供")); // 占位
+    }
+
+    #[test]
+    fn render_portfolio_html_self_contained() {
+        use crate::backtest::portfolio::{HoldingsRecord, PortfolioReport};
+        use chrono::NaiveDate;
+        let t0 = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap().and_hms_opt(10, 0, 0).unwrap();
+        let h = |nav: f64, b: f64, sel: &str| HoldingsRecord {
+            t: t0, nav, benchmark_nav: b, selected: vec![(sel.to_string(), 1.0)],
+        };
+        let rep = PortfolioReport {
+            tree_name: "pfviz".into(), cost_bps: 10.0, top_n: 1, rebalance: 4,
+            n_rebalances: 3, avg_members: 1.0, total_return: 0.06, max_drawdown: 0.02,
+            turnover: 3.0, benchmark_return: 0.01,
+            holdings: vec![h(1.0, 1.0, "A"), h(1.03, 1.0, "A"), h(1.06, 1.01, "B")],
+        };
+        let a = render_portfolio_html(&rep);
+        assert_eq!(a, render_portfolio_html(&rep));
+        assert!(a.contains("pfviz"));
+        assert_eq!(a.matches("<polyline").count(), 2); // 组合+基准双线
+        assert!(a.contains("<rect"));                  // 频率条形（A:2/3, B:1/3）+ 图例 rect
+        assert!(a.contains(">A<") || a.contains("A")); // 持仓表
     }
 
     #[test]
