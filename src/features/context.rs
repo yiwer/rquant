@@ -11,11 +11,22 @@ pub struct SimState {
     pub entry_price: f64,
     pub bars_held: usize,
     pub unreal_pnl: f64,
+    /// 入场以来所见 high 最大值，空仓 NaN（弃权纪律同 entry_price）。
+    pub max_price_since_entry: f64,
+    /// 入场以来所见 low 最小值，空仓 NaN（弃权纪律同 entry_price）。
+    pub min_price_since_entry: f64,
 }
 
 impl Default for SimState {
     fn default() -> Self {
-        Self { pos: 0.0, entry_price: f64::NAN, bars_held: 0, unreal_pnl: 0.0 }
+        Self {
+            pos: 0.0,
+            entry_price: f64::NAN,
+            bars_held: 0,
+            unreal_pnl: 0.0,
+            max_price_since_entry: f64::NAN,
+            min_price_since_entry: f64::NAN,
+        }
     }
 }
 

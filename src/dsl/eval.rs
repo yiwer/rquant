@@ -667,7 +667,7 @@ mod tests {
         assert_eq!(f("unreal_pnl == 0", &ctx), Value::Bool(true));
         assert_eq!(f("entry_price > 0", &ctx), Value::Bool(false)); // NaN 弃权
         // 注入后可见
-        ctx.sim = crate::features::context::SimState { pos: 0.5, entry_price: 10.0, bars_held: 3, unreal_pnl: -0.02 };
+        ctx.sim = crate::features::context::SimState { pos: 0.5, entry_price: 10.0, bars_held: 3, unreal_pnl: -0.02, ..crate::features::context::SimState::default() };
         assert_eq!(f("pos > 0 and bars_held >= 3", &ctx), Value::Bool(true));
         assert_eq!(f("unreal_pnl < -0.01 and entry_price == 10", &ctx), Value::Bool(true));
     }
