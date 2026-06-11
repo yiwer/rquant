@@ -51,7 +51,7 @@ HoldingsState { version: u32 (=1), tree_name: String, last_time: Option<NaiveDat
 - print 人话单子 + `--out` JSON；dry-run 显著提示"未落盘，--commit 提交"。
 
 ## 6. CLI
-`Cmd::Signal`：`--tree --state`（必）；单：`--primary --context [--fetch SYMBOL --scale --datalen --adjust]`；组合：`--universe --top`；共享：`--soft --commit --out --warmup --window --cost-bps --aux LLM三件套`。互斥校验：primary xor universe；--fetch 仅单口径。`--fetch` 复用既有 fetch 臂逻辑（抽 `pub(crate) async fn run_fetch_to_csv(...)` 供 Fetch/Signal 两臂共用，行为零变）。
+`Cmd::Signal`：`--tree --state`（必）；单：`--primary --context [--news] [--fetch SYMBOL --scale --datalen --adjust]`（news 供 LLM 节点消息输入，同 backtest）；组合：`--universe --top`；共享：`--soft --commit --out --warmup --window --cost-bps --aux LLM三件套`。互斥校验：primary xor universe；--fetch 仅单口径。`--fetch` 复用既有 fetch 臂逻辑（抽 `pub(crate) async fn run_fetch_to_csv(...)` 供 Fetch/Signal 两臂共用，行为零变）。
 
 ## 7. 测试
 - 快照往返（entry NaN↔None、trip Some/None、版本/树名/损坏报错）。
