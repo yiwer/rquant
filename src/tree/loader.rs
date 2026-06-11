@@ -99,15 +99,36 @@ pub enum Node {
     },
 }
 
+/// 叶子权重：常量（加载期校验 (0,1]）或 DSL 表达式（决策时求值，NaN→0、clamp [0,1]）。
+#[derive(Debug, Clone)]
+pub enum Weight {
+    Const(f64),
+    Expr(Expr),
+}
+
 /// 决策树叶子节点，持有最终 stance 及打分参数。
 #[derive(Debug, Clone)]
 pub struct Leaf {
     /// 对应的交易方向（须在 `meta.stances` 中声明）。
     pub stance: Stance,
-    /// 仓位大小 ∈ (0,1]，默认 1.0
-    pub weight: f64,
+    /// 仓位大小：常量 ∈ (0,1]（默认 1.0），或 DSL 表达式（决策时 `weight_at` 求值）。
+    pub weight: Weight,
     /// 该叶前瞻评分窗口，默认 meta.forward_window
     pub horizon: usize,
+}
+
+impl Leaf {
+    /// 解析叶子权重：常量直接返回；表达式按 ctx 求值。
+    /// 求值失败/非有限值 → 0.0（弃权 = 不持仓），有限值 clamp 到 [0,1]。
+    pub fn weight_at(&self, ctx: &crate::features::context::Context) -> f64 {
+        match &self.weight {
+            Weight::Const(w) => *w,
+            Weight::Expr(e) => match crate::dsl::eval::eval_scalar(e, ctx) {
+                Ok(v) if v.is_finite() => v.clamp(0.0, 1.0),
+                _ => 0.0,
+            },
+        }
+    }
 }
 
 /// 风险管理块：止损、止盈、最大持仓时间。
@@ -182,12 +203,31 @@ pub fn load_tree_str(src: &str) -> Result<Tree> {
                 l.stance
             )));
         }
-        let weight = l.weight.unwrap_or(1.0);
-        if !(weight > 0.0 && weight <= 1.0) {
-            return Err(Error::Tree(format!(
-                "leaf '{id}' weight must be in (0,1], got {weight}"
-            )));
-        }
+        let weight = match &l.weight {
+            None => Weight::Const(1.0),
+            Some(serde_yaml::Value::Number(n)) => {
+                let w = n
+                    .as_f64()
+                    .ok_or_else(|| Error::Tree(format!("leaf '{id}' weight must be a number")))?;
+                if !(w > 0.0 && w <= 1.0) {
+                    return Err(Error::Tree(format!(
+                        "leaf '{id}' weight must be in (0,1], got {w}"
+                    )));
+                }
+                Weight::Const(w)
+            }
+            Some(serde_yaml::Value::String(s)) => {
+                let e = parse_str(s).map_err(|e| Error::Tree(format!("leaf '{id}' weight: {e}")))?;
+                let e = substitute(&e, &env);
+                check_no_unknown_idents(&e, &format!("leaf '{id}' weight"))?;
+                Weight::Expr(e)
+            }
+            Some(_) => {
+                return Err(Error::Tree(format!(
+                    "leaf '{id}' weight must be a number or a DSL expression string"
+                )))
+            }
+        };
         let horizon = l.horizon.unwrap_or(spec.meta.forward_window);
         if horizon == 0 {
             return Err(Error::Tree(format!(
@@ -647,11 +687,11 @@ leaves:
 "#;
         let tree = load_tree_str(ok).unwrap();
         let l = tree.leaves.get("leaf_l").unwrap();
-        assert!((l.weight - 0.5).abs() < 1e-12);
+        assert!(matches!(l.weight, Weight::Const(w) if (w - 0.5).abs() < 1e-12));
         assert_eq!(l.horizon, 8);
         // Defaults: weight=1.0, horizon=forward_window (3).
         let lf = tree.leaves.get("leaf_f").unwrap();
-        assert!((lf.weight - 1.0).abs() < 1e-12);
+        assert!(matches!(lf.weight, Weight::Const(w) if (w - 1.0).abs() < 1e-12));
         assert_eq!(lf.horizon, 3);
 
         // weight=0.0 → Err
@@ -663,6 +703,60 @@ leaves:
         // horizon=0 → Err
         let h0 = ok.replace("horizon: 8", "horizon: 0");
         assert!(load_tree_str(&h0).is_err());
+    }
+
+    /// 构建最小 Context 供 weight_at 测试（loader tests 此前不依赖 Context）。
+    fn mini_ctx() -> crate::features::context::Context {
+        use crate::data::bar::{Bar, Window};
+        let t = chrono::NaiveDate::from_ymd_opt(2024, 1, 2).unwrap().and_hms_opt(9, 45, 0).unwrap();
+        let bars = vec![Bar { time: t, open: 10.0, high: 10.0, low: 10.0, close: 10.0, volume: 1.0 }];
+        crate::features::context::Context {
+            t,
+            primary: Window { bars: bars.clone() },
+            context: Window { bars },
+            news: None,
+            aux: std::collections::BTreeMap::new(),
+            sim: crate::features::context::SimState::default(),
+        }
+    }
+
+    #[test]
+    fn leaf_weight_expression_loads_and_evaluates() {
+        let ok = r#"
+meta: { name: t, forward_window: 3, stances: [long, flat] }
+params: { unit: 0.25 }
+root: a
+nodes:
+  a:
+    type: quant
+    branches: [ { when: "close > 0", goto: leaf_l, label: up } ]
+    default: { goto: leaf_f, label: flat }
+leaves:
+  leaf_l: { stance: long, weight: "min(1, pos + unit)" }
+  leaf_f: { stance: flat }
+"#;
+        let tree = load_tree_str(ok).unwrap();
+        let l = tree.leaves.get("leaf_l").unwrap();
+        assert!(matches!(l.weight, Weight::Expr(_)));
+        // 非 sim ctx：pos=0 → 0.25
+        let mut ctx = mini_ctx();
+        assert!((l.weight_at(&ctx) - 0.25).abs() < 1e-12);
+        // sim 注入 pos=0.5 → 0.75
+        ctx.sim.pos = 0.5;
+        assert!((l.weight_at(&ctx) - 0.75).abs() < 1e-12);
+        // clamp：pos=0.9 → min(1, 1.15) = 1.0
+        ctx.sim.pos = 0.9;
+        assert!((l.weight_at(&ctx) - 1.0).abs() < 1e-12);
+        // NaN → 0（弃权）：表达式引用空仓 entry_price
+        let nan_w = ok.replace("min(1, pos + unit)", "entry_price / 100");
+        let tree2 = load_tree_str(&nan_w).unwrap();
+        assert!((tree2.leaves["leaf_l"].weight_at(&mini_ctx()) - 0.0).abs() < 1e-12);
+        // 数值路径不变：Const + 旧校验
+        let tree3 = load_tree_str(&ok.replace(r#""min(1, pos + unit)""#, "0.5")).unwrap();
+        assert!(matches!(tree3.leaves["leaf_l"].weight, Weight::Const(w) if (w - 0.5).abs() < 1e-12));
+        // 未知标识符 / 坏语法 → 加载错
+        assert!(load_tree_str(&ok.replace("pos + unit", "nope + 1")).is_err());
+        assert!(load_tree_str(&ok.replace("min(1, pos + unit)", "min(1,")).is_err());
     }
 
     #[test]

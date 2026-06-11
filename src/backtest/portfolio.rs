@@ -102,11 +102,11 @@ pub async fn score_symbol(
     let score = if soft {
         let st = crate::engine::soft::traverse_soft(tree, &ctx, llm).await?;
         st.leaf_probs.iter().map(|(id, p)| {
-            tree.leaves.get(id).map_or(0.0, |l| p * l.weight * dir(l.stance))
+            tree.leaves.get(id).map_or(0.0, |l| p * l.weight_at(&ctx) * dir(l.stance))
         }).sum()
     } else {
         let tr = crate::engine::traversal::traverse(tree, &ctx, llm).await?;
-        tree.leaves.get(&tr.leaf).map_or(0.0, |l| l.weight * dir(l.stance))
+        tree.leaves.get(&tr.leaf).map_or(0.0, |l| l.weight_at(&ctx) * dir(l.stance))
     };
     Ok(Some(score))
 }

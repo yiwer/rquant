@@ -53,7 +53,7 @@ pub(crate) enum NodeSpec {
 pub(crate) struct LeafSpec {
     pub(crate) stance: Stance,
     #[serde(default)]
-    pub(crate) weight: Option<f64>,
+    pub(crate) weight: Option<serde_yaml::Value>,
     #[serde(default)]
     pub(crate) horizon: Option<usize>,
 }

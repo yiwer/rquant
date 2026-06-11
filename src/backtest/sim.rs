@@ -434,14 +434,14 @@ async fn tree_target<'a>(
         let mut e = 0.0_f64;
         for (leaf_id, &p) in &soft_trace.leaf_probs {
             if let Some(leaf) = tree.leaves.get(leaf_id) {
-                e += p * leaf.weight * stance_dir(leaf.stance);
+                e += p * leaf.weight_at(ctx) * stance_dir(leaf.stance);
             }
         }
         Ok((e, "tree"))
     } else {
         let trace = traverse(tree, ctx, llm).await?;
         let target = tree.leaves.get(&trace.leaf).map_or(0.0, |l| {
-            stance_dir(l.stance) * l.weight
+            stance_dir(l.stance) * l.weight_at(ctx)
         });
         Ok((target, "tree"))
     }
