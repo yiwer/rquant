@@ -18,6 +18,40 @@ pub(crate) fn llm_enabled(model: &str, base_url: &str, api_key: &str) -> bool {
     !model.is_empty() && !base_url.is_empty() && !api_key.is_empty()
 }
 
+/// 构造 LLM 评估器：三件套齐全→OpenAi，否则提示一次并回退 Disabled。
+fn build_llm(model: String, base_url: String, cache_dir: PathBuf) -> anyhow::Result<LlmEvaluator> {
+    let api_key = std::env::var("RQUANT_LLM_API_KEY").unwrap_or_default();
+    if llm_enabled(&model, &base_url, &api_key) {
+        let cfg = LlmConfig {
+            base_url,
+            api_key,
+            model,
+            timeout_secs: 60,
+            max_retries: 2,
+            cache_dir,
+        };
+        Ok(LlmEvaluator::OpenAi(OpenAiLlm::new(cfg)?))
+    } else {
+        eprintln!("[rquant] LLM not configured (need --llm-model, --llm-base-url, env RQUANT_LLM_API_KEY); LLM nodes will take their default branch.");
+        Ok(LlmEvaluator::Disabled)
+    }
+}
+
+/// 解析 --aux NAME=PATH 旗标（重名报错）。
+fn parse_aux(specs: &[String]) -> anyhow::Result<Vec<(String, PathBuf)>> {
+    let mut out: Vec<(String, PathBuf)> = Vec::new();
+    for spec in specs {
+        let (n, p) = spec
+            .split_once('=')
+            .ok_or_else(|| anyhow::anyhow!("--aux expects NAME=PATH, got '{spec}'"))?;
+        if out.iter().any(|(en, _)| en == n) {
+            return Err(anyhow::anyhow!("duplicate --aux name '{n}'"));
+        }
+        out.push((n.to_string(), PathBuf::from(p)));
+    }
+    Ok(out)
+}
+
 // 2026-06 实测：money.finance.sina.com.cn 该服务回 "Service not valid"；quotes.sina.cn 可用
 pub(crate) const SINA_BASE_URL: &str = "https://quotes.sina.cn/cn/api/json_v2.php";
 
@@ -312,31 +346,8 @@ pub async fn main() -> anyhow::Result<()> {
             tree, primary, context, news, out, traces, cost_bps, warmup, window, concurrency,
             holidays, folds, soft, sim, llm_model, llm_base_url, llm_cache_dir, aux,
         } => {
-            let api_key = std::env::var("RQUANT_LLM_API_KEY").unwrap_or_default();
-            let llm = if llm_enabled(&llm_model, &llm_base_url, &api_key) {
-                let cfg = LlmConfig {
-                    base_url: llm_base_url,
-                    api_key,
-                    model: llm_model,
-                    timeout_secs: 60,
-                    max_retries: 2,
-                    cache_dir: llm_cache_dir,
-                };
-                LlmEvaluator::OpenAi(OpenAiLlm::new(cfg)?)
-            } else {
-                eprintln!("[rquant] LLM not configured (need --llm-model, --llm-base-url, env RQUANT_LLM_API_KEY); LLM nodes will take their default branch.");
-                LlmEvaluator::Disabled
-            };
-            let mut aux_paths: Vec<(String, PathBuf)> = Vec::new();
-            for spec in &aux {
-                let (n, p) = spec
-                    .split_once('=')
-                    .ok_or_else(|| anyhow::anyhow!("--aux expects NAME=PATH, got '{spec}'"))?;
-                if aux_paths.iter().any(|(en, _)| en == n) {
-                    return Err(anyhow::anyhow!("duplicate --aux name '{n}'"));
-                }
-                aux_paths.push((n.to_string(), PathBuf::from(p)));
-            }
+            let llm = build_llm(llm_model, llm_base_url, llm_cache_dir)?;
+            let aux_paths = parse_aux(&aux)?;
             let cfg = BacktestConfig {
                 tree_path: tree, primary_path: primary, context_path: context, news_path: news,
                 out_path: out, traces_path: traces, cost_bps, warmup, window, concurrency,
@@ -365,31 +376,8 @@ pub async fn main() -> anyhow::Result<()> {
                     "--sim and --soft are mutually exclusive for optimize (sim target is undefined in soft-score mode)"
                 ));
             }
-            let api_key = std::env::var("RQUANT_LLM_API_KEY").unwrap_or_default();
-            let llm = if llm_enabled(&llm_model, &llm_base_url, &api_key) {
-                let cfg = LlmConfig {
-                    base_url: llm_base_url,
-                    api_key,
-                    model: llm_model,
-                    timeout_secs: 60,
-                    max_retries: 2,
-                    cache_dir: llm_cache_dir,
-                };
-                LlmEvaluator::OpenAi(OpenAiLlm::new(cfg)?)
-            } else {
-                eprintln!("[rquant] LLM not configured (need --llm-model, --llm-base-url, env RQUANT_LLM_API_KEY); LLM nodes will take their default branch.");
-                LlmEvaluator::Disabled
-            };
-            let mut aux_paths: Vec<(String, PathBuf)> = Vec::new();
-            for spec in &aux {
-                let (n, p) = spec
-                    .split_once('=')
-                    .ok_or_else(|| anyhow::anyhow!("--aux expects NAME=PATH, got '{spec}'"))?;
-                if aux_paths.iter().any(|(en, _)| en == n) {
-                    return Err(anyhow::anyhow!("duplicate --aux name '{n}'"));
-                }
-                aux_paths.push((n.to_string(), PathBuf::from(p)));
-            }
+            let llm = build_llm(llm_model, llm_base_url, llm_cache_dir)?;
+            let aux_paths = parse_aux(&aux)?;
             if grid.is_empty() {
                 return Err(anyhow::anyhow!(
                     "--grid: at least one grid axis is required (use --grid 'name=start:stop:step')"
@@ -484,33 +472,10 @@ pub async fn main() -> anyhow::Result<()> {
             }
 
             // ── LLM setup ─────────────────────────────────────────────────────
-            let api_key = std::env::var("RQUANT_LLM_API_KEY").unwrap_or_default();
-            let llm = if llm_enabled(&llm_model, &llm_base_url, &api_key) {
-                let cfg = LlmConfig {
-                    base_url: llm_base_url,
-                    api_key,
-                    model: llm_model,
-                    timeout_secs: 60,
-                    max_retries: 2,
-                    cache_dir: llm_cache_dir,
-                };
-                LlmEvaluator::OpenAi(OpenAiLlm::new(cfg)?)
-            } else {
-                eprintln!("[rquant] LLM not configured (need --llm-model, --llm-base-url, env RQUANT_LLM_API_KEY); LLM nodes will take their default branch.");
-                LlmEvaluator::Disabled
-            };
+            let llm = build_llm(llm_model, llm_base_url, llm_cache_dir)?;
 
             // ── aux parse ─────────────────────────────────────────────────────
-            let mut aux_paths: Vec<(String, PathBuf)> = Vec::new();
-            for spec in &aux {
-                let (n, p) = spec
-                    .split_once('=')
-                    .ok_or_else(|| anyhow::anyhow!("--aux expects NAME=PATH, got '{spec}'"))?;
-                if aux_paths.iter().any(|(en, _)| en == n) {
-                    return Err(anyhow::anyhow!("duplicate --aux name '{n}'"));
-                }
-                aux_paths.push((n.to_string(), PathBuf::from(p)));
-            }
+            let aux_paths = parse_aux(&aux)?;
 
             if let Some(primary_path) = primary {
                 // ── single-symbol mode ────────────────────────────────────────
@@ -593,31 +558,8 @@ pub async fn main() -> anyhow::Result<()> {
             tree, universe, top, rebalance, warmup, window, cost_bps, soft, aux, out, traces,
             llm_model, llm_base_url, llm_cache_dir,
         } => {
-            let api_key = std::env::var("RQUANT_LLM_API_KEY").unwrap_or_default();
-            let llm = if llm_enabled(&llm_model, &llm_base_url, &api_key) {
-                let cfg = LlmConfig {
-                    base_url: llm_base_url,
-                    api_key,
-                    model: llm_model,
-                    timeout_secs: 60,
-                    max_retries: 2,
-                    cache_dir: llm_cache_dir,
-                };
-                LlmEvaluator::OpenAi(OpenAiLlm::new(cfg)?)
-            } else {
-                eprintln!("[rquant] LLM not configured (need --llm-model, --llm-base-url, env RQUANT_LLM_API_KEY); LLM nodes will take their default branch.");
-                LlmEvaluator::Disabled
-            };
-            let mut aux_paths: Vec<(String, PathBuf)> = Vec::new();
-            for spec in &aux {
-                let (n, p) = spec
-                    .split_once('=')
-                    .ok_or_else(|| anyhow::anyhow!("--aux expects NAME=PATH, got '{spec}'"))?;
-                if aux_paths.iter().any(|(en, _)| en == n) {
-                    return Err(anyhow::anyhow!("duplicate --aux name '{n}'"));
-                }
-                aux_paths.push((n.to_string(), PathBuf::from(p)));
-            }
+            let llm = build_llm(llm_model, llm_base_url, llm_cache_dir)?;
+            let aux_paths = parse_aux(&aux)?;
             let pcfg = PortfolioConfig {
                 tree_path: tree,
                 universe_path: universe,
