@@ -114,6 +114,152 @@ pub fn task_cancel(state: tauri::State<AppState>, id: String) {
     state.tasks.cancel(&id)
 }
 
+// ───────────────────────── M2: 回测中心 / 数据工作台 ─────────────────────────
+
+pub fn assemble_tree_list(ws: &Workspace) -> Vec<crate::dto::TreeInfoDto> {
+    let mut v = Vec::new();
+    for (dir, frozen) in [(ws.root().join("examples"), false), (ws.deploy_dir(), true)] {
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        for e in rd.filter_map(|e| e.ok()) {
+            let p = e.path();
+            let is_yaml = p.extension().map(|x| x == "yaml" || x == "yml").unwrap_or(false);
+            if !is_yaml {
+                continue;
+            }
+            let rel = p
+                .strip_prefix(ws.root())
+                .map(|x| x.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|_| p.to_string_lossy().to_string());
+            match rquant::tree::loader::load_tree_file(&p) {
+                Ok(t) => v.push(crate::dto::TreeInfoDto {
+                    path: rel,
+                    name: Some(t.meta.name),
+                    frozen,
+                    error: None,
+                }),
+                Err(e) => v.push(crate::dto::TreeInfoDto {
+                    path: rel,
+                    name: None,
+                    frozen,
+                    error: Some(e.to_string()),
+                }),
+            }
+        }
+    }
+    v.sort_by(|a, b| a.path.cmp(&b.path));
+    v
+}
+
+// ---- M2 tauri 薄壳 ----
+
+#[tauri::command]
+pub fn tree_list(state: tauri::State<AppState>) -> Vec<crate::dto::TreeInfoDto> {
+    assemble_tree_list(&state.ws)
+}
+
+#[tauri::command]
+pub fn backtest_run(
+    state: tauri::State<AppState>,
+    config: crate::dto::BacktestConfigDto,
+) -> Result<String, String> {
+    let ws = state.ws.clone();
+    state
+        .tasks
+        .start("backtest", true, move |ctx| {
+            crate::backtest_run::execute_backtest(&ws, ctx, &config)
+        })
+}
+
+#[tauri::command]
+pub fn runs_list(state: tauri::State<AppState>) -> Vec<crate::dto::RunMetaDto> {
+    crate::runs::list_runs(&state.ws)
+}
+
+#[tauri::command]
+pub fn run_delete(state: tauri::State<AppState>, id: String) -> Result<(), String> {
+    crate::runs::delete_run(&state.ws, &id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn run_summary(state: tauri::State<AppState>, id: String) -> Result<crate::dto::RunSummaryDto, String> {
+    crate::results::run_summary(&state.ws, &id)
+}
+
+#[tauri::command]
+pub fn run_equity(state: tauri::State<AppState>, id: String) -> Result<Vec<crate::dto::EquityPointDto>, String> {
+    crate::results::equity_series(&state.ws, &id)
+}
+
+#[tauri::command]
+pub fn run_trades(state: tauri::State<AppState>, id: String) -> Result<Vec<crate::dto::TradeDto>, String> {
+    crate::results::trades(&state.ws, &id)
+}
+
+#[tauri::command]
+pub fn run_replay_frames(state: tauri::State<AppState>, id: String) -> Result<Vec<crate::dto::ReplayFrameDto>, String> {
+    crate::replay::replay_frames(&state.ws, &id)
+}
+
+#[tauri::command]
+pub fn run_replay_factors(
+    state: tauri::State<AppState>,
+    id: String,
+    t: String,
+) -> Result<Vec<crate::dto::FactorValueDto>, String> {
+    crate::replay::replay_factors(&state.ws, &id, &t)
+}
+
+#[tauri::command]
+pub fn data_csv_list(state: tauri::State<AppState>) -> Vec<crate::dto::CsvInfoDto> {
+    crate::data_bench::csv_list(&state.ws)
+}
+
+#[tauri::command]
+pub fn data_read_bars(state: tauri::State<AppState>, path: String, tail: u32) -> Result<Vec<crate::dto::BarDto>, String> {
+    crate::data_bench::read_bars(&state.ws, &path, tail as usize)
+}
+
+#[tauri::command]
+pub fn data_eval_factor(
+    state: tauri::State<AppState>,
+    path: String,
+    expr: String,
+    window: u32,
+    tail: u32,
+) -> Result<Vec<crate::dto::FactorPointDto>, String> {
+    crate::data_bench::eval_factor(&state.ws, &path, &expr, window as usize, tail as usize)
+}
+
+#[tauri::command]
+pub fn universe_list(state: tauri::State<AppState>) -> Vec<crate::dto::UniverseInfoDto> {
+    crate::data_bench::universe_list(&state.ws)
+}
+
+#[tauri::command]
+pub fn universe_write(
+    state: tauri::State<AppState>,
+    name: String,
+    entries: Vec<crate::dto::UniverseEntryDto>,
+) -> Result<(), String> {
+    crate::data_bench::universe_write(&state.ws, &name, &entries)
+}
+
+#[tauri::command]
+pub fn fetch_batch(
+    state: tauri::State<AppState>,
+    symbols: Vec<String>,
+    scale: u32,
+    datalen: u32,
+    adjust: String,
+) -> Result<String, String> {
+    let ws = state.ws.clone();
+    state
+        .tasks
+        .start("fetch_batch", true, move |ctx| {
+            crate::data_bench::fetch_batch(&ws, ctx, &symbols, scale, datalen, &adjust)
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,5 +281,27 @@ mod tests {
         assert_eq!(dto.cards[0].book, "b1");
         // 全 empty → journal 不应产生文件
         assert!(!ws.journal_path().exists());
+    }
+
+    #[test]
+    fn tree_list_scans_examples_and_deploy() {
+        let td = tempfile::tempdir().unwrap();
+        let root = td.path().to_path_buf();
+        std::fs::create_dir_all(root.join("examples")).unwrap();
+        std::fs::create_dir_all(root.join("deploy")).unwrap();
+        std::fs::write(
+            root.join("examples/ok.yaml"),
+            crate::backtest_run::test_fixtures::MINI_TREE,
+        )
+        .unwrap();
+        std::fs::write(root.join("deploy/bad.yaml"), "not: a tree").unwrap();
+        let ws = Workspace::new(root);
+        let list = assemble_tree_list(&ws);
+        assert_eq!(list.len(), 2);
+        let ok = list.iter().find(|t| t.path.ends_with("ok.yaml")).unwrap();
+        assert_eq!(ok.name.as_deref(), Some("m2-mini"));
+        assert!(!ok.frozen);
+        let bad = list.iter().find(|t| t.path.ends_with("bad.yaml")).unwrap();
+        assert!(bad.name.is_none() && bad.error.is_some() && bad.frozen);
     }
 }

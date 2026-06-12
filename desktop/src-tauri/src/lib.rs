@@ -50,6 +50,21 @@ pub fn run() {
             commands::manual_run,
             commands::task_list,
             commands::task_cancel,
+            commands::tree_list,
+            commands::backtest_run,
+            commands::runs_list,
+            commands::run_delete,
+            commands::run_summary,
+            commands::run_equity,
+            commands::run_trades,
+            commands::run_replay_frames,
+            commands::run_replay_factors,
+            commands::data_csv_list,
+            commands::data_read_bars,
+            commands::data_eval_factor,
+            commands::universe_list,
+            commands::universe_write,
+            commands::fetch_batch,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
