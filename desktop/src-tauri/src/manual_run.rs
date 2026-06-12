@@ -50,7 +50,7 @@ pub fn universe_symbols(ws: &Workspace) -> anyhow::Result<Vec<String>> {
 /// 任务体:books 子集 + commit 旗标。返回 run 摘要 JSON。
 pub fn run_books(ws: &Workspace, ctx: &TaskCtx, book_ids: &[String], commit: bool) -> Result<serde_json::Value, String> {
     let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
-    let llm = rquant::cli::build_llm(String::new(), String::new(), ".rquant-cache/llm".into())
+    let llm = rquant::cli::build_llm(String::new(), String::new(), ws.root().join(".rquant-cache").join("llm"))
         .map_err(|e| e.to_string())?;
     let mut summary = Vec::new();
     let total = book_ids.len() as f32;
@@ -96,11 +96,14 @@ pub fn run_books(ws: &Workspace, ctx: &TaskCtx, book_ids: &[String], commit: boo
                     .map_err(|e| e.to_string())?;
                     std::thread::sleep(std::time::Duration::from_millis(500)); // sina 节流
                 }
+                if ctx.cancelled() {
+                    return Err("cancelled by user".into());
+                }
                 ctx.progress(base + 0.8 / total, "select", "top3");
                 let cfg = portfolio_cfg(ws);
                 let (sig, new_state) =
                     rt.block_on(rquant::signal::run_signal_portfolio(&cfg, &llm)).map_err(|e| e.to_string())?;
-                std::fs::write(BOOKS[2].sig_path(ws), serde_json::to_string_pretty(&sig).map_err(|e| e.to_string())?)
+                std::fs::write(book.sig_path(ws), serde_json::to_string_pretty(&sig).map_err(|e| e.to_string())?)
                     .map_err(|e| e.to_string())?;
                 if commit {
                     rquant::signal::write_holdings_state(&cfg.state_path, &new_state).map_err(|e| e.to_string())?;
