@@ -25,7 +25,7 @@ fn read_all(ws: &Workspace) -> Vec<JournalEntry> {
     txt.lines().filter_map(|l| serde_json::from_str(l).ok()).collect()
 }
 
-// TODO(M2+): 当前唯一调用方是 overview(commands.rs);若引入第二个写者,读-改-写
+// TODO(M3): 当前唯一调用方是 overview(commands.rs);若引入第二个写者,读-改-写
 // 周期需加 Mutex 防 lost-update(rename 已保护主文件不损坏;overview 刷新可幂等补录)。
 /// 追加条目(按 (book, state_time) 去重,保持原有顺序,新条目排尾)。
 pub fn append_entries(ws: &Workspace, new: &[JournalEntry]) -> anyhow::Result<()> {

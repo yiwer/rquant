@@ -1,17 +1,10 @@
 //! 数据工作台:CSV 清单/新鲜度、K线读取(tail 上限)、因子叠加现算、universe 管理、批量拉取任务。
 //! 一切路径经 resolve_under_root 越界守卫(spec §9 fs 收敛)。
 use crate::dto::{BarDto, CsvInfoDto, FactorPointDto, UniverseEntryDto, UniverseInfoDto};
-use crate::paths::Workspace;
+use crate::paths::{valid_symbol, Workspace};
 use rquant::data::bar::Bar;
 
 const MAX_TAIL: usize = 2000;
-
-/// A股代码白名单:sh/sz/bj + 6 位数字。fetch_batch 写路径由此防注入(.. 或分隔符)。
-fn valid_symbol(s: &str) -> bool {
-    s.len() == 8
-        && (s.starts_with("sh") || s.starts_with("sz") || s.starts_with("bj"))
-        && s[2..].bytes().all(|c| c.is_ascii_digit())
-}
 
 fn iso(t: &chrono::NaiveDateTime) -> String {
     t.format("%Y-%m-%dT%H:%M:%S").to_string()

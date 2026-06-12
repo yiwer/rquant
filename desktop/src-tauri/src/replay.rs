@@ -24,6 +24,9 @@ fn read_traces<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> Vec<T>
 }
 
 pub fn replay_frames(ws: &Workspace, id: &str) -> Result<Vec<ReplayFrameDto>, String> {
+    if !crate::runs::is_valid_run_id(id) {
+        return Err(format!("invalid run id: {}", id));
+    }
     let meta = runs::read_meta(ws, id).ok_or_else(|| format!("run {} not found", id))?;
     let rp = runs::run_paths(ws, id);
     // 路径来源:sim_hard=decision_traces.jsonl;score_hard=traces.jsonl(本身就是 Trace 行)
@@ -79,7 +82,12 @@ pub fn replay_frames(ws: &Workspace, id: &str) -> Result<Vec<ReplayFrameDto>, St
 /// 在 t 时刻现算树的全部因子值(spec §5.2 回放因子表)。
 /// 共享一个 Context 对整列因子求值：安全且高效（先序因子 Cached 槽命中）。
 pub fn replay_factors(ws: &Workspace, id: &str, t: &str) -> Result<Vec<FactorValueDto>, String> {
+    if !crate::runs::is_valid_run_id(id) {
+        return Err(format!("invalid run id: {}", id));
+    }
     let config = runs::read_config(ws, id).map_err(|e| e.to_string())?;
+    // SECURITY(M3): 归档 config 内路径按"写入时已可信"处理(运行时由表单/扫描产生);
+    // 若引入手编 config 导入功能,需经 resolve_under_root 收敛。
     let yaml =
         std::fs::read_to_string(ws.root().join(&config.tree_path)).map_err(|e| e.to_string())?;
     let factors = rquant::tree::loader::resolve_factor_exprs(&yaml).map_err(|e| e.to_string())?;

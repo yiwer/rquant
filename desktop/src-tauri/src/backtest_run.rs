@@ -51,6 +51,9 @@ pub fn execute_backtest(
     // ── 可选 fetch ───────────────────────────────────────────────────────────
     let mut effective = cfg.clone();
     if let Some(f) = &cfg.fetch {
+        if !crate::paths::valid_symbol(&f.symbol) {
+            return Err(format!("invalid symbol: {}", f.symbol));
+        }
         if p.cancelled() {
             return Err("cancelled by user".into());
         }
@@ -297,5 +300,19 @@ mod tests {
         let meta = crate::runs::read_meta(&w, id).unwrap();
         assert!(meta.ok);
         assert_eq!(meta.kind, "sim_soft");
+    }
+
+    #[test]
+    fn fetch_symbol_validated_before_any_io() {
+        let (_td, w) = fixture_ws();
+        let mut c = cfg("sim_hard");
+        c.fetch = Some(crate::dto::FetchSpecDto {
+            symbol: "../../evil".into(),
+            scale: 60,
+            datalen: 10,
+            adjust: "qfq".into(),
+        });
+        let err = execute_backtest(&w, &NoopProgress, &c).unwrap_err();
+        assert!(err.contains("invalid symbol"));
     }
 }

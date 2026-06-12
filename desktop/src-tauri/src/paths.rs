@@ -52,6 +52,13 @@ impl Workspace {
     }
 }
 
+/// A股代码白名单:sh/sz/bj + 6 位数字。写路径由此防注入(.. 或分隔符)。
+pub(crate) fn valid_symbol(s: &str) -> bool {
+    s.len() == 8
+        && (s.starts_with("sh") || s.starts_with("sz") || s.starts_with("bj"))
+        && s[2..].bytes().all(|c| c.is_ascii_digit())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

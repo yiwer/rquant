@@ -73,7 +73,7 @@ fn read_portfolio_sig(path: &std::path::Path) -> Option<(SignalBriefDto, Vec<Dif
 }
 
 /// 树名取自冻结树文件 meta(勿硬编码);树文件本身坏了也归为 corrupt 卡。
-// TODO(M2): cache tree per path(b1/b2 共享同一树文件,每次刷新重复 load ~ms 级,M1 可忽略)
+// TODO(M3): cache tree per path(b1/b2 共享同一树文件,每次刷新重复 load ~ms 级,M1 可忽略)
 fn tree_name(ws: &Workspace, book: &Book) -> Result<String, String> {
     rquant::tree::loader::load_tree_file(&book.tree_path(ws))
         .map(|t| t.meta.name)

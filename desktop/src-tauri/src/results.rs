@@ -9,9 +9,14 @@ fn iso(t: &chrono::NaiveDateTime) -> String {
 }
 
 pub fn run_summary(ws: &Workspace, id: &str) -> Result<RunSummaryDto, String> {
+    if !crate::runs::is_valid_run_id(id) {
+        return Err(format!("invalid run id: {}", id));
+    }
     let meta = runs::read_meta(ws, id).ok_or_else(|| format!("run {} not found", id))?;
     let config = runs::read_config(ws, id).map_err(|e| e.to_string())?;
     let rp = runs::run_paths(ws, id);
+    // SECURITY(M3): 归档 config 内路径按"写入时已可信"处理(运行时由表单/扫描产生);
+    // 若引入手编 config 导入功能,需经 resolve_under_root 收敛。
     let txt = std::fs::read_to_string(&rp.result_json).map_err(|e| e.to_string())?;
     let cap = config.initial_capital;
     let mut s = RunSummaryDto {
@@ -48,6 +53,9 @@ pub fn run_summary(ws: &Workspace, id: &str) -> Result<RunSummaryDto, String> {
 }
 
 pub fn equity_series(ws: &Workspace, id: &str) -> Result<Vec<EquityPointDto>, String> {
+    if !crate::runs::is_valid_run_id(id) {
+        return Err(format!("invalid run id: {}", id));
+    }
     let config = runs::read_config(ws, id).map_err(|e| e.to_string())?;
     let rp = runs::run_paths(ws, id);
     let txt = std::fs::read_to_string(&rp.traces_jsonl).map_err(|e| e.to_string())?;
@@ -60,6 +68,9 @@ pub fn equity_series(ws: &Workspace, id: &str) -> Result<Vec<EquityPointDto>, St
 }
 
 pub fn trades(ws: &Workspace, id: &str) -> Result<Vec<TradeDto>, String> {
+    if !crate::runs::is_valid_run_id(id) {
+        return Err(format!("invalid run id: {}", id));
+    }
     let meta = crate::runs::read_meta(ws, id).ok_or_else(|| format!("run {} not found", id))?;
     if !meta.kind.starts_with("sim") {
         return Err(format!("trades not available for {} runs", meta.kind));
