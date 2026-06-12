@@ -26,19 +26,20 @@ fn read_traces<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> Vec<T>
 pub fn replay_frames(ws: &Workspace, id: &str) -> Result<Vec<ReplayFrameDto>, String> {
     let meta = runs::read_meta(ws, id).ok_or_else(|| format!("run {} not found", id))?;
     let rp = runs::run_paths(ws, id);
-    // 路径来源:sim_hard=decision_traces.jsonl;score_*=traces.jsonl(本身就是 Trace 行)
+    // 路径来源:sim_hard=decision_traces.jsonl;score_hard=traces.jsonl(本身就是 Trace 行)
     let traces: Vec<Trace> = if meta.kind == "sim_hard" {
         read_traces(&rp.decision_jsonl)
-    } else if meta.kind.starts_with("score") {
+    } else if meta.kind == "score_hard" {
         read_traces(&rp.traces_jsonl)
     } else {
-        return Err("replay paths unavailable for sim_soft (no single-path traversal)".into());
+        // sim_soft:软遍历无单一路径;score_soft:叶子概率分布亦无路径概念。
+        return Err(format!("replay frames unavailable for {} (no single decision path)", meta.kind));
     };
     if traces.is_empty() {
         return Err("no decision traces archived for this run".into());
     }
-    // sim 账户线按 t 对齐
-    let steps: BTreeMap<String, SimStepRecord> = if meta.kind.starts_with("sim") {
+    // sim_hard 账户线按 t 对齐
+    let steps: BTreeMap<String, SimStepRecord> = if meta.kind == "sim_hard" {
         read_traces::<SimStepRecord>(&rp.traces_jsonl)
             .into_iter()
             .map(|s| (iso(&s.t), s))
@@ -177,5 +178,15 @@ leaves:
         assert_eq!(vals.len(), 1);
         assert_eq!(vals[0].name, "ma");
         assert!(vals[0].value.unwrap() > 0.0);
+    }
+
+    #[test]
+    fn soft_modes_get_clear_rejection() {
+        let (_td, w, id) = run_one("score_soft");
+        let err = replay_frames(&w, &id).unwrap_err();
+        assert!(err.contains("no single decision path"), "unexpected: {err}");
+        let (_td2, w2, id2) = run_one("sim_soft");
+        let err2 = replay_frames(&w2, &id2).unwrap_err();
+        assert!(err2.contains("no single decision path"), "unexpected: {err2}");
     }
 }
