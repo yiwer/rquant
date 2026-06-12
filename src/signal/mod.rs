@@ -949,10 +949,12 @@ leaves:
     ///   i=13: cooldown(1<3) → exec bar14; bars_since_exit=2
     ///   i=14: 悬挂决策（len-1=15），不记账
     ///
-    /// k=10（bars 0-9，10行数据）: B1 末态 bars_since_exit=2（冷却期中段，i=9 决策前）。
-    ///   若 bars_since_exit 未随 state 往返 → B2 在 i=9 看到 NaN → cooldown 落空 → 提前入场 → 分叉。
-    /// k=13（bars 0-12，13行数据）: B1 末态 bars_since_exit=1（第二轮平仓后，i=13 冷却期起点）。
-    ///   若未往返 → B2 在 i=13 冷却阻断落空 → 第二段提前入场 → 分叉。
+    /// k=9（bars 0-8，9行数据）: B1 末态 bars_since_exit=1（平仓刚发生）。
+    ///   咬合点：B2 首个重播决策 i=8 即读 bars_since_exit，字段未入 state 则 NaN → cooldown 落空 → 提前入场 → 分叉。
+    /// k=10（bars 0-9，10行数据）: B1 末态 bars_since_exit=2（冷却期中段）。
+    ///   咬合点：B2 首个重播决策 i=9 即读 bars_since_exit，字段未入 state 则 NaN → cooldown 落空 → 提前入场 → 分叉。
+    /// k=13（bars 0-12，13行数据）: B1 末态 bars_since_exit=1（第二轮平仓后）。
+    ///   持仓期中段切分（非字段丢失咬合点：B2 首决策 i=12 走 exit 分支不读值，且重播自身在 i=12 重置 bse）— split==full 正确性覆盖点。
     #[tokio::test]
     async fn golden_invariant_with_throttle_state() {
         // 16 根一天一根，close 单调递增（close>0 恒真，入场条件自然满足）
@@ -986,9 +988,10 @@ leaves:
         );
 
         // B：前 k bar fresh commit → 全量续跑；split==full 断言
-        // k=10: bars 0-9，B1 末 bars_since_exit=2（冷却期中段）
-        // k=13: bars 0-12，B1 末 bars_since_exit=1（第二轮平仓刚发生）
-        for k in [10usize, 13] {
+        // k=9: bars 0-8，咬合点：B2 首个重播决策 i=8 即读 bars_since_exit，字段未入 state 则 NaN→冷却落空→提前入场→分叉
+        // k=10: bars 0-9，咬合点：B2 首个重播决策 i=9 即读 bars_since_exit，字段未入 state 则 NaN→冷却落空→提前入场→分叉
+        // k=13: bars 0-12，持仓期中段切分（非字段丢失咬合点：B2 首决策走 exit 分支不读值，且重播自身在 i=12 重置 bse）— split==full 正确性覆盖点
+        for k in [9usize, 10, 13] {
             let prefix = format!("{}\n", lines[..=k].join("\n"));
             let prefix_f = write_file(&prefix, ".csv");
             let state_b_path = tmp.path().join(format!("state_b_{k}.json"));

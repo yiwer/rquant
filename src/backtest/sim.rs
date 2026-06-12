@@ -1080,8 +1080,8 @@ time,open,high,low,close,volume
         assert_eq!(snap.max_price_since_entry, Some(10.6));
         assert_eq!(snap.min_price_since_entry, Some(9.9));
         // 首次开仓，还没平仓 → bars_since_exit / last_trip_return 均 NaN → None
-        assert!(snap.bars_since_exit.is_none());
-        assert!(snap.last_trip_return.is_none());
+        assert!(snap.bars_since_exit.is_none(), "bars_since_exit should be None before first exit");
+        assert!(snap.last_trip_return.is_none(), "last_trip_return should be None before first exit");
         let json = serde_json::to_string(&snap).unwrap(); // NaN 不出现 → 序列化成功
         let back: AccountSnapshot = serde_json::from_str(&json).unwrap();
         let acc2 = SimAccount::restore(&back);
@@ -1103,16 +1103,29 @@ time,open,high,low,close,volume
         assert!(a1.max_price_since_entry.is_nan() && a2.max_price_since_entry.is_nan());
         assert!(a1.min_price_since_entry.is_nan() && a2.min_price_since_entry.is_nan());
         // 平仓后 bars_since_exit=1、last_trip_return 有值，且两侧一致
-        assert!((a1.bars_since_exit - 1.0).abs() < 1e-15 && (a2.bars_since_exit - 1.0).abs() < 1e-15);
-        assert!(a1.last_trip_return.is_finite() && (a1.last_trip_return - a2.last_trip_return).abs() < 1e-15);
+        // bars_since_exit 记录平仓执行 bar 收盘为 1（spec §3.6）
+        assert!((a1.bars_since_exit - 1.0).abs() < 1e-12, "a1.bars_since_exit should be 1.0, got {}", a1.bars_since_exit);
+        assert!((a2.bars_since_exit - 1.0).abs() < 1e-12, "a2.bars_since_exit should be 1.0, got {}", a2.bars_since_exit);
+        // last_trip_return = nav / open_nav - 1；入场 10.0、出场 10.6、成本各 0.1%
+        // = (1.0*(1-0.07%)*(1+0.7*5%)*(1+0.7*0.666%)*(1-0.07%)) / (1.0*(1-0.07%)) - 1
+        // ≈ (1.0*0.9993*1.035*1.00666...*0.9993) / 0.9993 - 1 ≈ 0.041171
+        let expected_last_trip_return = 0.04117067;  // entry 10.0 → exit 10.6，成本各 bp10
+        assert!(a1.last_trip_return.is_finite(), "a1.last_trip_return should be finite");
+        assert!((a1.last_trip_return - expected_last_trip_return).abs() < 1e-6, "a1.last_trip_return expected {}, got {}", expected_last_trip_return, a1.last_trip_return);
+        assert!((a1.last_trip_return - a2.last_trip_return).abs() < 1e-15, "a1 and a2 last_trip_return should match");
         // 快照再往返：bars_since_exit/last_trip_return 有实算值，Some 存入 snapshot
         let snap2 = a1.snapshot();
         assert!(snap2.bars_since_exit.is_some(), "bars_since_exit should be Some after exit");
         assert!(snap2.last_trip_return.is_some(), "last_trip_return should be Some after exit");
         let back2: AccountSnapshot = serde_json::from_str(&serde_json::to_string(&snap2).unwrap()).unwrap();
         let a3 = SimAccount::restore(&back2);
-        assert!((a3.bars_since_exit - a1.bars_since_exit).abs() < 1e-15);
-        assert!((a3.last_trip_return - a1.last_trip_return).abs() < 1e-15);
+        // 快照往返后 bars_since_exit 恢复精确值 = 1.0
+        assert!((a3.bars_since_exit - 1.0).abs() < 1e-12, "a3.bars_since_exit should be 1.0 after roundtrip, got {}", a3.bars_since_exit);
+        assert!((a3.bars_since_exit - a1.bars_since_exit).abs() < 1e-15, "a3 and a1 bars_since_exit should match after roundtrip");
+        // 快照往返后 last_trip_return 恢复精确值 ≈ 0.041171
+        let expected_trip_return = 0.04117067;
+        assert!((a3.last_trip_return - expected_trip_return).abs() < 1e-6, "a3.last_trip_return expected {}, got {}", expected_trip_return, a3.last_trip_return);
+        assert!((a3.last_trip_return - a1.last_trip_return).abs() < 1e-15, "a3 and a1 last_trip_return should match after roundtrip");
         // 空仓账户（全新）：所有 NaN/None 字段
         let flat = SimAccount::default();
         let s = flat.snapshot();
