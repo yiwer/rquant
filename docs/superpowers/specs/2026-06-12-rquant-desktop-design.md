@@ -131,6 +131,7 @@ docs/superpowers/ 文件树 + markdown 渲染（表格/代码高亮）；文件�
 
 - LLM key 维持现有纪律：**只读机器级环境变量 `RQUANT_LLM_API_KEY`**，桌面端不存储、不展示、不提供输入框；设置页仅显示"已检测到/未检测到"。
 - 不开监听端口；Tauri fs scope 收敛到工作区 + app_data_dir；唯一外部网络调用是引擎内 sina 拉取（节流）。
+- CSP：M1 为 `csp: null`（仅加载本地 dist 内容、无远程资源，风险面极小）；**M2 引入 fs/shell 类权限时必须设置 CSP**（如 `default-src 'self'`），届时与 capabilities 扩面同评审。
 
 ## 10. 测试策略
 

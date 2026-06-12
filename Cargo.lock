@@ -3057,6 +3057,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-log",
  "tempfile",
+ "time",
  "tokio",
 ]
 

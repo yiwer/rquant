@@ -16,6 +16,10 @@ anyhow = "1"
 tauri = { version = "2", features = [] }
 tauri-plugin-log = "2"
 tokio = { version = "1", features = ["rt-multi-thread"] }
+# PINNED transitive dep: time 0.3.48 adds a From<OffsetDateTime> impl that conflicts
+# with cookie 0.18.1 (pulled by tauri/wry). Direct `=` req keeps `cargo update` from
+# advancing it. Drop this line once tauri's cookie dep updates. Context: commit b5db7a5.
+time = "=0.3.47"
 
 [dev-dependencies]
 tempfile = "3"
