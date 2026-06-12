@@ -46,14 +46,24 @@ export default function RunOverview({ summary }: { summary: RunSummaryDto }) {
   const sim = summary.meta.kind.startsWith("sim");
 
   useEffect(() => {
+    let cancelled = false;
     setPoints([]);
     if (sim) {
       setLoading(true);
       api.runEquity(summary.meta.id)
-        .then(setPoints)
-        .catch(() => {})
-        .finally(() => setLoading(false));
+        .then((pts) => {
+          if (!cancelled) {
+            setPoints(pts);
+            setLoading(false);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setLoading(false);
+        });
     }
+    return () => {
+      cancelled = true;
+    };
   }, [summary.meta.id, sim]);
 
   if (!sim) {

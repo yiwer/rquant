@@ -5,11 +5,19 @@ import { api } from "../api/ipc";
 export default function RawJsonView({ runId }: { runId: string }) {
   const [txt, setTxt] = useState("");
   useEffect(() => {
+    let cancelled = false;
     setTxt("");
     api
       .runSummary(runId)
-      .then((s) => setTxt(JSON.stringify(s.raw ?? s, null, 2)))
-      .catch((e) => setTxt(String(e)));
+      .then((s) => {
+        if (!cancelled) setTxt(JSON.stringify(s.raw ?? s, null, 2));
+      })
+      .catch((e) => {
+        if (!cancelled) setTxt(String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [runId]);
   return (
     <div>

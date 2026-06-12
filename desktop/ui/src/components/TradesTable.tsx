@@ -6,8 +6,16 @@ import { api } from "../api/ipc";
 export default function TradesTable({ runId }: { runId: string }) {
   const [rows, setRows] = useState<TradeDto[]>([]);
   useEffect(() => {
+    let cancelled = false;
     setRows([]);
-    api.runTrades(runId).then(setRows).catch(() => {});
+    api.runTrades(runId)
+      .then((r) => {
+        if (!cancelled) setRows(r);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, [runId]);
   return (
     <Table
