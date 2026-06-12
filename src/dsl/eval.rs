@@ -867,8 +867,9 @@ mod tests {
             eval(&parse_str("pos * 2 + 1").unwrap(), &ctx).unwrap(),
             Value::Scalar(_)
         ));
-        // Bool 进算术仍 Err
+        // Bool 进算术仍 Err（两个方向都锁）
         assert!(eval(&parse_str("(close > 1) + 1").unwrap(), &ctx).is_err());
+        assert!(eval(&parse_str("1 + (close > 1)").unwrap(), &ctx).is_err());
     }
 
     /// 派生序列解锁：算术结果可进窗口函数与逐位条件（phase-2 的存在意义）。
