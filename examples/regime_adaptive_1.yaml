@@ -61,7 +61,10 @@ params:
   n_rsi: 14
   n_range: 20                   # 区间通道回看(Turtle S1 = 20)
   n_swing: 10                   # 趋势内微突破回看
-  # ---- 阈值(占位值,务必按 标的 × 周期 做 walk-forward 校准)----
+  # ---- 阈值(2026-06-12 经 3 标的 60m qfq WFO 校准,详 docs/superpowers/2026-06-12-tree-v3-wfo-results.md:
+  #      stop_n 标的相关 1.5~2.0(600036 内点 1.5/000858 全票 2.0),默认取 Turtle канон 2.0;
+  #      v_break=1.5(600036 全票)、fb_k=3(全标的众数)、cool_k=6(有 edge 标的 6:4 票);
+  #      600519 无 edge(IS/OS Sharpe 全负),其参数票剔除;换标的仍须重校准)----
   k_trend: 0.10                 # 趋势判定:slope/ATR 归一化阈值
   k_trend_dn: -0.10             # 负数 param 直接注入 AST,绕开一元负号问题
   k_ext: 2.0                    # 过度延伸:偏离 EMA20 超过 2×ATR
@@ -79,7 +82,7 @@ params:
   k_neg_one: -1.0               # 负数 param 注入 AST,绕开一元负号(同 k_trend_dn 手法)
   fresh_k: 3                    # "刚离开回调区"判定:距最近 close<EMA20 的 bar 数上限
   fb_k: 3                       # 失败突破回看窗:破位后 ≤fb_k 根内收回才算失败形态
-  cool_k: 4                     # 离场冷却:平仓后 cool_k 根内不开新仓(防鞭打)
+  cool_k: 6                     # 离场冷却:平仓后 cool_k 根内不开新仓(防鞭打;WFO 600036 全票 6)
 
 factors:
   # 按声明顺序展开,仅可前向引用(依赖链显式)
