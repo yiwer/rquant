@@ -28,7 +28,8 @@ fn expr_shape(e: &Expr) -> Shape {
         Expr::Number(_) => Shape::Scalar,
         Expr::Ident(name) => match name.as_str() {
             "hour" | "minute" | "dow" | "pos" | "entry_price" | "bars_held"
-            | "unreal_pnl" | "max_price_since_entry" | "min_price_since_entry" => Shape::Scalar,
+            | "unreal_pnl" | "max_price_since_entry" | "min_price_since_entry"
+            | "bars_since_exit" | "last_trip_return" => Shape::Scalar,
             _ => Shape::Series, // close/open/high/low/volume/aux.*/ctx.*
         },
         Expr::Index(..) => Shape::Scalar,

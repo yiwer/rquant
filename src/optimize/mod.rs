@@ -181,6 +181,8 @@ async fn evaluate_sim(
             unreal_pnl,
             max_price_since_entry: acc.max_price_since_entry,
             min_price_since_entry: acc.min_price_since_entry,
+            bars_since_exit: acc.bars_since_exit,
+            last_trip_return: acc.last_trip_return,
         };
 
         // Risk overlay (mirror run_sim §3.2): stop → tp → max_hold → tree

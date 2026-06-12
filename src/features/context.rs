@@ -15,6 +15,10 @@ pub struct SimState {
     pub max_price_since_entry: f64,
     /// 入场以来所见 low 最小值，空仓 NaN（弃权纪律同 entry_price）。
     pub min_price_since_entry: f64,
+    /// 距最近一次平仓执行 bar 的 bar 数；从未平仓 → NaN（弃权纪律同极值字段）。
+    pub bars_since_exit: f64,
+    /// 最近一次平仓回合的 trip_return；从未平仓 → NaN。
+    pub last_trip_return: f64,
 }
 
 impl Default for SimState {
@@ -26,6 +30,8 @@ impl Default for SimState {
             unreal_pnl: 0.0,
             max_price_since_entry: f64::NAN,
             min_price_since_entry: f64::NAN,
+            bars_since_exit: f64::NAN,
+            last_trip_return: f64::NAN,
         }
     }
 }

@@ -48,6 +48,11 @@ pub struct SimAccount {
     pub max_price_since_entry: f64,
     /// 入场以来所见 low 最小值，空仓 NaN（弃权纪律同 entry_price）。
     pub min_price_since_entry: f64,
+    /// 距最近一次平仓执行 bar 的 bar 数；平仓执行 bar 收盘记 1（镜像 bars_held 口径），
+    /// 其后每执行 bar 单调 +1（不论持仓与否）；从未平仓 → NaN（弃权纪律同极值字段）。
+    pub bars_since_exit: f64,
+    /// 最近一次平仓回合的 trip_return（净值口径）；从未平仓 → NaN。
+    pub last_trip_return: f64,
     trip: Option<OpenTrip>,
 }
 
@@ -64,6 +69,8 @@ impl Default for SimAccount {
             last_increase_date: None,
             max_price_since_entry: f64::NAN,
             min_price_since_entry: f64::NAN,
+            bars_since_exit: f64::NAN,
+            last_trip_return: f64::NAN,
             trip: None,
         }
     }
@@ -175,6 +182,13 @@ pub fn sim_step(
     }
     acc.peak_nav = acc.peak_nav.max(acc.nav);
     acc.max_drawdown = acc.max_drawdown.max(1.0 - acc.nav / acc.peak_nav);
+    // 节流状态量：平仓事件（含翻向）重置计数并记账回合收益；其后每执行 bar 单调 +1。
+    if let Some(rt) = &closed {
+        acc.last_trip_return = rt.trip_return;
+        acc.bars_since_exit = 1.0; // 平仓执行 bar 收盘记 1（镜像 bars_held 口径）
+    } else if !acc.bars_since_exit.is_nan() {
+        acc.bars_since_exit += 1.0;
+    }
     closed
 }
 
@@ -198,6 +212,11 @@ pub fn finalize(
     acc.min_price_since_entry = f64::NAN;
     acc.peak_nav = acc.peak_nav.max(acc.nav);
     acc.max_drawdown = acc.max_drawdown.max(1.0 - acc.nav / acc.peak_nav);
+    // 节流状态量：期末清算同样更新（signal 模式不调 finalize，不受影响）。
+    if let Some(rt) = &closed {
+        acc.last_trip_return = rt.trip_return;
+        acc.bars_since_exit = 1.0;
+    }
     closed
 }
 
@@ -228,6 +247,13 @@ pub struct AccountSnapshot {
     /// 入场以来最低 low（纪律同上）。
     #[serde(default)]
     pub min_price_since_entry: Option<f64>,
+    /// 距最近一次平仓执行 bar 的 bar 数（非有限 ↔ None；旧 state 文件缺字段 → None → 恢复为 NaN，
+    /// 引用该字段的冷却条件弃权至下次平仓事件——阻断分支形态天然安全）。
+    #[serde(default)]
+    pub bars_since_exit: Option<f64>,
+    /// 最近一次平仓回合的 trip_return（纪律同上）。
+    #[serde(default)]
+    pub last_trip_return: Option<f64>,
     pub trip: Option<TripSnapshot>,
 }
 
@@ -252,6 +278,16 @@ impl SimAccount {
             } else {
                 None
             },
+            bars_since_exit: if self.bars_since_exit.is_finite() {
+                Some(self.bars_since_exit)
+            } else {
+                None
+            },
+            last_trip_return: if self.last_trip_return.is_finite() {
+                Some(self.last_trip_return)
+            } else {
+                None
+            },
             trip: self.trip.as_ref().map(|t| TripSnapshot {
                 entry_t: t.entry_t,
                 entry_px: t.entry_px,
@@ -273,6 +309,8 @@ impl SimAccount {
             last_increase_date: s.last_increase_date,
             max_price_since_entry: s.max_price_since_entry.unwrap_or(f64::NAN),
             min_price_since_entry: s.min_price_since_entry.unwrap_or(f64::NAN),
+            bars_since_exit: s.bars_since_exit.unwrap_or(f64::NAN),
+            last_trip_return: s.last_trip_return.unwrap_or(f64::NAN),
             trip: s.trip.as_ref().map(|t| OpenTrip {
                 entry_t: t.entry_t,
                 entry_px: t.entry_px,
@@ -394,6 +432,8 @@ pub async fn run_sim(cfg: &BacktestConfig, llm: &LlmEvaluator, soft: bool) -> Re
             unreal_pnl,
             max_price_since_entry: acc.max_price_since_entry,
             min_price_since_entry: acc.min_price_since_entry,
+            bars_since_exit: acc.bars_since_exit,
+            last_trip_return: acc.last_trip_return,
         };
 
         // 风控覆盖（spec §3.2）：pos≠0 时按 stop→tp→max_hold 顺序检查
@@ -1008,6 +1048,28 @@ time,open,high,low,close,volume
         );
     }
 
+    /// 节流状态量：平仓回合记账与逐 bar 计数（含翻向与从未平仓 NaN）。
+    #[test]
+    fn throttle_state_tracks_exits() {
+        let mut acc = SimAccount::default();
+        assert!(acc.bars_since_exit.is_nan() && acc.last_trip_return.is_nan());
+        // 开仓（执行 bar1）：仍无平仓事件
+        sim_step(&mut acc, 10.0, 10.0, 10.2, 9.9, 10.1, t("2024-01-02 10:00:00"), 1.0, 0.0, "tree");
+        assert!(acc.bars_since_exit.is_nan());
+        // 平仓（执行 bar2，开 10.1 → 平在开盘）：bars_since_exit=1，last_trip_return 记账
+        sim_step(&mut acc, 10.1, 10.1, 10.3, 10.0, 10.2, t("2024-01-03 10:00:00"), 0.0, 0.0, "tree");
+        assert!((acc.bars_since_exit - 1.0).abs() < 1e-12);
+        let r1 = acc.last_trip_return;
+        assert!((r1 - (10.1 / 10.0 - 1.0)).abs() < 1e-12); // 零成本：入 10.0 出 10.1
+        // 空仓再走一根：+1
+        sim_step(&mut acc, 10.2, 10.2, 10.4, 10.1, 10.3, t("2024-01-04 10:00:00"), 0.0, 0.0, "tree");
+        assert!((acc.bars_since_exit - 2.0).abs() < 1e-12);
+        // 再开仓后计数继续单调（不重置）
+        sim_step(&mut acc, 10.3, 10.3, 10.5, 10.2, 10.4, t("2024-01-05 10:00:00"), 1.0, 0.0, "tree");
+        assert!((acc.bars_since_exit - 3.0).abs() < 1e-12);
+        assert!((acc.last_trip_return - r1).abs() < 1e-12); // 未再平仓，不变
+    }
+
     #[test]
     fn account_snapshot_roundtrip_preserves_everything() {
         // 持仓中账户（含 open trip）：执行 bar high 10.6 / low 9.9 → 极值入账
@@ -1017,12 +1079,15 @@ time,open,high,low,close,volume
         assert_eq!(snap.entry_price, Some(10.0));
         assert_eq!(snap.max_price_since_entry, Some(10.6));
         assert_eq!(snap.min_price_since_entry, Some(9.9));
+        // 首次开仓，还没平仓 → bars_since_exit / last_trip_return 均 NaN → None
+        assert!(snap.bars_since_exit.is_none());
+        assert!(snap.last_trip_return.is_none());
         let json = serde_json::to_string(&snap).unwrap(); // NaN 不出现 → 序列化成功
         let back: AccountSnapshot = serde_json::from_str(&json).unwrap();
         let acc2 = SimAccount::restore(&back);
         assert!((acc2.max_price_since_entry - 10.6).abs() < 1e-15);
         assert!((acc2.min_price_since_entry - 9.9).abs() < 1e-15);
-        // 恢复后继续走一步，与原账户走同一步结果一致
+        // 恢复后继续走一步（平仓），与原账户走同一步结果一致
         let mut a1 = acc;
         let mut a2 = acc2;
         let r1 = sim_step(&mut a1, 10.5, 10.6, 10.7, 10.3, 10.4, t("2024-01-03 10:00:00"), 0.0, 0.001, "tree");
@@ -1037,13 +1102,27 @@ time,open,high,low,close,volume
         // 平仓后两侧极值同步重置 NaN
         assert!(a1.max_price_since_entry.is_nan() && a2.max_price_since_entry.is_nan());
         assert!(a1.min_price_since_entry.is_nan() && a2.min_price_since_entry.is_nan());
-        // 空仓账户：entry/极值 NaN → snapshot None → restore NaN
+        // 平仓后 bars_since_exit=1、last_trip_return 有值，且两侧一致
+        assert!((a1.bars_since_exit - 1.0).abs() < 1e-15 && (a2.bars_since_exit - 1.0).abs() < 1e-15);
+        assert!(a1.last_trip_return.is_finite() && (a1.last_trip_return - a2.last_trip_return).abs() < 1e-15);
+        // 快照再往返：bars_since_exit/last_trip_return 有实算值，Some 存入 snapshot
+        let snap2 = a1.snapshot();
+        assert!(snap2.bars_since_exit.is_some(), "bars_since_exit should be Some after exit");
+        assert!(snap2.last_trip_return.is_some(), "last_trip_return should be Some after exit");
+        let back2: AccountSnapshot = serde_json::from_str(&serde_json::to_string(&snap2).unwrap()).unwrap();
+        let a3 = SimAccount::restore(&back2);
+        assert!((a3.bars_since_exit - a1.bars_since_exit).abs() < 1e-15);
+        assert!((a3.last_trip_return - a1.last_trip_return).abs() < 1e-15);
+        // 空仓账户（全新）：所有 NaN/None 字段
         let flat = SimAccount::default();
         let s = flat.snapshot();
         assert!(s.entry_price.is_none() && s.trip.is_none());
         assert!(s.max_price_since_entry.is_none() && s.min_price_since_entry.is_none());
+        assert!(s.bars_since_exit.is_none() && s.last_trip_return.is_none());
         assert!(SimAccount::restore(&s).entry_price.is_nan());
         assert!(SimAccount::restore(&s).max_price_since_entry.is_nan());
+        assert!(SimAccount::restore(&s).bars_since_exit.is_nan());
+        assert!(SimAccount::restore(&s).last_trip_return.is_nan());
     }
 
     /// Chandelier 式跟踪止损树：回撤超 2% 即离场。

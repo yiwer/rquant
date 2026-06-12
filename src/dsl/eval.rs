@@ -64,6 +64,8 @@ pub fn eval(expr: &Expr, ctx: &Context) -> Result<Value> {
             "unreal_pnl" => Ok(Value::Scalar(ctx.sim.unreal_pnl)),
             "max_price_since_entry" => Ok(Value::Scalar(ctx.sim.max_price_since_entry)),
             "min_price_since_entry" => Ok(Value::Scalar(ctx.sim.min_price_since_entry)),
+            "bars_since_exit" => Ok(Value::Scalar(ctx.sim.bars_since_exit)),
+            "last_trip_return" => Ok(Value::Scalar(ctx.sim.last_trip_return)),
             _ => Ok(Value::Series(resolve_series(name, ctx)?)),
         },
         Expr::Index(inner, k) => {
@@ -830,6 +832,7 @@ mod tests {
             unreal_pnl: 0.04,
             max_price_since_entry: 11.0,
             min_price_since_entry: 9.9,
+            ..crate::features::context::SimState::default()
         };
         assert_eq!(f("max_price_since_entry == 11", &ctx), Value::Bool(true));
         assert_eq!(f("min_price_since_entry == 9.9", &ctx), Value::Bool(true)); // 判别 max/min 不可接反

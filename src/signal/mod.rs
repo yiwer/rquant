@@ -295,6 +295,8 @@ pub async fn run_signal_single(
             unreal_pnl,
             max_price_since_entry: acc.max_price_since_entry,
             min_price_since_entry: acc.min_price_since_entry,
+            bars_since_exit: acc.bars_since_exit,
+            last_trip_return: acc.last_trip_return,
         };
 
         // 风控覆盖（spec §3.2）：pos≠0 时按 stop→tp→max_hold 顺序检查
@@ -344,6 +346,8 @@ pub async fn run_signal_single(
         unreal_pnl,
         max_price_since_entry: acc.max_price_since_entry,
         min_price_since_entry: acc.min_price_since_entry,
+        bars_since_exit: acc.bars_since_exit,
+        last_trip_return: acc.last_trip_return,
     };
 
     // 悬挂决策：风控覆盖优先，否则树目标（保留 leaf trace）
@@ -891,6 +895,116 @@ leaves:
         }
 
         // 幂等：以 state_a 再跑全量 → 零重放
+        write_paper_state(&state_a_path, &state_a).unwrap();
+        let (sig_again, state_again) = run_signal_single(&cfg_a, &llm).await.unwrap();
+        assert_eq!(sig_again.paper.bars_replayed, 0);
+        assert_eq!(
+            serde_json::to_value(&state_a).unwrap(),
+            serde_json::to_value(&state_again).unwrap()
+        );
+    }
+
+    /// 冷却树：离场后 3 根 bar 内不再入场（阻断分支形态——冷却写法纪律）。
+    fn cooldown_signal_tree() -> String {
+        r#"
+meta: { name: cooldown_sig, forward_window: 1, stances: [long, flat] }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - when: "pos > 0 and bars_held >= 2"
+        goto: leaf_flat
+        label: exit_after_2
+      - when: "pos > 0"
+        goto: leaf_long
+        label: hold
+      - when: "bars_since_exit < 3"
+        goto: leaf_flat
+        label: cooldown_block
+      - when: "close > 0"
+        goto: leaf_long
+        label: enter
+    default: { goto: leaf_flat, label: idle }
+leaves:
+  leaf_long: { stance: long }
+  leaf_flat: { stance: flat }
+"#
+        .to_string()
+    }
+
+    /// 节流状态量经 state 往返的黄金不变量（playbook 第三例）。
+    ///
+    /// 数据 16 根一天一根（close > 0 恒成立），warmup=5：
+    ///
+    /// 节奏推演（bars 索引 0-15；决策在 i，执行在 bar[i+1]）：
+    ///   i=5: pos==0,close>0 → enter → exec bar6; bars_held=1, bars_since_exit=NaN
+    ///   i=6: pos>0,bars_held<2 → hold → exec bar7; bars_held=2
+    ///   i=7: pos>0,bars_held>=2 → exit → exec bar8; bars_since_exit=1
+    ///   i=8: bars_since_exit=1 < 3 → cooldown → exec bar9; bars_since_exit=2
+    ///   i=9: bars_since_exit=2 < 3 → cooldown → exec bar10; bars_since_exit=3
+    ///   i=10: bars_since_exit=3 ≥ 3 → enter → exec bar11; bars_held=1
+    ///   i=11: hold → exec bar12; bars_held=2
+    ///   i=12: exit → exec bar13; bars_since_exit=1
+    ///   i=13: cooldown(1<3) → exec bar14; bars_since_exit=2
+    ///   i=14: 悬挂决策（len-1=15），不记账
+    ///
+    /// k=10（bars 0-9，10行数据）: B1 末态 bars_since_exit=2（冷却期中段，i=9 决策前）。
+    ///   若 bars_since_exit 未随 state 往返 → B2 在 i=9 看到 NaN → cooldown 落空 → 提前入场 → 分叉。
+    /// k=13（bars 0-12，13行数据）: B1 末态 bars_since_exit=1（第二轮平仓后，i=13 冷却期起点）。
+    ///   若未往返 → B2 在 i=13 冷却阻断落空 → 第二段提前入场 → 分叉。
+    #[tokio::test]
+    async fn golden_invariant_with_throttle_state() {
+        // 16 根一天一根，close 单调递增（close>0 恒真，入场条件自然满足）
+        let full_csv: String = {
+            let mut s = String::from("time,open,high,low,close,volume\n");
+            for i in 0..16usize {
+                let p = 10.0 + 0.1 * i as f64;
+                s.push_str(&format!(
+                    "2024-01-{:02} 10:00:00,{p:.2},{p:.2},{p:.2},{p:.2},1000\n",
+                    2 + i
+                ));
+            }
+            s
+        };
+        let lines: Vec<&str> = full_csv.lines().collect(); // [0]=header + 16 data rows
+
+        let tree_f = write_file(&cooldown_signal_tree(), ".yaml");
+        let full_f = write_file(&full_csv, ".csv");
+        let llm = LlmEvaluator::Disabled;
+
+        // A：一次性全量 fresh
+        let tmp = tempfile::tempdir().unwrap();
+        let state_a_path = tmp.path().join("state_a.json");
+        let cfg_a = make_cfg(tree_f.path(), full_f.path(), full_f.path(), &state_a_path);
+        let (_sig_a, state_a) = run_signal_single(&cfg_a, &llm).await.unwrap();
+        // 非空转 sanity：至少有两次完整入出场（入1+出1+入2+出2=4次交易，turnover>2.5）
+        assert!(
+            state_a.account.turnover > 2.5,
+            "cooldown tree must fire multiple round trips, turnover={}",
+            state_a.account.turnover
+        );
+
+        // B：前 k bar fresh commit → 全量续跑；split==full 断言
+        // k=10: bars 0-9，B1 末 bars_since_exit=2（冷却期中段）
+        // k=13: bars 0-12，B1 末 bars_since_exit=1（第二轮平仓刚发生）
+        for k in [10usize, 13] {
+            let prefix = format!("{}\n", lines[..=k].join("\n"));
+            let prefix_f = write_file(&prefix, ".csv");
+            let state_b_path = tmp.path().join(format!("state_b_{k}.json"));
+            let cfg_b1 = make_cfg(tree_f.path(), prefix_f.path(), prefix_f.path(), &state_b_path);
+            let (_s1, state_b1) = run_signal_single(&cfg_b1, &llm).await.unwrap();
+            write_paper_state(&state_b_path, &state_b1).unwrap();
+            let cfg_b2 = make_cfg(tree_f.path(), full_f.path(), full_f.path(), &state_b_path);
+            let (_s2, state_b2) = run_signal_single(&cfg_b2, &llm).await.unwrap();
+            assert_eq!(
+                serde_json::to_value(&state_a).unwrap(),
+                serde_json::to_value(&state_b2).unwrap(),
+                "split==full violated at k={k}（bars_since_exit/last_trip_return 未随 state 往返？）"
+            );
+        }
+
+        // 幂等：以 state_a 再跑全量 → 零重放，state 不变
         write_paper_state(&state_a_path, &state_a).unwrap();
         let (sig_again, state_again) = run_signal_single(&cfg_a, &llm).await.unwrap();
         assert_eq!(sig_again.paper.bars_replayed, 0);
