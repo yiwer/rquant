@@ -78,7 +78,10 @@ pub fn eval(expr: &Expr, ctx: &Context) -> Result<Value> {
         Expr::Unary(op, e) => {
             let v = eval(e, ctx)?;
             match op {
-                UnaryOp::Neg => Ok(Value::Scalar(-as_scalar(&v)?)),
+                UnaryOp::Neg => match v {
+                    Value::Series(s) => Ok(Value::Series(s.iter().map(|x| -x).collect())),
+                    other => Ok(Value::Scalar(-as_scalar(&other)?)),
+                },
                 UnaryOp::Not => Ok(Value::Bool(!as_bool(&v)?)),
             }
         }
@@ -88,10 +91,9 @@ pub fn eval(expr: &Expr, ctx: &Context) -> Result<Value> {
             Ok(match op {
                 BinaryOp::And => Value::Bool(as_bool(&lv)? && as_bool(&rv)?),
                 BinaryOp::Or => Value::Bool(as_bool(&lv)? || as_bool(&rv)?),
-                BinaryOp::Add => Value::Scalar(as_scalar(&lv)? + as_scalar(&rv)?),
-                BinaryOp::Sub => Value::Scalar(as_scalar(&lv)? - as_scalar(&rv)?),
-                BinaryOp::Mul => Value::Scalar(as_scalar(&lv)? * as_scalar(&rv)?),
-                BinaryOp::Div => Value::Scalar(as_scalar(&lv)? / as_scalar(&rv)?),
+                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+                    arith(op, &lv, &rv)?
+                }
                 BinaryOp::Gt => Value::Bool(as_scalar(&lv)? > as_scalar(&rv)?),
                 BinaryOp::Lt => Value::Bool(as_scalar(&lv)? < as_scalar(&rv)?),
                 BinaryOp::Ge => Value::Bool(as_scalar(&lv)? >= as_scalar(&rv)?),
@@ -104,7 +106,6 @@ pub fn eval(expr: &Expr, ctx: &Context) -> Result<Value> {
                     let (a, b) = (as_scalar(&lv)?, as_scalar(&rv)?);
                     Value::Bool(!a.is_nan() && !b.is_nan() && a != b)
                 }
-
             })
         }
         Expr::Cached(id, inner) => {
@@ -144,6 +145,28 @@ fn resolve_series(name: &str, ctx: &Context) -> Result<Vec<f64>> {
         "low" => Ok(win.lows()),
         "volume" => Ok(win.volumes()),
         _ => Err(Error::Eval(format!("unknown identifier: {name}"))),
+    }
+}
+
+/// 算术逐位提升：≥1 侧 Series → 尾对齐逐位运算返回 Series（末位恒等于旧标量结果）；
+/// 双标量 → 标量（形态守则：lint L2 依赖）；Bool → Err（与 as_scalar 同等拒绝）。
+fn arith(op: &BinaryOp, lv: &Value, rv: &Value) -> Result<Value> {
+    let apply = |a: f64, b: f64| match op {
+        BinaryOp::Add => a + b,
+        BinaryOp::Sub => a - b,
+        BinaryOp::Mul => a * b,
+        BinaryOp::Div => a / b,
+        _ => unreachable!(),
+    };
+    match (lv, rv) {
+        (Value::Bool(_), _) | (_, Value::Bool(_)) => {
+            Err(Error::Eval("expected number, got bool".into()))
+        }
+        (Value::Scalar(a), Value::Scalar(b)) => Ok(Value::Scalar(apply(*a, *b))),
+        _ => {
+            let (a, b) = tail_align(lv, rv)?;
+            Ok(Value::Series(a.iter().zip(&b).map(|(&x, &y)| apply(x, y)).collect()))
+        }
     }
 }
 
@@ -811,5 +834,64 @@ mod tests {
         // 标量上下文不变：highest(close,3) 仍按末位取值 = 5
         assert_eq!(f("highest(close, 3) == 5"), Value::Bool(true));
         assert_eq!(f("slope(close, 5) > 0.9 and slope(close, 5) < 1.1"), Value::Bool(true));
+    }
+
+    /// 提升定理锁：任意混合算术表达式在标量上下文的值与提升前完全一致。
+    /// 每个用例：手算旧标量语义的期望值，断言 as_scalar(eval(expr)) 逐 bits 相等。
+    #[test]
+    fn arithmetic_lift_scalar_context_equivalence() {
+        // ctx_from_closes: open=close=high=low=c, volume=1.0（常数）
+        // closes [1,2,3,4,5]
+        let ctx = ctx_from_closes(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+        let f = |src: &str| {
+            let v = eval(&parse_str(src).unwrap(), &ctx).unwrap();
+            match v {
+                Value::Scalar(x) => x,
+                Value::Series(s) => *s.last().unwrap(),
+                Value::Bool(_) => panic!("unexpected bool"),
+            }
+        };
+        // Series∘Series：末位 = 5.0 * 1.0 = 5.0（volume 常数 1.0）
+        // f("volume") → as_scalar(Series([1,1,1,1,1])) = 1.0
+        assert_eq!(f("close * volume").to_bits(), (5.0_f64 * f("volume")).to_bits());
+        // Series∘Scalar 广播：末位 = 5 - 1 = 4.0
+        assert_eq!(f("close - 1"), 4.0);
+        // 函数序列参与：sma(close,2).last = (4+5)/2 = 4.5 → close - sma = 5 - 4.5 = 0.5
+        assert_eq!(f("close - sma(close, 2)"), 0.5);
+        // 嵌套：highest(close,3).last=5, lowest(close,3).last=3 → (5-3)/5 = 0.4
+        assert_eq!(f("(highest(close,3) - lowest(close,3)) / close"), 0.4);
+        // 一元负号（Scalar 路径仍为 Scalar）：0 是 Scalar，close 是 Series → Series，末位 0-5=-5
+        assert_eq!(f("0 - close"), -5.0);
+        // 双标量仍是 Scalar 形态（守则锁——L2 依赖）
+        assert!(matches!(
+            eval(&parse_str("pos * 2 + 1").unwrap(), &ctx).unwrap(),
+            Value::Scalar(_)
+        ));
+        // Bool 进算术仍 Err
+        assert!(eval(&parse_str("(close > 1) + 1").unwrap(), &ctx).is_err());
+    }
+
+    /// 派生序列解锁：算术结果可进窗口函数与逐位条件（phase-2 的存在意义）。
+    #[test]
+    fn derived_series_feed_windows_and_conditions() {
+        // ctx_from_closes: open=close=high=low=c, volume=1.0（常数）
+        // closes [1,2,3,4,5]
+        let ctx = ctx_from_closes(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+        let f = |src: &str| eval(&parse_str(src).unwrap(), &ctx).unwrap();
+        // 滚动 VWAP 恒等：volume=1.0 常数时 sma(close*1,3)/sma(1,3) = sma(close,3)/1 = sma(close,3)
+        // 两侧 Series，== 取末位比较：sma(close,3).last=(3+4+5)/3=4.0；4.0==4.0 → true
+        assert_eq!(
+            f("sma(close * volume, 3) / sma(volume, 3) == sma(close, 3)"),
+            Value::Bool(true)
+        );
+        // 派生序列进逐位条件：open==close（工厂），改用 close - 1 > 0
+        // close-1=[0,1,2,3,4]（Series），>0 逐位=[F,T,T,T,T]，count 末 4 位=[T,T,T,T]=4；4==4→true
+        assert_eq!(f("count(close - 1 > 0, 4) == 4"), Value::Bool(true));
+        // 派生序列进 ref：close*2=[2,4,6,8,10]，ref(...,1) 去末 1 个 → [2,4,6,8]，末位=8；8==8→true
+        assert_eq!(f("ref(close * 2, 1) == 8"), Value::Bool(true));
+        // 逐位 NaN 传播：sma(close,3)=[NaN,NaN,2,3,4]，close-sma=[NaN,NaN,1,1,1]
+        // 0-99 两标量 → Scalar(-99)；NaN>-99→false，其余 1>-99→true
+        // bools=[F,F,T,T,T]，count 末 5=3；3==3→true
+        assert_eq!(f("count(close - sma(close,3) > 0 - 99, 5) == 3"), Value::Bool(true));
     }
 }
