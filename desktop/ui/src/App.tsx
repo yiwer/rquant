@@ -1,5 +1,6 @@
 import { HashRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 import { Layout, Menu, Typography } from "antd";
+import Cockpit from "./pages/Cockpit";
 
 export const MODULES = [
   { key: "cockpit", label: "驾驶舱" },
@@ -32,7 +33,7 @@ function Shell() {
       </Layout.Sider>
       <Layout.Content style={{ padding: 16 }}>
         <Routes>
-          <Route path="/cockpit" element={<Placeholder name="驾驶舱" />} />
+          <Route path="/cockpit" element={<Cockpit />} />
           {MODULES.filter((m) => m.key !== "cockpit").map((m) => (
             <Route key={m.key} path={`/${m.key}`} element={<Placeholder name={m.label} />} />
           ))}
