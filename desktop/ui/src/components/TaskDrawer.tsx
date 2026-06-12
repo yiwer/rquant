@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Badge, Button, Drawer, List, Progress, Typography } from "antd";
 import { listen } from "@tauri-apps/api/event";
 import type { TaskInfoDto } from "@bindings/TaskInfoDto";
@@ -12,7 +12,7 @@ export default function TaskDrawer() {
   const [open, setOpen] = useState(false);
   const [tasks, setTasks] = useState<TaskInfoDto[]>([]);
 
-  const refresh = () => void api.taskList().then(setTasks).catch(() => {});
+  const refresh = useCallback(() => void api.taskList().then(setTasks).catch(() => {}), []);
 
   useEffect(() => {
     refresh();
@@ -23,7 +23,7 @@ export default function TaskDrawer() {
       void un.then((f) => f());
       clearInterval(timer);
     };
-  }, []);
+  }, [refresh]);
 
   const running = tasks.filter((t) => t.status === "running").length;
 
@@ -38,7 +38,7 @@ export default function TaskDrawer() {
           locale={{ emptyText: "暂无任务" }}
           renderItem={(t) => (
             <List.Item
-              actions={t.status === "running" ? [<a key="c" onClick={() => void api.taskCancel(t.id)}>取消</a>] : []}
+              actions={t.status === "running" ? [<Typography.Link key="c" onClick={() => void api.taskCancel(t.id)}>取消</Typography.Link>] : []}
             >
               <List.Item.Meta
                 title={<Badge status={(STATUS_BADGE[t.status] ?? "default") as never} text={`${t.kind} · ${t.id}`} />}
