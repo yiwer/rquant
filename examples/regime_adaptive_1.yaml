@@ -1,12 +1,15 @@
 # =====================================================================
-# 双态自适应策略树 v3 — Brooks 回调 × Turtle 突破 + 原版N吊灯/冷却闸/窗口形失败突破
+# 双态自适应策略树 v4 — Brooks 回调 × Turtle 突破 + 自适应波动闸/参数门控S1
 #
 # 架构(自上而下六层):
 #   L0 持仓保护闸 : Chandelier 跟踪止损——回撤倍数锚定**信号 bar 的 N**
 #                   (ref(atr_v, bars_held),Turtle 原版口径;长持仓越窗→NaN
 #                   自动落到第二分支)+ 当前 N 的 2N 固定止损兜底;
 #                   (打分模式下 pos≡0,自动退化为直通,不影响评分)
-#   L1 波动率闸门 : ATR/close 过低(无行情)或过高(失控)→ 空仓
+#   L1 波动率闸门 : **v4 自适应**——ATR/close 的滚动百分位(percentrank)
+#                   低于 q_vol_lo(死寂)或高于 q_vol_hi(失控)→ 空仓;
+#                   自归一化使闸门跨标的/跨周期(60m↔日线)免重校;
+#                   暖机 NaN → 两分支落空直通(弃权即放行,保守在后层兜)
 #   L1.5 冷却闸   : 离场后 cool_k 根内不再开新仓(防鞭打);持仓直通;
 #                   **阻断分支形态**——打分模式 bars_since_exit≡NaN→落空直通,
 #                   评分口径零影响(docs/dsl-reference.md「冷却写法纪律」)
@@ -45,10 +48,15 @@
 #   A5(v3):冷却用阻断分支不用入场 AND 子句(否则打分口径树退化纯 flat,
 #      评分/WFO 全废);session_vwap 是 Context 派生标量,打分模式有真值,
 #      用 >=/<= 容当日首根 close==vwap 的退化。
+#   A6(v4):percentrank(vol_ratio, n_vol_rank) 合法——vol_ratio 是派生序列
+#      (phase-2 算术提升),percentrank 滚动窗;窗口算术:warmup 80 + atr 14
+#      ⇒ 决策点处有限 vol_ratio ≥ 67 > n_vol_rank=60,百分位恒有值;
+#      Turtle S1 用 s1_on 参数门控(0/1 进 WFO 网格自归因),阻断分支形态
+#      (last_trip_return 打分模式 NaN → 落空,纪律同 A5)。
 # =====================================================================
 
 meta:
-  name: "双态自适应 · Brooks回调 × Turtle突破 v3"
+  name: "双态自适应 · Brooks回调 × Turtle突破 v4"
   forward_window: 24            # 叶子未覆盖时的默认前瞻窗口
   stances: [long, flat, short]
 
@@ -68,8 +76,10 @@ params:
   k_trend: 0.10                 # 趋势判定:slope/ATR 归一化阈值
   k_trend_dn: -0.10             # 负数 param 直接注入 AST,绕开一元负号问题
   k_ext: 2.0                    # 过度延伸:偏离 EMA20 超过 2×ATR
-  vol_floor: 0.002              # ATR/close 下限(死寂市,边际成本吃掉 edge)
-  vol_cap: 0.06                 # ATR/close 上限(失控市,风险敞口不可控)
+  n_vol_rank: 60                # v4 波动百分位回看窗(须 < warmup−n_atr 余量,见 A6)
+  q_vol_lo: 0.10                # 波动百分位下限:低于自身历史 10 分位 = 死寂市
+  q_vol_hi: 0.95                # 波动百分位上限:高于 95 分位 = 失控市
+  s1_on: 0.0                    # Turtle S1 跳赢家开关(1 开/0 关;WFO 网格归因用)
   v_break: 1.5                  # 突破量能 ≥ 1.5 × 均量
   rsi_bull_floor: 40            # 多头回调 RSI 下限(跌破 = 回调过深,可能反转)
   rsi_bear_cap: 60              # 空头反弹 RSI 上限(对称)
@@ -90,7 +100,8 @@ factors:
   ema_t:       "ema(close, n_trend)"
   ema_f:       "ema(close, n_fast)"
   trend_slope: "slope(ema_t, n_slope)"
-  vol_ratio:   "atr_v / close"
+  vol_ratio:   "atr_v / close"                    # 派生序列(phase-2 提升)
+  vol_pct:     "percentrank(vol_ratio, n_vol_rank)" # 波动在自身历史中的分位(自归一化)
   rng_hi:      "highest(ref(high, 1), n_range)"   # 前 n_range 根高点(不含当前 bar)
   rng_lo:      "lowest(ref(low, 1), n_range)"
   rng_w:       "rng_hi - rng_lo"
@@ -169,14 +180,14 @@ nodes:
       goto: vol_gate
       label: keep_short
 
-  # ================= L1 波动率闸门
+  # ================= L1 波动率闸门(v4 自适应:百分位替代绝对阈值,跨标的/周期免重校)
   vol_gate:
     type: quant
     branches:
-      - when: "vol_ratio < vol_floor"
+      - when: "vol_pct < q_vol_lo"                      # 波动处于自身历史低位:死寂市
         goto: flat_idle
         label: dead_market
-      - when: "vol_ratio > vol_cap"
+      - when: "vol_pct > q_vol_hi"                      # 自身历史高位:失控市
         goto: flat_chaos
         label: vol_runaway
     default:
@@ -295,6 +306,9 @@ nodes:
   bull_break_check:
     type: quant
     branches:
+      - when: "s1_on > 0 and last_trip_return > 0"      # Turtle S1:上回合盈利 → 跳过本次突破
+        goto: flat_s1_skip                              # (阻断分支:打分模式 NaN 落空,纪律 A6)
+        label: s1_skip
       - when: "volume > v_break * vol_ma"               # 放量突破 → 过消息闸,正常仓位
         goto: llm_gate_long
         label: volume_confirm
@@ -393,6 +407,9 @@ nodes:
   bear_break_check:
     type: quant
     branches:
+      - when: "s1_on > 0 and last_trip_return > 0"      # S1 镜像
+        goto: flat_s1_skip
+        label: s1_skip_s
       - when: "volume > v_break * vol_ma"
         goto: llm_gate_short
         label: volume_confirm_s
@@ -447,6 +464,9 @@ nodes:
   range_break_up:
     type: quant
     branches:
+      - when: "s1_on > 0 and last_trip_return > 0"      # S1:区间突破同样适用跳赢家
+        goto: flat_s1_skip
+        label: s1_skip_rb
       - when: "volume > v_break * vol_ma"
         goto: llm_gate_long_rangebo                     # v2:独立落点 map,降一档 probe
         label: range_bo_vol
@@ -457,6 +477,9 @@ nodes:
   range_break_dn:
     type: quant
     branches:
+      - when: "s1_on > 0 and last_trip_return > 0"
+        goto: flat_s1_skip
+        label: s1_skip_rd
       - when: "volume > v_break * vol_ma"
         goto: llm_gate_short_rangebo
         label: range_bd_vol
@@ -515,6 +538,7 @@ leaves:
   flat_news:    { stance: flat }      # LLM veto
   flat_mid:     { stance: flat }      # 区间中部无 edge
   flat_cooldown: { stance: flat }     # 离场冷却期(v3 防鞭打)
+  flat_s1_skip:  { stance: flat }     # Turtle S1 跳赢家(v4,s1_on 门控)
 
   # ---- 多头 ----
   leaf_long_max:    { stance: long,  weight: 1.0, horizon: 24 }   # 技术 + 消息共振
