@@ -11,6 +11,7 @@ pub mod journal;
 pub mod manual_run;
 pub mod paths;
 pub mod readers;
+pub mod replay;
 pub mod results;
 pub mod runlog;
 pub mod runs;
