@@ -37,9 +37,11 @@ pub struct SignalBriefDto {
     pub delta: Option<f64>,
     pub reason: Option<String>,
     pub leaf: Option<String>,
+    #[ts(type = "number | null")]
     pub bars_replayed: Option<u64>,
     /// portfolio:目标清单。
     pub targets: Option<Vec<(String, f64)>>,
+    #[ts(type = "number | null")]
     pub n_fresh: Option<u64>,
 }
 
@@ -89,6 +91,7 @@ pub struct OverviewDto {
 pub struct SnapshotDto {
     pub pos: f64,
     pub entry_price: Option<f64>,
+    #[ts(type = "number")]
     pub bars_held: u64,
     pub nav: f64,
     pub peak_nav: f64,

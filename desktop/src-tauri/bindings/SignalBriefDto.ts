@@ -4,8 +4,8 @@ export type SignalBriefDto = { t: string,
 /**
  * single:目标仓位;portfolio:入选数。
  */
-target: number | null, current_pos: number | null, delta: number | null, reason: string | null, leaf: string | null, bars_replayed: bigint | null, 
+target: number | null, current_pos: number | null, delta: number | null, reason: string | null, leaf: string | null, bars_replayed: number | null, 
 /**
  * portfolio:目标清单。
  */
-targets: Array<[string, number]> | null, n_fresh: bigint | null, };
+targets: Array<[string, number]> | null, n_fresh: number | null, };
