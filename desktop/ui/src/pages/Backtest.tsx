@@ -6,6 +6,7 @@ import RunHistoryList from "../components/RunHistoryList";
 import RunOverview from "../components/RunOverview";
 import TradesTable from "../components/TradesTable";
 import RawJsonView from "../components/RawJsonView";
+import KlineSignalsView from "../components/KlineSignalsView";
 
 export default function Backtest() {
   const st = useBacktest();
@@ -45,7 +46,11 @@ export default function Backtest() {
           <Tabs
             items={[
               { key: "overview", label: "概览", children: st.summary ? <RunOverview summary={st.summary} /> : <Spin /> },
-              { key: "kline", label: "K线信号", children: <Typography.Text type="secondary">U3 交付</Typography.Text> },
+              { key: "kline", label: "K线信号",
+                children: st.summary
+                  ? <KlineSignalsView runId={st.selectedId!} primaryPath={st.summary.config.primary_path}
+                      isSim={st.summary.meta.kind.startsWith("sim")} />
+                  : <Spin /> },
               { key: "trades", label: "交易明细", children: <TradesTable runId={st.selectedId!} /> },
               { key: "replay", label: "决策回放", children: <Typography.Text type="secondary">U4 交付</Typography.Text> },
               { key: "raw", label: "原始", children: <RawJsonView runId={st.selectedId!} /> },
