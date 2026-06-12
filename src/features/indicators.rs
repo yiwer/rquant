@@ -277,6 +277,66 @@ pub fn macd_hist(s: &[f64], fast: usize, slow: usize, sig: usize) -> Vec<f64> {
     line.iter().zip(signal.iter()).map(|(a, b)| a - b).collect()
 }
 
+/// percentrank 滚动序列版：位 j = 窗口（含当前，长 n）内严格小于 s[j] 的个数 / (n−1) ∈ [0,1]。
+/// n<2 或 j+1<n → NaN（严格头，同 std_roll）；窗含 NaN → NaN 传播。
+pub fn percentrank_roll(s: &[f64], n: usize) -> Vec<f64> {
+    let mut out = vec![f64::NAN; s.len()];
+    if n < 2 {
+        return out;
+    }
+    for j in 0..s.len() {
+        if j + 1 < n {
+            continue;
+        }
+        let w = &s[j + 1 - n..=j];
+        // NaN 传播：窗口含任何 NaN → 输出 NaN
+        if w.iter().any(|x| x.is_nan()) {
+            continue; // out[j] stays NaN
+        }
+        let cur = w[n - 1]; // w 末位即 s[j]
+        let count = w.iter().filter(|&&x| x < cur).count();
+        out[j] = count as f64 / (n - 1) as f64;
+    }
+    out
+}
+
+/// corr 滚动序列版：位 j = 窗口（长 n）内 a/b 两序列的 Pearson 相关系数。
+/// a/b 已等长（对齐在 eval 臂完成）。n<2 或 j+1<n → NaN（严格头）；
+/// 窗含 NaN → NaN；任一侧零方差 → NaN。
+pub fn corr_roll(a: &[f64], b: &[f64], n: usize) -> Vec<f64> {
+    let len = a.len().min(b.len());
+    let mut out = vec![f64::NAN; len];
+    if n < 2 {
+        return out;
+    }
+    for j in 0..len {
+        if j + 1 < n {
+            continue;
+        }
+        let wa = &a[j + 1 - n..=j];
+        let wb = &b[j + 1 - n..=j];
+        // NaN 传播：任一序列窗口含 NaN → NaN
+        if wa.iter().any(|x| x.is_nan()) || wb.iter().any(|x| x.is_nan()) {
+            continue;
+        }
+        let nf = n as f64;
+        let mean_a = wa.iter().sum::<f64>() / nf;
+        let mean_b = wb.iter().sum::<f64>() / nf;
+        let (mut cov, mut var_a, mut var_b) = (0.0_f64, 0.0_f64, 0.0_f64);
+        for (&x, &y) in wa.iter().zip(wb.iter()) {
+            let da = x - mean_a;
+            let db = y - mean_b;
+            cov += da * db;
+            var_a += da * da;
+            var_b += db * db;
+        }
+        let denom = var_a.sqrt() * var_b.sqrt();
+        // 任一侧零方差（常数序列）→ NaN 弃权
+        out[j] = if denom == 0.0 { f64::NAN } else { (cov / denom).clamp(-1.0, 1.0) };
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -414,5 +474,139 @@ mod tests {
         let sl = slope_roll(&s, 3);
         assert!(sl[0].is_nan() && sl[1].is_nan());
         assert!((sl[3] - 1.0).abs() < 1e-12); // 等差数列斜率=1
+    }
+
+    /// percentrank_roll：手算小窗用例 + 严格头 NaN + NaN 传播
+    ///
+    /// 演算（s = [1.0, 3.0, 2.0], n = 3）：
+    ///   j=0: j+1<3 → NaN（严格头）
+    ///   j=1: j+1=2<3 → NaN（严格头）
+    ///   j=2: 窗口 [1,3,2]，cur=2，严格小于 2 的：{1} → count=1，result=1/(3-1)=0.5
+    ///
+    /// 演算（s = [1.0, 2.0, 3.0, 4.0, 5.0], n = 3）：
+    ///   j=0,1: NaN（严格头）
+    ///   j=2: 窗口 [1,2,3]，cur=3，严格小于 3：{1,2} → 2/2=1.0
+    ///   j=3: 窗口 [2,3,4]，cur=4，严格小于 4：{2,3} → 2/2=1.0
+    ///   j=4: 窗口 [3,4,5]，cur=5，严格小于 5：{3,4} → 2/2=1.0
+    ///
+    /// 最小值测试（s = [3.0, 1.0, 2.0], n = 3）：
+    ///   j=2: 窗口 [3,1,2]，cur=2，严格小于 2：{1} → 1/2=0.5
+    ///   注：若 cur 是窗口最小值（s=[3,2,1],n=3,j=2），cur=1，严格小于 1：{} → 0/2=0.0
+    #[test]
+    fn percentrank_roll_hand_calculated() {
+        // 基本三元素窗
+        let s = [1.0_f64, 3.0, 2.0];
+        let out = percentrank_roll(&s, 3);
+        assert!(out[0].is_nan(), "j=0 严格头应为 NaN");
+        assert!(out[1].is_nan(), "j=1 严格头应为 NaN");
+        assert!((out[2] - 0.5).abs() < 1e-12, "j=2: 1/2=0.5, got {}", out[2]);
+
+        // 递增序列 n=3：后三位均最大值 → percentrank=1.0
+        let s2 = [1.0_f64, 2.0, 3.0, 4.0, 5.0];
+        let out2 = percentrank_roll(&s2, 3);
+        assert!(out2[0].is_nan() && out2[1].is_nan());
+        assert!((out2[2] - 1.0).abs() < 1e-12);
+        assert!((out2[3] - 1.0).abs() < 1e-12);
+        assert!((out2[4] - 1.0).abs() < 1e-12);
+
+        // 窗口最小值 → percentrank=0.0
+        // s=[3,2,1],n=3,j=2: cur=1, 严格小于 1 的：{} → 0/(3-1)=0.0
+        let s3 = [3.0_f64, 2.0, 1.0];
+        let out3 = percentrank_roll(&s3, 3);
+        assert!((out3[2] - 0.0).abs() < 1e-12, "最小值 percentrank=0, got {}", out3[2]);
+
+        // n<2 → 全 NaN
+        let out_n1 = percentrank_roll(&s2, 1);
+        assert!(out_n1.iter().all(|x| x.is_nan()));
+        let out_n0 = percentrank_roll(&s2, 0);
+        assert!(out_n0.iter().all(|x| x.is_nan()));
+    }
+
+    #[test]
+    fn percentrank_roll_nan_propagation() {
+        // 窗口含 NaN → 该位输出 NaN
+        let s = [1.0_f64, f64::NAN, 3.0];
+        let out = percentrank_roll(&s, 3);
+        // j=2: 窗口 [1, NaN, 3]，含 NaN → NaN
+        assert!(out[2].is_nan(), "窗口含 NaN 应传播 NaN");
+        // 若窗口不含 NaN 则正常计算
+        let s2 = [f64::NAN, 2.0, 3.0, 4.0];
+        let out2 = percentrank_roll(&s2, 2);
+        // j=0: NaN 严格头; j=1: 窗 [NaN,2]，含 NaN → NaN; j=2: 窗 [2,3] → 1/1=1.0; j=3: 窗 [3,4] → 1/1=1.0
+        assert!(out2[1].is_nan(), "j=1 窗口含 NaN");
+        assert!((out2[2] - 1.0).abs() < 1e-12, "j=2 正常: {}", out2[2]);
+        assert!((out2[3] - 1.0).abs() < 1e-12, "j=3 正常: {}", out2[3]);
+    }
+
+    /// corr_roll：手算完全正/负相关 ±1 + 零方差 NaN + 严格头 NaN + NaN 传播
+    ///
+    /// 演算（完全正相关）：
+    ///   a = [1,2,3], b = [2,4,6]（b = 2a），n=3
+    ///   j=2: mean_a=2, mean_b=4
+    ///   cov = (1-2)(2-4)+(2-2)(4-4)+(3-2)(6-4) = (-1)(-2)+0+1*2 = 2+0+2=4
+    ///   var_a = 1+0+1=2, var_b = 4+0+4=8
+    ///   denom = sqrt(2)*sqrt(8) = sqrt(16)=4, corr=4/4=1.0
+    ///
+    /// 演算（完全负相关）：
+    ///   a = [1,2,3], b = [6,4,2]（b = 8-2a），n=3
+    ///   j=2: mean_a=2, mean_b=4
+    ///   cov = (-1)(2)+0+(1)(-2)=-2+0-2=-4
+    ///   var_a=2, var_b=8, denom=4, corr=-4/4=-1.0
+    #[test]
+    fn corr_roll_hand_calculated() {
+        // 完全正相关
+        let a = [1.0_f64, 2.0, 3.0];
+        let b = [2.0_f64, 4.0, 6.0];
+        let out = corr_roll(&a, &b, 3);
+        assert!(out[0].is_nan() && out[1].is_nan(), "严格头应为 NaN");
+        assert!((out[2] - 1.0).abs() < 1e-9, "完全正相关应为 1.0, got {}", out[2]);
+
+        // 完全负相关
+        let c = [6.0_f64, 4.0, 2.0];
+        let out2 = corr_roll(&a, &c, 3);
+        assert!((out2[2] - (-1.0)).abs() < 1e-9, "完全负相关应为 -1.0, got {}", out2[2]);
+
+        // 不相关（近似）：a=[1,2,3,4,5], b=[1,3,2,5,4]，n=3 末窗 [3,4,5] vs [2,5,4]
+        // 手算 j=4: mean_a=4,mean_b=11/3; da=[-1,0,1], db=[2-11/3,5-11/3,4-11/3]=[-5/3,4/3,1/3]
+        // cov=(-1)(-5/3)+0+(1)(1/3)=5/3+1/3=2, var_a=2, var_b=25/9+16/9+1/9=42/9=14/3
+        // denom=sqrt(2)*sqrt(14/3)=sqrt(28/3), corr=2/sqrt(28/3)=2*sqrt(3)/sqrt(28)≈0.655
+        let a2 = [1.0_f64, 2.0, 3.0, 4.0, 5.0];
+        let b2 = [1.0_f64, 3.0, 2.0, 5.0, 4.0];
+        let out3 = corr_roll(&a2, &b2, 3);
+        assert!(out3[4].is_finite(), "相关系数应有有限值");
+        assert!(out3[4] > -1.0 && out3[4] < 1.0);
+
+        // n<2 → 全 NaN
+        let out_n1 = corr_roll(&a, &b, 1);
+        assert!(out_n1.iter().all(|x| x.is_nan()));
+    }
+
+    #[test]
+    fn corr_roll_zero_variance_is_nan() {
+        // 零方差（常数序列）→ NaN 弃权
+        let a = [2.0_f64, 2.0, 2.0];
+        let b = [1.0_f64, 2.0, 3.0];
+        let out = corr_roll(&a, &b, 3);
+        assert!(out[2].is_nan(), "零方差 a 应为 NaN");
+
+        let out2 = corr_roll(&b, &a, 3);
+        assert!(out2[2].is_nan(), "零方差 b 应为 NaN");
+
+        // 双侧零方差
+        let out3 = corr_roll(&a, &a, 3);
+        assert!(out3[2].is_nan(), "双侧零方差应为 NaN");
+    }
+
+    #[test]
+    fn corr_roll_nan_propagation() {
+        let a = [1.0_f64, f64::NAN, 3.0];
+        let b = [1.0_f64, 2.0, 3.0];
+        let out = corr_roll(&a, &b, 3);
+        assert!(out[2].is_nan(), "a 窗口含 NaN 应传播 NaN");
+
+        let a2 = [1.0_f64, 2.0, 3.0];
+        let b2 = [1.0_f64, f64::NAN, 3.0];
+        let out2 = corr_roll(&a2, &b2, 3);
+        assert!(out2[2].is_nan(), "b 窗口含 NaN 应传播 NaN");
     }
 }

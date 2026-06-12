@@ -12,11 +12,12 @@ const RESERVED_IDENTS: [&str; 21] = [
     "bars_since_exit", "last_trip_return",
     "session_open", "session_high", "session_low", "session_vwap", "bars_today",
 ];
-const RESERVED_FNS: [&str; 29] = [
+const RESERVED_FNS: [&str; 31] = [
     "sma", "ema", "wma", "rsi", "atr", "slope", "ref", "highest", "lowest",
     "crossover", "crossunder", "macd_line", "macd_signal", "macd_hist",
     "std", "sigmoid", "auto", "abs", "max", "min", "count", "barssince", "valuewhen",
     "log", "exp", "sqrt", "floor", "sign", "pow",
+    "percentrank", "corr",
 ];
 
 fn check_name(name: &str, env: &HashMap<String, Expr>) -> Result<()> {

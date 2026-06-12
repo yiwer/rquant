@@ -532,6 +532,17 @@ fn eval_call(name: &str, args: &[Expr], ctx: &Context) -> Result<Value> {
             need(&vals, 2, name)?;
             pointwise2(&vals[0], &vals[1], f64::powf)
         }
+        "percentrank" => {
+            need(&vals, 2, name)?;
+            Ok(Value::Series(indicators::percentrank_roll(&as_series(&vals[0])?, as_usize(&vals[1])?)))
+        }
+        "corr" => {
+            need(&vals, 3, name)?;
+            let n = as_usize(&vals[2])?;
+            // 先 tail_align：两序列右对齐公共长度（标量广播），再 corr_roll
+            let (a, b) = tail_align(&vals[0], &vals[1])?;
+            Ok(Value::Series(indicators::corr_roll(&a, &b, n)))
+        }
         _ => Err(Error::Eval(format!("unknown function: {name}"))),
     }
 }
@@ -1239,5 +1250,76 @@ mod tests {
             Value::Scalar(x) => assert!((x - 0.5).abs() < 1e-9),
             o => panic!("expected Scalar from sigmoid(0), got {o:?}"),
         }
+    }
+
+    /// percentrank eval 测试：基本路由 + 逐位条件手算 + NaN 弃权
+    ///
+    /// 手算演算（ctx_from_closes [1,2,3,4,5], percentrank(close,3)）：
+    ///   j=0,1: NaN（严格头）
+    ///   j=2: 窗 [1,2,3]，cur=3，严格小于 3：{1,2} → 2/2=1.0
+    ///   j=3: 窗 [2,3,4]，cur=4，严格小于 4：{2,3} → 2/2=1.0
+    ///   j=4: 窗 [3,4,5]，cur=5，严格小于 5：{3,4} → 2/2=1.0
+    ///
+    /// count(percentrank(close,3) > 0.9, 3)：末 3 位 [1.0,1.0,1.0] > 0.9 → [T,T,T] → count=3
+    #[test]
+    fn percentrank_eval_routing_and_count() {
+        let ctx = ctx_from_closes(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+        let f = |src: &str| eval(&parse_str(src).unwrap(), &ctx).unwrap();
+
+        // percentrank 返回 Series
+        match f("percentrank(close, 3)") {
+            Value::Series(s) => {
+                assert!(s[0].is_nan() && s[1].is_nan(), "严格头应为 NaN");
+                assert!((s[2] - 1.0).abs() < 1e-12, "j=2: {}", s[2]);
+                assert!((s[4] - 1.0).abs() < 1e-12, "j=4: {}", s[4]);
+            }
+            other => panic!("expected Series, got {other:?}"),
+        }
+
+        // 逐位条件：count(percentrank(close,3) > 0.9, 3) == 3
+        assert_eq!(f("count(percentrank(close, 3) > 0.9, 3) == 3"), Value::Bool(true));
+
+        // 标量上下文（比较）仍正常
+        assert_eq!(f("percentrank(close, 3) > 0.5"), Value::Bool(true));
+
+        // NaN 预热弃权：n=10 时全 NaN → 比较恒 false
+        assert_eq!(f("percentrank(close, 10) > 0"), Value::Bool(false));
+
+        // 参数个数校验
+        assert!(eval(&parse_str("percentrank(close)").unwrap(), &ctx).is_err());
+        assert!(eval(&parse_str("percentrank(close, 3, 1)").unwrap(), &ctx).is_err());
+    }
+
+    /// corr eval 测试：ctx.close 与 primary.close 同值 → corr=1；双序列路由；NaN 弃权
+    ///
+    /// ctx_from_closes 工厂：primary.bars == context.bars（同值）
+    /// 故 corr(close, ctx.close, n) 末位应为 1.0（完全正相关，自相关）
+    #[test]
+    fn corr_eval_self_correlation_and_routing() {
+        let ctx = ctx_from_closes(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+        let f = |src: &str| eval(&parse_str(src).unwrap(), &ctx).unwrap();
+
+        // 自相关：corr(close, ctx.close, 3) 应返回 Series 且末位=1.0
+        match f("corr(close, ctx.close, 3)") {
+            Value::Series(s) => {
+                assert!(s[0].is_nan() && s[1].is_nan(), "严格头应为 NaN");
+                assert!((s[4] - 1.0).abs() < 1e-9, "自相关应=1.0, got {}", s[4]);
+            }
+            other => panic!("expected Series, got {other:?}"),
+        }
+
+        // 标量上下文：corr(close, ctx.close, 3) > 0.9 → true
+        assert_eq!(f("corr(close, ctx.close, 3) > 0.9"), Value::Bool(true));
+
+        // NaN 预热弃权：n=10 时严格头全 NaN → 比较恒 false
+        assert_eq!(f("corr(close, ctx.close, 10) > 0"), Value::Bool(false));
+
+        // 零方差：常数序列 vs 递增序列 → NaN 弃权
+        // volume=1.0 是常数 → corr(volume, close, 3) 零方差 → NaN
+        assert_eq!(f("corr(volume, close, 3) > 0"), Value::Bool(false));
+
+        // 参数个数校验
+        assert!(eval(&parse_str("corr(close, ctx.close)").unwrap(), &ctx).is_err());
+        assert!(eval(&parse_str("corr(close, ctx.close, 3, 1)").unwrap(), &ctx).is_err());
     }
 }

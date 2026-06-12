@@ -11,11 +11,12 @@ enum Shape {
     Scalar,
 }
 
-/// 返回 Series 的内置函数（Task1 后含 highest/lowest/std/slope）。与 eval.rs 同步维护。
-pub(super) const SERIES_FNS: [&str; 13] = [
+/// 返回 Series 的内置函数（Task1 后含 highest/lowest/std/slope；Task3 加 percentrank/corr）。与 eval.rs 同步维护。
+pub(super) const SERIES_FNS: [&str; 15] = [
     "sma", "ema", "wma", "rsi", "atr", "ref",
     "macd_line", "macd_signal", "macd_hist",
     "highest", "lowest", "std", "slope",
+    "percentrank", "corr",
 ];
 
 /// 点态提升函数：形态 = 实参形态的并（任一 Series → Series）。与 eval.rs pointwise 同步维护。
@@ -376,6 +377,8 @@ leaves:
             "atr(2)", "ref(close, 1)",
             "macd_line(close, 3, 5)", "macd_signal(close, 3, 5, 2)", "macd_hist(close, 3, 5, 2)",
             "highest(close, 2)", "lowest(close, 2)", "std(close, 2)", "slope(close, 2)",
+            // Task3: percentrank/corr 滚动窗函数
+            "percentrank(close, 2)", "corr(close, close, 2)",
         ];
         assert_eq!(series_cases.len(), super::SERIES_FNS.len(), "测试用例数须与 SERIES_FNS 项数一致");
         for src in series_cases {
