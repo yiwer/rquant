@@ -4,6 +4,7 @@
 pub mod dto;
 pub mod error;
 pub mod paths;
+pub mod tasks;
 
 pub fn run() {
     tauri::Builder::default()
