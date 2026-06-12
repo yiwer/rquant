@@ -8,6 +8,7 @@ import TradesTable from "../components/TradesTable";
 import RawJsonView from "../components/RawJsonView";
 import KlineSignalsView from "../components/KlineSignalsView";
 import ReplayView from "../components/ReplayView";
+import CompareView from "../components/CompareView";
 
 export default function Backtest() {
   const st = useBacktest();
@@ -39,6 +40,11 @@ export default function Backtest() {
         </Card>
       </Col>
       <Col span={17}>
+        {st.compareIds.length === 2 && (
+          <Card size="small" title="对比" style={{ marginBottom: 12 }}>
+            <CompareView ids={st.compareIds as [string, string]} />
+          </Card>
+        )}
         {st.selectedId == null ? (
           <Typography.Text type="secondary">从左侧选择一次留档查看结果</Typography.Text>
         ) : st.selectError != null ? (
