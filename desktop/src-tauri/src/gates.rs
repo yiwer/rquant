@@ -4,9 +4,12 @@ use chrono::{Datelike, NaiveDateTime, NaiveTime, Weekday};
 
 pub fn classify_run_window(now: NaiveDateTime) -> GateDto {
     let wd = now.weekday();
+    // 注:A 股法定节假日未检查;节假日 allow → fetch 返回陈旧 bar,replay 幂等无副作用。
     let weekday = !matches!(wd, Weekday::Sat | Weekday::Sun);
     let t = now.time();
     let hm = |h, m| NaiveTime::from_hms_opt(h, m, 0).expect("valid literal time");
+    // [09:30,15:00) 右开:15:00 整点 allow——收盘集合竞价 bar 在 15:00 后数秒内定型,
+    // 且 UI 默认 DRY,误触面极窄;常规通路是 15:35 schtask(落在 warn 窗)。
     if weekday && t >= hm(9, 30) && t < hm(15, 0) {
         return GateDto {
             gate: "dry_only".into(),
