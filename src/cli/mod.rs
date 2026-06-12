@@ -19,7 +19,8 @@ pub(crate) fn llm_enabled(model: &str, base_url: &str, api_key: &str) -> bool {
 }
 
 /// 构造 LLM 评估器：三件套齐全→OpenAi，否则提示一次并回退 Disabled。
-fn build_llm(model: String, base_url: String, cache_dir: PathBuf) -> anyhow::Result<LlmEvaluator> {
+/// 桌面端桥接层复用(spec §4-2)。
+pub fn build_llm(model: String, base_url: String, cache_dir: PathBuf) -> anyhow::Result<LlmEvaluator> {
     let api_key = std::env::var("RQUANT_LLM_API_KEY").unwrap_or_default();
     if llm_enabled(&model, &base_url, &api_key) {
         let cfg = LlmConfig {
@@ -53,7 +54,8 @@ fn parse_aux(specs: &[String]) -> anyhow::Result<Vec<(String, PathBuf)>> {
 }
 
 // 2026-06 实测：money.finance.sina.com.cn 该服务回 "Service not valid"；quotes.sina.cn 可用
-pub(crate) const SINA_BASE_URL: &str = "https://quotes.sina.cn/cn/api/json_v2.php";
+/// 桌面端桥接层复用(spec §4-2)。
+pub const SINA_BASE_URL: &str = "https://quotes.sina.cn/cn/api/json_v2.php";
 
 #[derive(Parser)]
 #[command(name = "rquant", about = "Fuzzy decision-tree A-share backtester")]
@@ -303,7 +305,8 @@ enum Cmd {
 
 /// Fetch K-line bars from Sina and write to a CSV file.
 /// Returns the number of bars written. Prints no output itself (caller prints).
-pub(crate) async fn run_fetch_to_csv(
+/// 桌面端桥接层复用(spec §4-2)。
+pub async fn run_fetch_to_csv(
     symbol: &str,
     scale: u32,
     datalen: u32,
