@@ -1,2 +1,15 @@
 /target
 /.rquant-cache
+
+# IDE / 调试杂物
+/.idea
+rust_out.exe
+rust_out.pdb
+test_output.log
+/report.json
+
+# 实验临时数据
+/tmps
+
+# 纸面盘可变状态(state/行情/信号/日志——冻结树副本与运行脚本在 deploy/ 入库)
+/paper
