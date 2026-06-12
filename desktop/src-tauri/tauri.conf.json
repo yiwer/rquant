@@ -1,0 +1,19 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "rquant-desktop",
+  "version": "0.1.0",
+  "identifier": "com.rquant.desktop",
+  "build": {
+    "beforeDevCommand": "npm --prefix ../ui run dev",
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeBuildCommand": "npm --prefix ../ui run build",
+    "frontendDist": "../ui/dist"
+  },
+  "app": {
+    "windows": [
+      { "title": "rquant 桌面工作台", "width": 1280, "height": 800 }
+    ],
+    "security": { "csp": null }
+  },
+  "bundle": { "active": false, "icon": ["icons/icon.ico"] }
+}
