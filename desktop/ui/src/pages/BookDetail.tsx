@@ -11,6 +11,8 @@ export default function BookDetail() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    setData(null);
+    setError(null);
     api.bookDetail(book).then(setData).catch((e) => setError(String(e)));
   }, [book]);
 
@@ -34,15 +36,15 @@ export default function BookDetail() {
         <Card size="small" title="AccountSnapshot(13 字段,只读)">
           <Descriptions size="small" column={3} bordered>
             <Descriptions.Item label="pos">{s.pos}</Descriptions.Item>
-            <Descriptions.Item label="entry_price">{s.entry_price ?? "—"}</Descriptions.Item>
+            <Descriptions.Item label="entry_price">{s.entry_price?.toFixed(2) ?? "—"}</Descriptions.Item>
             <Descriptions.Item label="bars_held">{s.bars_held}</Descriptions.Item>
             <Descriptions.Item label="nav">{s.nav.toFixed(6)}</Descriptions.Item>
             <Descriptions.Item label="peak_nav">{s.peak_nav.toFixed(6)}</Descriptions.Item>
             <Descriptions.Item label="max_drawdown">{(s.max_drawdown * 100).toFixed(2)}%</Descriptions.Item>
             <Descriptions.Item label="turnover">{s.turnover.toFixed(4)}</Descriptions.Item>
             <Descriptions.Item label="last_increase_date">{s.last_increase_date ?? "—"}</Descriptions.Item>
-            <Descriptions.Item label="max_price_since_entry">{s.max_price_since_entry ?? "—"}</Descriptions.Item>
-            <Descriptions.Item label="min_price_since_entry">{s.min_price_since_entry ?? "—"}</Descriptions.Item>
+            <Descriptions.Item label="max_price_since_entry">{s.max_price_since_entry?.toFixed(2) ?? "—"}</Descriptions.Item>
+            <Descriptions.Item label="min_price_since_entry">{s.min_price_since_entry?.toFixed(2) ?? "—"}</Descriptions.Item>
             <Descriptions.Item label="bars_since_exit">{s.bars_since_exit ?? "—"}</Descriptions.Item>
             <Descriptions.Item label="last_trip_return">{s.last_trip_return ?? "—"}</Descriptions.Item>
             <Descriptions.Item label="trip">{s.trip ? JSON.stringify(s.trip) : "—"}</Descriptions.Item>
