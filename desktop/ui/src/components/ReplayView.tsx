@@ -11,6 +11,8 @@ export default function ReplayView({ runId }: { runId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [i, setI] = useState(0);
   const [factors, setFactors] = useState<FactorValueDto[]>([]);
+  const [factorT, setFactorT] = useState<string | null>(null);
+  const [factorsWarn, setFactorsWarn] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -22,6 +24,7 @@ export default function ReplayView({ runId }: { runId: string }) {
         if (cancelled) return;
         setFrames(f);
         setI(f.length ? f.length - 1 : 0);
+        setFactorT(f.length ? f[f.length - 1].t : null);
       })
       .catch((e) => {
         if (cancelled) return;
@@ -35,22 +38,31 @@ export default function ReplayView({ runId }: { runId: string }) {
   useEffect(() => {
     let cancelled = false;
     setFactors([]);
-    if (f) {
-      api.runReplayFactors(runId, f.t).then((v) => {
+    if (factorT) {
+      api.runReplayFactors(runId, factorT).then((v) => {
         if (cancelled) return;
         setFactors(v);
-      }).catch(() => {});
+        setFactorsWarn(false);
+      }).catch(() => {
+        if (!cancelled) setFactorsWarn(true);
+      });
     }
     return () => { cancelled = true; };
-  }, [runId, f?.t]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [runId, factorT]);
 
   if (error) return <Alert type="info" message={error} />;
   if (!frames.length) return <Typography.Text type="secondary">加载回放帧…</Typography.Text>;
 
   return (
     <div>
-      <Slider min={0} max={frames.length - 1} value={i} onChange={setI}
-        tooltip={{ formatter: (v) => frames[v ?? 0]?.t }} />
+      <Slider
+        min={0}
+        max={frames.length - 1}
+        value={i}
+        onChange={setI}
+        onChangeComplete={(v) => setFactorT(frames[v ?? 0]?.t ?? null)}
+        tooltip={{ formatter: (v) => frames[v ?? 0]?.t }}
+      />
       <Row gutter={12}>
         <Col span={14}>
           <Card size="small" title={`决策路径 @ ${f.t}`}
@@ -77,7 +89,8 @@ export default function ReplayView({ runId }: { runId: string }) {
           </Card>
         </Col>
         <Col span={10}>
-          <Card size="small" title="因子值(现算)">
+          <Card size="small" title={`因子值(现算)${factorT ? ` @ ${factorT}` : ""}`}>
+            {factorsWarn && <Alert type="warning" message="因子值拉取失败" style={{ marginBottom: 8 }} />}
             <Table
               size="small"
               rowKey={(r) => r.name}
