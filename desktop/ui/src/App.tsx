@@ -2,6 +2,7 @@ import { HashRouter, Routes, Route, Navigate, useNavigate, useLocation } from "r
 import { Layout, Menu, Typography } from "antd";
 import Cockpit from "./pages/Cockpit";
 import BookDetail from "./pages/BookDetail";
+import TaskDrawer from "./components/TaskDrawer";
 
 export const MODULES = [
   { key: "cockpit", label: "驾驶舱" },
@@ -33,6 +34,9 @@ function Shell() {
         />
       </Layout.Sider>
       <Layout.Content style={{ padding: 16 }}>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+          <TaskDrawer />
+        </div>
         <Routes>
           <Route path="/cockpit" element={<Cockpit />} />
           <Route path="/cockpit/:book" element={<BookDetail />} />
