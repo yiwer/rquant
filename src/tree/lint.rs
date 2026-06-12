@@ -395,9 +395,18 @@ leaves:
             }
         }
         // T2 点态提升：全标量实参仍 Scalar（守则锁）
-        for src in ["abs(pos)", "min(1, pos)", "max(1, pos)", "floor(2.9)", "sign(0)", "sqrt(9)", "exp(1)", "log(1)", "pow(2, 3)"] {
+        let pointwise_scalar_cases = ["abs(pos)", "min(1, pos)", "max(1, pos)", "floor(2.9)", "sign(0)", "sqrt(9)", "exp(1)", "log(1)", "pow(2, 3)", "sigmoid(0)"];
+        for src in pointwise_scalar_cases {
             let v = eval(&parse_str(src).unwrap(), &ctx).unwrap();
             assert!(!matches!(v, Value::Series(_)), "'{src}' all-scalar args should return Scalar, got Series");
+        }
+        // 等长锁：POINTWISE_FNS 每个成员都必须有全标量用例——新增点态函数漏加用例即红
+        //（与 SERIES_FNS 的等长锁同纪律）。
+        for name in super::POINTWISE_FNS {
+            assert!(
+                pointwise_scalar_cases.iter().any(|c| c.starts_with(&format!("{name}("))),
+                "POINTWISE_FNS member '{name}' has no all-scalar case above — add one"
+            );
         }
         // T3 派生形态：算术含 Series 侧 → eval 实证 Series（expr_shape 推断应当匹配）
         for src in ["close * volume", "abs(close - 3)", "min(close, 3)"] {
