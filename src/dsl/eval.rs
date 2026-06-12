@@ -81,8 +81,9 @@ pub fn eval(expr: &Expr, ctx: &Context) -> Result<Value> {
             // 日内锚定族：当日尾部连续段（从窗尾向前扫 date==today）；全 Scalar、无前视。
             "bars_today" => {
                 let r = session_range(ctx);
-                // r 不可能为空（t 本身即窗尾 bar 时间，至少含 1 根）；防御仍给 1.0
-                Ok(Value::Scalar(if r.is_empty() { 1.0 } else { r.len() as f64 }))
+                // r 不可能为空（t 即窗尾 bar 时间，至少 1 根；停牌标的被 is_fresh 先挡）；
+                // 防御与其余四个锚定标识符对称：空段 → NaN 弃权
+                Ok(Value::Scalar(if r.is_empty() { f64::NAN } else { r.len() as f64 }))
             }
             "session_open" => {
                 let r = session_range(ctx);
