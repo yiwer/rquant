@@ -11,5 +11,8 @@ test_output.log
 # 实验临时数据
 /tmps
 
+# 头脑风暴可视化伴侣会话（mockup/事件,不入库）
+/.superpowers
+
 # 纸面盘可变状态(state/行情/信号/日志——冻结树副本与运行脚本在 deploy/ 入库)
 /paper
