@@ -72,7 +72,8 @@ schtask（CLI）与桌面端共享 paper/。桌面端写 paper/ 的纪律集中�
 
 ### 5.2 C 回测中心
 
-- **配置面板**：树（examples/ + deploy/ 自动发现）/ 标的或 CSV / 周期 / 复权 / sim 或打分模式 / 成本 / warmup。
+- **配置面板**：树（examples/ + deploy/ 自动发现）/ 标的或 CSV / 周期 / 复权 / sim 或打分模式 / 成本 / warmup / **初始资金（默认 100,000 元）**。
+- **初始资金是纯展示层参数**（2026-06-12 用户确认 10w 默认）：引擎 nav 归一语义冻结不动，UI 以 nav×资金 呈现资产曲线与每笔盈亏金额，参数随 config 留档。整手/零股的实盘级资金记账属引擎新模式，不在本期。
 - **运行即留档**：config.json + result.json + meta.json 落 `.rquant-desktop/runs/<id>/`；历史列表可命名、打标签、重跑、删除。
 - **五视图**：概览（指标卡 + 净值/回撤带 vs buy&hold）/ K 线信号（进出场 markPoint + 持仓区间 markArea）/ 交易明细（每笔 trip_return、持有 bars）/ 决策回放 / 原始 JSON。
 - **决策回放**：时间轴滑块选 bar → 该 bar 遍历路径 + 因子值/分支强度表（依赖引擎改动 #3）。**M2 先出表格式路径回放；DAG 高亮视图待 M3 DAG 组件就绪后接入**（期序约束：DAG 组件属 M3）。
@@ -119,6 +120,7 @@ docs/superpowers/ 文件树 + markdown 渲染（表格/代码高亮）；文件�
 - 工作区 = 仓库根（默认 `E:\rust-app\rquant`，设置页可改）；所有相对路径基于工作区解析。
 - `.rquant-desktop/runs/<id>/`：config.json（完整可重跑）、result.json（引擎输出原样）、meta.json（kind/名称/标签/创建时间/关联报告）。run id = 时间戳 + 短随机。该目录进 .gitignore。
 - 应用偏好（窗口状态、最近选择）→ Tauri app_data_dir，不入工作区。
+- （M1 实现调和）桌面端数据目录实际锚定在 `<仓库根>/.rquant-desktop`（随工作区、便于人工检视，已 gitignore），而非 app_data_dir——保留此选择。
 - **所有状态/留档写盘 temp + rename 原子替换**。
 - **paper/ 并发纪律**：应用内全局写互斥（同一时刻至多一个 commit 型任务）；schtask 窗口警告（§5.1）；真撞上靠二跑幂等（bars_replayed=0）兜底；CLI 侧零改动。
 
