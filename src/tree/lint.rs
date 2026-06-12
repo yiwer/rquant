@@ -1,7 +1,7 @@
 //! 加载期 lint：检出"语法合法但语义必然空转/恒假"的条件写法，eprintln 告警不阻断。
 //! 规则随 DSL 形态表演进——形态推断表（expr_shape）必须与 eval.rs 实际返回形态同步。
 
-use crate::dsl::ast::{BinaryOp, Expr};
+use crate::dsl::ast::{BinaryOp, Expr, UnaryOp};
 use crate::tree::loader::{Node, Strength, Tree, Weight};
 
 /// 表达式形态：与 eval.rs 各臂返回的 Value 形态一一对应。
@@ -18,6 +18,11 @@ pub(super) const SERIES_FNS: [&str; 13] = [
     "highest", "lowest", "std", "slope",
 ];
 
+/// 点态提升函数：形态 = 实参形态的并（任一 Series → Series）。与 eval.rs pointwise 同步维护。
+pub(super) const POINTWISE_FNS: [&str; 10] = [
+    "abs", "min", "max", "sigmoid", "log", "exp", "sqrt", "floor", "sign", "pow",
+];
+
 fn expr_shape(e: &Expr) -> Shape {
     match e {
         Expr::Number(_) => Shape::Scalar,
@@ -27,13 +32,33 @@ fn expr_shape(e: &Expr) -> Shape {
             _ => Shape::Series, // close/open/high/low/volume/aux.*/ctx.*
         },
         Expr::Index(..) => Shape::Scalar,
-        Expr::Unary(..) => Shape::Scalar, // Neg→Scalar；Not 实为 Bool——两值 Shape 下并入 Scalar（有意为之，不影响 cond_len_class 正确性）
-        Expr::Binary(..) => Shape::Scalar, // 算术/比较在标量语义下归约
-        Expr::Call(name, _) => {
+        // phase-2：一元负号随内层形态；Not 实为 Bool——两值 Shape 下并入 Scalar（有意为之，不影响 cond_len_class 正确性）
+        Expr::Unary(op, inner) => match op {
+            UnaryOp::Neg => expr_shape(inner),
+            _ => Shape::Scalar,
+        },
+        // phase-2：算术随两侧形态并；比较/逻辑仍归 Scalar（Bool）
+        Expr::Binary(op, l, r) => match op {
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+                if expr_shape(l) == Shape::Series || expr_shape(r) == Shape::Series {
+                    Shape::Series
+                } else {
+                    Shape::Scalar
+                }
+            }
+            _ => Shape::Scalar,
+        },
+        Expr::Call(name, args) => {
             if SERIES_FNS.contains(&name.as_str()) {
                 Shape::Series
+            } else if POINTWISE_FNS.contains(&name.as_str()) {
+                if args.iter().any(|a| expr_shape(a) == Shape::Series) {
+                    Shape::Series
+                } else {
+                    Shape::Scalar
+                }
             } else {
-                Shape::Scalar // count/barssince/valuewhen/abs/min/max/sigmoid 等
+                Shape::Scalar // count/barssince/valuewhen 等
             }
         }
         // Cached(slot_id, inner_expr) — slot id 在前，内层表达式在后
@@ -373,6 +398,43 @@ leaves:
         for src in ["abs(pos)", "min(1, pos)", "max(1, pos)", "floor(2.9)", "sign(0)", "sqrt(9)", "exp(1)", "log(1)", "pow(2, 3)"] {
             let v = eval(&parse_str(src).unwrap(), &ctx).unwrap();
             assert!(!matches!(v, Value::Series(_)), "'{src}' all-scalar args should return Scalar, got Series");
+        }
+        // T3 派生形态：算术含 Series 侧 → eval 实证 Series（expr_shape 推断应当匹配）
+        for src in ["close * volume", "abs(close - 3)", "min(close, 3)"] {
+            match eval(&parse_str(src).unwrap(), &ctx).unwrap() {
+                Value::Series(_) => {}
+                other => panic!("'{src}' derived expr should return Series, got {other:?}"),
+            }
+        }
+        // T3 双标量算术仍 Scalar（守则锁的运行时实证）
+        for src in ["pos * 2", "abs(pos)", "min(1, pos)", "floor(2.9)"] {
+            let v = eval(&parse_str(src).unwrap(), &ctx).unwrap();
+            assert!(!matches!(v, Value::Series(_)), "'{src}' all-scalar derived should return Scalar, got Series");
+        }
+    }
+
+    #[test]
+    fn shape_inference_tracks_lifted_arithmetic() {
+        // 派生序列条件不再误报 L2：算术含 Series 侧 → Many
+        let ok = [
+            "count(close - open > 0, 5) >= 3",
+            "count(abs(close - sma(close,3)) > 0.5, 5) >= 1",
+            "barssince(close * volume > 1000) <= 5",
+            "count(log(close) - log(ref(close,1)) > 0, 4) >= 2",
+        ];
+        for w in ok {
+            let t = load_tree_str(&yaml_one_branch(w)).unwrap();
+            assert!(lint_tree(&t).is_empty(), "false positive on: {w}");
+        }
+        // 双标量算术条件仍报 L2（守则锁的另一半）
+        let bad = [
+            "count(pos * 2 > 1, 5) >= 1",
+            "barssince(abs(pos) > 0.5) <= 3",
+            "count(min(1, pos + 0.25) > 0.5, 5) >= 1",
+        ];
+        for w in bad {
+            let t = load_tree_str(&yaml_one_branch(w)).unwrap();
+            assert_eq!(lint_tree(&t).len(), 1, "false negative on: {w}");
         }
     }
 }
