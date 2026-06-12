@@ -67,6 +67,7 @@ impl Book {
     pub fn tree_path(&self, ws: &Workspace) -> PathBuf {
         ws.root().join(self.tree_rel)
     }
+    /// 仅 Single 账本有意义;Portfolio 账本(symbol 为空)调用将得到无意义路径 paper/p_.csv。
     pub fn primary_csv(&self, ws: &Workspace) -> PathBuf {
         ws.paper_dir().join(format!("p_{}.csv", self.symbol))
     }

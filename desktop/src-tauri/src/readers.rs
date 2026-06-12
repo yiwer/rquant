@@ -73,6 +73,7 @@ fn read_portfolio_sig(path: &std::path::Path) -> Option<(SignalBriefDto, Vec<Dif
 }
 
 /// 树名取自冻结树文件 meta(勿硬编码);树文件本身坏了也归为 corrupt 卡。
+// TODO(M2): cache tree per path(b1/b2 共享同一树文件,每次刷新重复 load ~ms 级,M1 可忽略)
 fn tree_name(ws: &Workspace, book: &Book) -> Result<String, String> {
     rquant::tree::loader::load_tree_file(&book.tree_path(ws))
         .map(|t| t.meta.name)
@@ -159,13 +160,27 @@ pub fn read_book_card(ws: &Workspace, book: &Book) -> BookCardDto {
                         );
                     }
                     Err(e) => {
+                        let e_str = e.to_string();
                         card.status = "corrupt".into();
-                        card.advice = Some("holdings state 异常:".to_string() + &e.to_string());
+                        card.advice = Some(
+                            crate::error::ErrorDto::from_anyhow(&anyhow::anyhow!(e_str))
+                                .advice
+                                .unwrap_or_else(|| {
+                                    "state 异常:查看消息并考虑删除重建(重放幂等)".into()
+                                }),
+                        );
                     }
                 },
                 Err(e) => {
+                    let e_str = e.clone();
                     card.status = "corrupt".into();
-                    card.advice = Some("holdings state 异常:".to_string() + &e);
+                    card.advice = Some(
+                        crate::error::ErrorDto::from_anyhow(&anyhow::anyhow!(e_str))
+                            .advice
+                            .unwrap_or_else(|| {
+                                "state 异常:查看消息并考虑删除重建(重放幂等)".into()
+                            }),
+                    );
                 }
             }
         }
@@ -301,5 +316,24 @@ mod tests {
         let dto = snapshot_to_dto(&snap);
         assert_eq!(dto.pos, 0.0);
         assert!(dto.entry_price.is_none()); // default NaN → None
+    }
+
+    #[test]
+    fn trade_action_debug_strings_are_locked() {
+        use rquant::signal::TradeAction;
+        assert_eq!(format!("{:?}", TradeAction::Buy), "Buy");
+        assert_eq!(format!("{:?}", TradeAction::Sell), "Sell");
+        assert_eq!(format!("{:?}", TradeAction::Adjust), "Adjust");
+        assert_eq!(format!("{:?}", TradeAction::Hold), "Hold");
+    }
+
+    #[test]
+    fn corrupt_holdings_state_yields_corrupt_card_with_advice() {
+        let (_td, ws) = fixture_ws();
+        let b3 = &BOOKS[2];
+        std::fs::write(b3.state_path(&ws), b"").unwrap(); // 空文件 = corrupt
+        let card = read_book_card(&ws, b3);
+        assert_eq!(card.status, "corrupt");
+        assert!(card.advice.as_deref().unwrap_or("").contains("删除"));
     }
 }
