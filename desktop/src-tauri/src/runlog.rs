@@ -20,13 +20,14 @@ pub fn classify(log: &str) -> RunlogStatusDto {
     let finished = text.contains("committed state") || text.contains("[DRY RUN]");
     let ok = !bad && finished;
     let summary = if bad {
-        format!("最近一次 run 含错误行:{}", body.iter().find(|l| l.to_lowercase().contains("error")).unwrap_or(&""))
+        let kw = if lower.contains("error") { "error" } else { "panic" };
+        format!("最近一次 run 含错误行:{}", body.iter().find(|l| l.to_lowercase().contains(kw)).unwrap_or(&""))
     } else if finished {
         "最近一次 run 正常收尾".to_string()
     } else {
         "最近一次 run 无收尾标记(可能中断)".to_string()
     };
-    RunlogStatusDto { last_header: Some(header.clone()), ok: Some(ok), summary }
+    RunlogStatusDto { last_header: Some(header.trim_end().to_string()), ok: Some(ok), summary }
 }
 
 pub fn tail_lines(log: &str, n: usize) -> String {
@@ -73,6 +74,14 @@ fetched 1023 bars for sh600030
         let st = classify(log);
         assert_eq!(st.ok, Some(false));
         assert!(st.summary.contains("error"));
+    }
+
+    #[test]
+    fn panic_section_summary_quotes_panic_line() {
+        let log = "==== Fri 06/12/2026 15:35:00.00 ====\nthread 'main' panicked at src/x.rs\n";
+        let st = classify(log);
+        assert_eq!(st.ok, Some(false));
+        assert!(st.summary.contains("panicked"));
     }
 
     #[test]
