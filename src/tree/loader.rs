@@ -178,7 +178,7 @@ pub fn load_tree_file(path: &Path) -> Result<Tree> {
 /// 内部助手：将 params 物化为常量、将 factors 按文档序逐个代入（先序因子可引用已定义者），
 /// 返回两份产物：
 ///   1. `env`：含 `Expr::Cached` 包裹的完整替换环境，供加载路径继续代入节点/叶子条件。
-///   2. `raw`：与 `env` 同序的 `(因子名, 已代入但未包 Cached 的 Expr)` 列表，
+///   2. `raw`：与 `env` 同序的 `(因子名, 已代入、外层未包 Cached 的 Expr（引用先序因子处可含内嵌 Cached(slot,..)）)` 列表，
 ///      供 `resolve_factor_exprs` 直接返回给调用方（独立求值路径无需缓存包裹）。
 ///
 /// 两份产物同源，保证不存在两份代入逻辑。
@@ -216,6 +216,9 @@ fn build_factor_env(
     }
     Ok((env, raw))
 }
+
+// TODO(M3+): 顶层键拼写错误(如 "factor:"/"paramss:")会被宽松解析静默吞掉→返回空表,
+// 桌面端 UI 将显示"该树无 factors 块"。可加后解析启发式告警(对照原文顶层键)。
 
 /// 最小 YAML 结构，仅含 `params` 和 `factors`——用于 resolve_factor_exprs 的部分解析。
 /// 无需完整 TreeSpec（后者要求节点/叶子/label 等字段），保证宽松 YAML 也可解析。
