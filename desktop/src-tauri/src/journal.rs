@@ -25,6 +25,8 @@ fn read_all(ws: &Workspace) -> Vec<JournalEntry> {
     txt.lines().filter_map(|l| serde_json::from_str(l).ok()).collect()
 }
 
+// TODO(T11): 两处调用方(overview + task 完成回调)并发时存在 lost-update 窗口
+// (rename 保护主文件不损坏;下次 overview 刷新幂等补录)。引入第二个调用者时加 Mutex。
 /// 追加条目(按 (book, state_time) 去重,保持原有顺序,新条目排尾)。
 pub fn append_entries(ws: &Workspace, new: &[JournalEntry]) -> anyhow::Result<()> {
     let mut all = read_all(ws);
@@ -32,6 +34,7 @@ pub fn append_entries(ws: &Workspace, new: &[JournalEntry]) -> anyhow::Result<()
         all.iter().map(|e| (e.book.clone(), e.state_time.clone())).collect();
     let mut changed = false;
     for e in new {
+        // 保持首次记录(first-wins);state 重建后 nav 变化需手动删除 journal 文件重新积累。
         if seen.insert((e.book.clone(), e.state_time.clone())) {
             all.push(e.clone());
             changed = true;
