@@ -1,8 +1,11 @@
 import { useEffect } from "react";
-import { Alert, App as AntApp, Card, Col, Row, Tabs, Typography } from "antd";
+import { Alert, App as AntApp, Card, Col, Row, Spin, Tabs, Typography } from "antd";
 import { useBacktest } from "../stores/backtest";
 import BacktestConfigForm from "../components/BacktestConfigForm";
 import RunHistoryList from "../components/RunHistoryList";
+import RunOverview from "../components/RunOverview";
+import TradesTable from "../components/TradesTable";
+import RawJsonView from "../components/RawJsonView";
 
 export default function Backtest() {
   const st = useBacktest();
@@ -41,11 +44,11 @@ export default function Backtest() {
         ) : (
           <Tabs
             items={[
-              { key: "overview", label: "概览", children: <Typography.Text type="secondary">U2 交付</Typography.Text> },
+              { key: "overview", label: "概览", children: st.summary ? <RunOverview summary={st.summary} /> : <Spin /> },
               { key: "kline", label: "K线信号", children: <Typography.Text type="secondary">U3 交付</Typography.Text> },
-              { key: "trades", label: "交易明细", children: <Typography.Text type="secondary">U2 交付</Typography.Text> },
+              { key: "trades", label: "交易明细", children: <TradesTable runId={st.selectedId!} /> },
               { key: "replay", label: "决策回放", children: <Typography.Text type="secondary">U4 交付</Typography.Text> },
-              { key: "raw", label: "原始", children: <Typography.Text type="secondary">U2 交付</Typography.Text> },
+              { key: "raw", label: "原始", children: <RawJsonView runId={st.selectedId!} /> },
             ]}
           />
         )}
