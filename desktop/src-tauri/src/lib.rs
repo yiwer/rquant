@@ -3,8 +3,8 @@
 
 pub mod backtest_run;
 pub mod books;
-pub mod data_bench;
 pub mod commands;
+pub mod data_bench;
 pub mod dto;
 pub mod error;
 pub mod gates;

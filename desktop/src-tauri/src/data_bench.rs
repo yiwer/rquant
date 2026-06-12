@@ -6,6 +6,13 @@ use rquant::data::bar::Bar;
 
 const MAX_TAIL: usize = 2000;
 
+/// A股代码白名单:sh/sz/bj + 6 位数字。fetch_batch 写路径由此防注入(.. 或分隔符)。
+fn valid_symbol(s: &str) -> bool {
+    s.len() == 8
+        && (s.starts_with("sh") || s.starts_with("sz") || s.starts_with("bj"))
+        && s[2..].bytes().all(|c| c.is_ascii_digit())
+}
+
 fn iso(t: &chrono::NaiveDateTime) -> String {
     t.format("%Y-%m-%dT%H:%M:%S").to_string()
 }
@@ -75,6 +82,7 @@ pub fn read_bars(ws: &Workspace, rel: &str, tail: usize) -> Result<Vec<BarDto>, 
 }
 
 /// 因子叠加:对尾部 tail 根 bar 逐点 build_context+eval(标量取值/序列取末位)。
+// TODO(M3): cache bars by abs path(同文件反复 read_bars_csv)
 pub fn eval_factor(
     ws: &Workspace,
     rel: &str,
@@ -162,6 +170,11 @@ pub fn universe_write(
     {
         return Err(format!("invalid universe name: {}", name));
     }
+    for e in entries {
+        if e.symbol.contains([',', '\n', '\r']) || e.primary.contains([',', '\n', '\r']) {
+            return Err("invalid entry: symbol/primary 不得含逗号或换行".to_string());
+        }
+    }
     let dir = ws.universes_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join(format!("{}.csv", name));
@@ -171,8 +184,11 @@ pub fn universe_write(
     }
     let tmp = path.with_extension("csv.tmp");
     std::fs::write(&tmp, &s).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
-    Ok(())
+    let renamed = std::fs::rename(&tmp, &path);
+    if renamed.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    renamed.map_err(|e| e.to_string())
 }
 
 /// 批量拉取任务体(重任务;串行+节流;落 .rquant-desktop/data/)。
@@ -184,6 +200,11 @@ pub fn fetch_batch(
     datalen: u32,
     adjust: &str,
 ) -> Result<serde_json::Value, String> {
+    for sym in symbols {
+        if !valid_symbol(sym) {
+            return Err(format!("invalid symbol: {}", sym));
+        }
+    }
     let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(ws.data_dir()).map_err(|e| e.to_string())?;
     let mut written = Vec::new();
@@ -284,4 +305,25 @@ mod tests {
         assert_eq!(custom.entries.len(), 1);
         assert!(universe_write(&w, "../evil", &entries).is_err(), "name sanitized");
     }
+
+    #[test]
+    fn fetch_batch_rejects_bad_symbols() {
+        let (_td, w) = ws();
+        use crate::backtest_run::test_fixtures::NoopProgress;
+        let bad = vec!["../../evil".to_string()];
+        assert!(fetch_batch(&w, &NoopProgress, &bad, 60, 10, "qfq").is_err());
+        let bad2 = vec!["sh12345".to_string()]; // 7 位
+        assert!(fetch_batch(&w, &NoopProgress, &bad2, 60, 10, "qfq").is_err());
+    }
+
+    #[test]
+    fn universe_write_rejects_injection() {
+        let (_td, w) = ws();
+        let evil = vec![crate::dto::UniverseEntryDto {
+            symbol: "sh600000,extra".into(),
+            primary: "paper/p.csv".into(),
+        }];
+        assert!(universe_write(&w, "ok_name", &evil).is_err());
+    }
+
 }
