@@ -40,7 +40,11 @@ pub fn execute_backtest(
         rquant::cli::build_llm(String::new(), String::new(), ws.root().join(".rquant-cache").join("llm"))
             .map_err(|e| e.to_string())?;
 
+    if p.cancelled() {
+        return Err("cancelled by user".into());
+    }
     let id = runs::new_run_id();
+    let created = chrono::Local::now().naive_local().format("%Y-%m-%dT%H:%M:%S").to_string();
     let rp = runs::run_paths(ws, &id);
     std::fs::create_dir_all(&rp.dir).map_err(|e| e.to_string())?;
 
@@ -121,6 +125,8 @@ pub fn execute_backtest(
     };
 
     // ── 落 config + meta(成败都留痕) ──────────────────────────────────────────
+    // FIXME(M-later): write_config/write_meta 自身失败会留下无 meta 的孤儿 run 目录
+    // (list_runs 会跳过;引擎产物已写入)。回收扫帚留待 M-later。
     runs::write_config(ws, &id, &effective).map_err(|e| e.to_string())?;
     let primary_file = std::path::Path::new(&effective.primary_path)
         .file_name()
@@ -132,10 +138,7 @@ pub fn execute_backtest(
         kind: effective.mode.clone(),
         name: String::new(),
         tree_name: String::new(),
-        created: chrono::Local::now()
-            .naive_local()
-            .format("%Y-%m-%dT%H:%M:%S")
-            .to_string(),
+        created,
         ok: run_outcome.is_ok(),
         error: run_outcome.as_ref().err().cloned(),
     };
@@ -155,16 +158,6 @@ pub fn execute_backtest(
     run_outcome?;
     p.progress(0.95, "archive", &id);
     Ok(serde_json::json!({ "run_id": id }))
-}
-
-/// 引擎自写 out_path 已证实:本函数为纯存在性校验——验证引擎确实写出了文件。
-/// 若文件不存在说明引擎内部失败(error 已经被 ? 传播到上层)，不重复落盘。
-#[allow(dead_code)]
-fn persist_if_needed(path: &std::path::Path) -> Result<(), String> {
-    if !path.exists() {
-        return Err(format!("engine did not write result to {}", path.display()));
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -276,5 +269,33 @@ mod tests {
     fn bad_mode_rejected() {
         let (_td, w) = fixture_ws();
         assert!(execute_backtest(&w, &NoopProgress, &cfg("nonsense")).is_err());
+    }
+
+    #[test]
+    fn engine_failure_archives_meta_with_error() {
+        let (_td, w) = fixture_ws();
+        let mut c = cfg("sim_hard");
+        c.tree_path = "examples/nonexistent.yaml".into();
+        let err = execute_backtest(&w, &NoopProgress, &c);
+        assert!(err.is_err());
+        // 失败也留痕:遍历 runs 目录应有一条 ok=false 的 meta
+        let runs = crate::runs::list_runs(&w);
+        assert_eq!(runs.len(), 1);
+        assert!(!runs[0].ok);
+        assert!(runs[0].error.is_some());
+        assert!(runs[0].name.contains("失败"));
+    }
+
+    #[test]
+    fn sim_soft_runs_and_archives_without_decision_file() {
+        let (_td, w) = fixture_ws();
+        let out = execute_backtest(&w, &NoopProgress, &cfg("sim_soft")).unwrap();
+        let id = out["run_id"].as_str().unwrap();
+        let rp = crate::runs::run_paths(&w, id);
+        assert!(rp.result_json.exists());
+        assert!(!rp.decision_jsonl.exists(), "soft sim must not emit decision traces");
+        let meta = crate::runs::read_meta(&w, id).unwrap();
+        assert!(meta.ok);
+        assert_eq!(meta.kind, "sim_soft");
     }
 }
