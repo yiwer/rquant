@@ -388,7 +388,9 @@ nodes:
         goto: range_break_dn
         label: channel_break_dn
       # 失败突破反向 fade(Brooks 高胜率形态):昨收破前移通道顶、今收回落 + 阴线确认。
-      # 用 ref 标量形态而非 barssince(close>rng_hi)——highest 是标量,逐位条件会弃权(A3)。
+      # phase-1 后 highest 在逐位条件内是滚动序列,barssince(close>rng_hi) 形现已合法;
+      # 仍用 ref 标量形态是形态取舍——精确锚定"昨破今收回"的 1-bar 形,
+      # 升级成 barssince 窗口形(N 根内曾突破)留待下轮 WFO 一并校准(头注 A3)。
       - when: "ref(close, 1) > rng_hi_prev and close < rng_hi_prev and close < open"
         goto: leaf_fade_short
         label: failed_break_up
