@@ -1,11 +1,12 @@
 import { useEffect } from "react";
-import { Card, Col, Row, Tabs, Typography } from "antd";
+import { Alert, App as AntApp, Card, Col, Row, Tabs, Typography } from "antd";
 import { useBacktest } from "../stores/backtest";
 import BacktestConfigForm from "../components/BacktestConfigForm";
 import RunHistoryList from "../components/RunHistoryList";
 
 export default function Backtest() {
   const st = useBacktest();
+  const { message } = AntApp.useApp();
 
   useEffect(() => {
     void st.loadRuns();
@@ -28,13 +29,15 @@ export default function Backtest() {
             compareIds={st.compareIds}
             onSelect={(id) => void st.select(id)}
             onToggleCompare={st.toggleCompare}
-            onDelete={(id) => void st.remove(id)}
+            onDelete={(id) => void st.remove(id).catch((e) => message.error(String(e)))}
           />
         </Card>
       </Col>
       <Col span={17}>
         {st.selectedId == null ? (
           <Typography.Text type="secondary">从左侧选择一次留档查看结果</Typography.Text>
+        ) : st.selectError != null ? (
+          <Alert type="error" message={st.selectError} />
         ) : (
           <Tabs
             items={[

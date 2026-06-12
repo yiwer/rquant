@@ -8,6 +8,7 @@ interface BacktestState {
   runs: RunMetaDto[];
   selectedId: string | null;
   summary: RunSummaryDto | null;
+  selectError: string | null;
   compareIds: string[];
   loadRuns: () => Promise<void>;
   select: (id: string) => Promise<void>;
@@ -20,6 +21,7 @@ export const useBacktest = create<BacktestState>((set, get) => ({
   runs: [],
   selectedId: null,
   summary: null,
+  selectError: null,
   compareIds: [],
   loadRuns: async () => {
     try {
@@ -29,12 +31,11 @@ export const useBacktest = create<BacktestState>((set, get) => ({
     }
   },
   select: async (id) => {
-    set({ selectedId: id, summary: null });
+    set({ selectedId: id, summary: null, selectError: null });
     try {
       set({ summary: await get().api.runSummary(id) });
     } catch (e) {
-      set({ summary: null });
-      throw e;
+      set({ summary: null, selectError: String(e) });
     }
   },
   toggleCompare: (id) =>

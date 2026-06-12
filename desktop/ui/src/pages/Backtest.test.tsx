@@ -12,7 +12,7 @@ const RUNS: RunMetaDto[] = [
 ];
 
 const realApi = useBacktest.getState().api;
-afterEach(() => useBacktest.setState({ api: realApi, runs: [], selectedId: null, summary: null, compareIds: [] }));
+afterEach(() => useBacktest.setState({ api: realApi, runs: [], selectedId: null, summary: null, selectError: null, compareIds: [] }));
 
 test("backtest page lists archived runs", async () => {
   useBacktest.setState({

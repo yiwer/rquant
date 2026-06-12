@@ -52,7 +52,7 @@ export default function BacktestConfigForm({ onStarted }: { onStarted: (taskId: 
       size="small"
       initialValues={{ mode: "sim_hard", cost_bps: 10, warmup: 80, window: 100, initial_capital: 100000, scale: 60 }}
     >
-      <Form.Item name="tree_path" label="决策树" rules={[{ required: true }]}>
+      <Form.Item name="tree_path" label="决策树" rules={[{ required: true }]} preserve={false}>
         <Select
           showSearch
           options={trees.map((t) => ({
@@ -70,23 +70,21 @@ export default function BacktestConfigForm({ onStarted }: { onStarted: (taskId: 
       </Form.Item>
       {useFetch ? (
         <Space.Compact block>
-          <Form.Item name="symbol" rules={[{ required: useFetch }]} style={{ flex: 1 }}>
+          <Form.Item name="symbol" rules={[{ required: useFetch }]} style={{ flex: 1 }} preserve={false}>
             <Select
               showSearch
               placeholder="sh600030"
               options={["sh600030", "sh600036", "sh600519", "sz000858"].map((s) => ({ value: s }))}
               popupMatchSelectWidth={false}
-              // 允许自由输入
-              mode={undefined}
               optionFilterProp="value"
             />
           </Form.Item>
-          <Form.Item name="scale">
+          <Form.Item name="scale" preserve={false} label="周期(分)">
             <Select options={[{ value: 15 }, { value: 60 }, { value: 240, label: "240(日线)" }]} />
           </Form.Item>
         </Space.Compact>
       ) : (
-        <Form.Item name="primary_path" label="行情 CSV" rules={[{ required: !useFetch }]}>
+        <Form.Item name="primary_path" label="行情 CSV" rules={[{ required: !useFetch }]} preserve={false}>
           <Select
             showSearch
             options={csvs.map((c) => ({
