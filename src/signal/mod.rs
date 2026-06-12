@@ -138,6 +138,7 @@ pub fn read_paper_state(path: &Path, tree_name: &str) -> Result<Option<PaperStat
 /// 原子落盘：同目录写 .json.tmp 再 rename 替换（Windows MoveFileEx 替换语义，std 文档保证）。
 /// spec §7——半写状态文件不可能被 read_paper_state 观测为 corrupt。
 fn write_json_atomic(path: &Path, json: &str) -> Result<()> {
+    // 调用方须传 .json 路径;with_extension 替换的是最后一段扩展名。
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, json)?;
     std::fs::rename(&tmp, path)?;
@@ -1840,5 +1841,11 @@ leaves:
         write_holdings_state(&path, &mk(1.0)).unwrap();
         let back = read_holdings_state(&path, "t").unwrap().unwrap();
         assert!((back.holdings["sh600000"] - 1.0).abs() < 1e-12);
+        let leftovers: Vec<_> = std::fs::read_dir(td.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map(|x| x == "tmp").unwrap_or(false))
+            .collect();
+        assert!(leftovers.is_empty(), "tmp leftover: {:?}", leftovers);
     }
 }
