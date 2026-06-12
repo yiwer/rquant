@@ -4,6 +4,7 @@
 pub mod books;
 pub mod dto;
 pub mod error;
+pub mod journal;
 pub mod paths;
 pub mod readers;
 pub mod tasks;
