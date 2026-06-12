@@ -40,22 +40,27 @@ const pct = (v: number | null | undefined) => (v == null ? "—" : `${(v * 100).
 export default function CompareView({ ids }: { ids: [string, string] }) {
   const [sums, setSums] = useState<RunSummaryDto[]>([]);
   const [curves, setCurves] = useState<EquityPointDto[][]>([[], []]);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setSums([]);
     setCurves([[], []]);
+    setLoadErr(null);
     void Promise.all(ids.map((id) => api.runSummary(id))).then((s) => {
       if (!cancelled) setSums(s);
-    }).catch(() => {});
+    }).catch((e) => {
+      if (!cancelled) setLoadErr(String(e));
+    });
     void Promise.all(
-      ids.map((id) => api.runEquity(id).catch(() => [] as EquityPointDto[]))
+      ids.map((id) => api.runEquity(id).catch((): EquityPointDto[] => []))
     ).then((c) => {
-      if (!cancelled) setCurves(c as EquityPointDto[][]);
+      if (!cancelled) setCurves(c);
     });
     return () => { cancelled = true; };
   }, [ids[0], ids[1]]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  if (loadErr) return <Typography.Text type="danger">对比加载失败: {loadErr}</Typography.Text>;
   if (sums.length < 2) return <Typography.Text type="secondary">加载对比…</Typography.Text>;
   const [a, b] = sums;
   const rows = [
