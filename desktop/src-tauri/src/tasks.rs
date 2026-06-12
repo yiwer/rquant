@@ -43,7 +43,8 @@ impl Shared {
         let mut g = self.tasks.lock().expect("task map poisoned");
         if let Some((info, _)) = g.get_mut(id) {
             f(info);
-            self.sink.emit(info);
+            // sink panic 不得毒化 tasks 锁(注册表全局瘫痪)——隔离之
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.sink.emit(info)));
         }
     }
 }
@@ -98,7 +99,7 @@ impl TaskRegistry {
             let mut g = self.shared.tasks.lock().expect("task map poisoned");
             g.insert(id.clone(), (info.clone(), cancel.clone()));
         }
-        self.shared.sink.emit(&info);
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.shared.sink.emit(&info)));
 
         let ctx = TaskCtx {
             cancel,
@@ -110,6 +111,8 @@ impl TaskRegistry {
         std::thread::spawn(move || {
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body(&ctx)));
             if heavy {
+                // 槽位释放须在 body 返回之后(文件写已完成,无双写窗口),
+                // 状态终写在释放之后也安全——update 只按本任务 id 定位自身条目。
                 shared.heavy_busy.store(false, Ordering::SeqCst);
             }
             shared.update(&tid, |info| match &outcome {
@@ -185,7 +188,7 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-        panic!("task {} never reached {}", id, want);
+        panic!("task {} never reached {}; last: {:?}", id, want, reg.get(id));
     }
 
     fn reg() -> TaskRegistry {
