@@ -2,7 +2,7 @@
 //! 桥接只写 config.json + meta.json(原子)。id 经正则校验防路径穿越。
 use crate::dto::{BacktestConfigDto, RunMetaDto};
 use crate::paths::Workspace;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 static SEQ: AtomicU32 = AtomicU32::new(1);
@@ -51,7 +51,8 @@ pub fn run_paths(ws: &Workspace, id: &str) -> RunPaths {
     }
 }
 
-fn write_json_atomic(path: &PathBuf, json: &str) -> anyhow::Result<()> {
+// TODO(M-later): 与 journal.rs 的内联原子写合并为 crate 级 util(第三个使用者出现时)。
+fn write_json_atomic(path: &Path, json: &str) -> anyhow::Result<()> {
     std::fs::create_dir_all(path.parent().expect("run file has parent"))?;
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, json)?;
@@ -61,6 +62,10 @@ fn write_json_atomic(path: &PathBuf, json: &str) -> anyhow::Result<()> {
 
 pub fn write_meta(ws: &Workspace, meta: &RunMetaDto) -> anyhow::Result<()> {
     let rp = run_paths(ws, &meta.id);
+    // 同秒重启 + pid 复用可撞 id(概率极低);静默覆盖前留一条诊断
+    if rp.meta_json.exists() {
+        eprintln!("[rquant-desktop] run id collision detected, overwriting: {}", meta.id);
+    }
     write_json_atomic(&rp.meta_json, &serde_json::to_string_pretty(meta)?)
 }
 
@@ -85,6 +90,8 @@ pub fn list_runs(ws: &Workspace) -> Vec<RunMetaDto> {
     v
 }
 
+/// 注:id 合法但目录不存在时 remove_dir_all 返回 NotFound 错误(如双击删除竞态)——
+/// 如实上抛,UI 端按需吞掉。
 pub fn delete_run(ws: &Workspace, id: &str) -> anyhow::Result<()> {
     if !is_valid_run_id(id) {
         anyhow::bail!("invalid run id: {}", id);
@@ -138,6 +145,8 @@ mod tests {
         assert!(!is_valid_run_id("20260612-210000-abcd-01/.."));
         assert!(!is_valid_run_id(""));
         assert!(is_valid_run_id("20260612-210000-0a1b-07"));
+        assert!(!is_valid_run_id("20260612-210000-ABCD-01")); // 全大写 hex 拒绝
+        assert!(!is_valid_run_id("20260612-210000-0A1B-07")); // 混合大小写拒绝
     }
 
     #[test]
