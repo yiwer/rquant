@@ -2,6 +2,7 @@ import { HashRouter, Routes, Route, Navigate, useNavigate, useLocation } from "r
 import { Layout, Menu, Typography } from "antd";
 import Cockpit from "./pages/Cockpit";
 import BookDetail from "./pages/BookDetail";
+import Backtest from "./pages/Backtest";
 import TaskDrawer from "./components/TaskDrawer";
 
 export const MODULES = [
@@ -40,7 +41,8 @@ function Shell() {
         <Routes>
           <Route path="/cockpit" element={<Cockpit />} />
           <Route path="/cockpit/:book" element={<BookDetail />} />
-          {MODULES.filter((m) => m.key !== "cockpit").map((m) => (
+          <Route path="/backtest" element={<Backtest />} />
+          {MODULES.filter((m) => m.key !== "cockpit" && m.key !== "backtest").map((m) => (
             <Route key={m.key} path={`/${m.key}`} element={<Placeholder name={m.label} />} />
           ))}
           <Route path="*" element={<Navigate to="/cockpit" replace />} />
