@@ -27,6 +27,7 @@ export default function DataBench() {
   const open = (path: string) => {
     setSelected(path);
     setOverlays([]);
+    setBars([]);
     api.dataReadBars(path, 800).then(setBars).catch((e) => message.error(String(e)));
   };
 
@@ -54,7 +55,7 @@ export default function DataBench() {
   return (
     <Row gutter={12}>
       <Col span={8}>
-        <Card size="small" title="行情 CSV(paper/ + .rquant-desktop/data/)" extra={<a onClick={refresh}>刷新</a>}
+        <Card size="small" title="行情 CSV(paper/ + .rquant-desktop/data/)" extra={<Typography.Link onClick={refresh}>刷新</Typography.Link>}
           style={{ marginBottom: 12 }}>
           <List
             size="small"
