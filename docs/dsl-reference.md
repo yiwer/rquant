@@ -29,11 +29,20 @@
 | `unreal_pnl` | `Context.sim`（sim 模式） | 浮动损益率 `(close/entry_price−1)×sign(pos)`（标量）；空仓或非 sim 模式默认 `0.0` |
 | `max_price_since_entry` | `Context.sim`（sim 模式） | 入场以来（含入场执行 bar）最高 `high`（标量）；空仓/非 sim 为 NaN → 比较弃权。Chandelier：`close < max_price_since_entry - 3*atr(22)` |
 | `min_price_since_entry` | `Context.sim`（sim 模式） | 入场以来最低 `low`（标量）；空仓/非 sim 为 NaN → 比较弃权。MFE/MAE 自行推导：`max_price_since_entry/entry_price - 1` |
+| `bars_since_exit` | `Context.sim`（sim 模式） | 距最近一次平仓**执行 bar** 的 bar 数（标量）；平仓执行 bar 收盘记 1，其后每 bar +1，**不论当前是否持仓**（单调计数）；翻向也计一次平仓事件；从未平仓 → NaN → 比较弃权。打分/portfolio 模式恒 NaN。Turtle S1 再入场冷却：`bars_since_exit < 3` 作独立阻断分支（见「冷却写法纪律」一节）。 |
+| `last_trip_return` | `Context.sim`（sim 模式） | 最近一次平仓回合的净值口径收益率（标量，正/负/零）；从未平仓 → NaN → 比较弃权。打分/portfolio 模式恒 NaN。Turtle S1 跳过规则：`last_trip_return > 0` 跳过本次突破（仅在阻断分支内使用——见「冷却写法纪律」一节）。 |
+| `session_open` | 当日可见窗（纯 Context 派生） | 当日尾部连续段首根 bar 的 `open`（标量）；段为空时 NaN 弃权（理论上不出现） |
+| `session_high` | 当日可见窗 | 当日尾部连续段内所有 bar 的 `high` 最大值（含当前 bar，标量） |
+| `session_low` | 当日可见窗 | 当日尾部连续段内所有 bar 的 `low` 最小值（含当前 bar，标量） |
+| `session_vwap` | 当日可见窗 | 日内 VWAP = Σ(close×volume) / Σ(volume)（标量）；Σvolume ≤ 0 → NaN 弃权。与滚动 VWAP 口径的区分：锚定自然日内已发生 bar，不跨日；滚动 VWAP（`sma(close*volume,n)/sma(volume,n)`）则是固定 n 根滑动窗口，可跨日。 |
+| `bars_today` | 当日可见窗 | 当日可见 bar 数（标量，≥1）；日线数据退化为 1（无害） |
 | `aux.<表名>.<列名>` | 挂载的外部 aux 表 | `--aux <表名>=path.csv` 中 `<列名>` 对应的数值序列（time≤t 截断后的可见部分） |
 
 `resolve_series`（`eval.rs`）实现上述解析：前缀 `aux.` 存在时路由到对应 `AuxView`，前缀 `ctx.` 存在时路由到 `ctx.context`，否则路由到 `ctx.primary`。`hour`/`minute`/`dow` 与 `pos`/`entry_price`/`bars_held`/`unreal_pnl`/`max_price_since_entry`/`min_price_since_entry` 在 `eval` 的 `Ident` 臂中优先匹配，直接从 `ctx` 读取，不参与序列解析。
 
 > **`entry_price` NaN 弃权**：空仓时 `entry_price = NaN`，与 NaN 的任何比较（`>`/`<`/`==`/`!=`）均返回 `false`。因此 `entry_price > 0` 在空仓时永远为 false，可安全用于分支条件而无需额外判空。同理，`max_price_since_entry`/`min_price_since_entry` 在入场决策点（`pos` 尚为 0）亦为 NaN——首个有效值在入场执行 bar 收盘后、下一个决策点才可见。
+
+> **日内锚定族窗口截断说明**：`session_*`/`bars_today` 的"当日可见段"由 Context 窗口（`--window N`）截断；若窗口短于当日已有 bar 数，按可见部分计算（而非整日）。日线数据（一天一根）退化为单根，`session_open=open`、`session_high/low` = 本根 high/low、`bars_today=1`，退化语义无害。
 
 ```yaml
 # 示例：只在早盘（9:45–11:30）且非周五入场
@@ -165,6 +174,8 @@ BinaryOp::Ne => { let (a,b) = ...; !a.is_nan() && !b.is_nan() && a != b }
 | `count(cond, n)` | cond: 布尔表达式, n: int≥1 | 序列 < n → NaN | 末 n 位中 cond 为 true 的个数；cond **逐位**求值（见下节） | `count(close > ema(close,20), 10)` |
 | `barssince(cond)` | cond: 布尔表达式 | 从未 true → NaN | 距最近一次 cond=true 的 bar 数（当前 bar=0） | `barssince(crossover(close, sma(close,20)))` |
 | `valuewhen(cond, expr[, k])` | cond: 布尔表达式, expr: Series/Scalar, k: int≥0（默认 0） | 从未触发或次数不足 → NaN 弃权 | 最近第 k+1 次 cond=true 处的 expr 值（k=0 = 最近一次）；常用于事件锚定（回踩价、突破价） | `valuewhen(crossover(close, ema(close,8)), close)` |
+| `percentrank(series, n)` | series: Series, n: int≥2 | n<2 或头部不足 → NaN（严格头）；窗含 NaN → NaN | 位 j = 窗口（含当前，长 n）内**严格小于** s[j] 的个数 / (n−1) ∈ [0,1]；自归一化惯用法：`percentrank(atr(14)/close, 250) > 0.95` | `percentrank(close, 20) > 0.8` |
+| `corr(a, b, n)` | a, b: Series, n: int≥2 | n<2 或头部不足 → NaN；窗含 NaN → NaN；任一侧零方差 → NaN | 滚动 Pearson 相关（两序列先尾对齐再逐位滚动）；大盘相关惯用法：`corr(close, ctx.close, 60) > 0.7` | `corr(close, ctx.close, 60) > 0.5` |
 
 > **陷阱 A1：`highest`/`lowest` 窗口含当前 bar**。`close > highest(high, n)` 在**裸窗（highest/lowest 的序列参数未经 ref 移位）+ 严格比较（`>`/`<`）** 时恒假——窗口最大值 ≥ 当前 high ≥ 当前 close，严格大于永不成立。注意：`close >= highest(close, n)` 表示"当前 bar 创 n 根新高"，是合法的创新高事件，**不触发此陷阱**。表达 Turtle"超过前 N 根高点"的突破语义必须先用 `ref` 移掉当前 bar：
 >
@@ -218,6 +229,78 @@ when: "count((high - low) > atr(14), 10) >= 3"
 # std(log(close), 60) 是滚动标准差序列，两者做序列除法得 zscore 序列
 # 预热期（< 60 根）std 为 NaN → 除以 NaN → NaN → 比较弃权（安全）
 when: "(log(close) - log(ref(close,1))) / std(log(close), 60) > 1.5"
+```
+
+### 入场时刻锚定惯用法（at_entry 之死）
+
+**核心机制**：`ref(expr, bars_held)` 即信号 bar 锚定——`as_usize(bars_held)` 将当前持仓根数转为 k，`ref(series, k)` 截掉末 k 根，取的就是开仓信号那根 bar 处的值。打分模式下 `bars_held=0`，`ref(expr, 0)` 恒等式安全退化，不影响评分。**已在合成数据上实跑验证**（`ref(atr(14), bars_held)` 返回正有限值；越窗时返回空序列→ NaN 弃权）。
+
+```yaml
+# 信号 bar 的 ATR（Turtle 原版 N）：开仓决策发生在 bars_held 根之前
+n_at_entry: "ref(atr(14), bars_held)"
+
+# 入场执行 bar 的最低价（信号 bar 止损位挂单）
+# max(0, bars_held-1)：打分模式 bars_held=0 时 max 兜 0，ref(low, 0) 恒等式
+entry_bar_low: "ref(low, max(0, bars_held - 1))"
+
+# Chandelier 原版（入场时 N 而非当前 N）：跟踪止损随入场价格锁定的波动尺度
+when: "pos > 0 and close < max_price_since_entry - 3 * ref(atr(14), bars_held)"
+```
+
+**边界**：持仓 `bars_held` 超过 Context 可见窗（`--window N`）→ `ref` 截断后空序列 → `as_scalar` 返回 NaN → 比较弃权，树自然走 default。与极值迁移注同纪律：树内保留固定止损分支兜底（`close < entry_price - 3*atr(14)`），同时覆盖此弃权窗口。
+
+### 冷却写法纪律（关键语义陷阱）
+
+`bars_since_exit` 与 `last_trip_return` 在**打分/portfolio/factor 模式下恒为 NaN**（从未平仓）。冷却条件的正确写法是**独立的阻断分支形态**，错误写法是 **AND 子句**。
+
+#### 正确：阻断分支形态（NaN → false → 自然落空）
+
+```yaml
+nodes:
+  gate:
+    type: quant
+    branches:
+      - when: "pos > 0 and bars_held >= 2"
+        goto: leaf_flat
+        label: exit_after_2
+      - when: "pos > 0"
+        goto: leaf_long
+        label: hold
+      - when: "bars_since_exit < 3"     # ← 独立阻断分支
+        goto: leaf_flat                  #   NaN(打分模式) → false → 此分支落空
+        label: cooldown_block            #   打分模式零影响：直接穿透到下方入场分支
+      - when: "close > highest(ref(high, 1), 20)"
+        goto: leaf_long
+        label: enter
+    default: { goto: leaf_flat, label: idle }
+```
+
+**机理**：`bars_since_exit < 3` 在打分模式下为 `NaN < 3` → `false` → 分支落空，遍历继续到入场分支，**不影响打分评分**。在 sim 模式下正常阻断冷却期内的再入场。
+
+#### 错误：AND 子句（打分模式恒弃权 → 树退化）
+
+```yaml
+# ❌ 危险写法：永远不要这样做
+- when: "pos == 0 and bars_since_exit >= 3 and close > highest(ref(high,1), 20)"
+  goto: leaf_long
+  label: enter
+```
+
+**退化机理**：打分模式下 `bars_since_exit = NaN`，`NaN >= 3` 返回 `false`，整个 AND 表达式为 `false` → **此分支在打分模式下永远不成立** → 树在打分口径退化为纯 flat → IC/Sharpe/前瞻评分/WFO 优化全部在一棵哑树上运行，评分/优化结果完全无效。
+
+**判断规则**：凡是引用 `bars_since_exit`/`last_trip_return` 的条件，**必须单独作为一个分支写在入场条件之前**，永远不要用 AND 将其与入场条件合并。
+
+### 滚动统计惯用法（percentrank/corr）
+
+```yaml
+# 自归一化 ATR：ATR/收盘在过去 250 根中的百分位排名 > 95%→ 极高波动期
+when: "percentrank(atr(14) / close, 250) > 0.95"
+
+# 大盘相关性过滤：60 根内 primary 与 context 的相关系数 > 0.7 → 跟盘运行，适合趋势跟随
+when: "corr(close, ctx.close, 60) > 0.7"
+
+# 对数收益百分位（相对强度入场）：近 120 根收益率创 95% 分位
+when: "percentrank(log(close) - log(ref(close, 1)), 120) > 0.95"
 ```
 
 ### 价格行为惯用法

@@ -1322,4 +1322,5 @@ mod tests {
         assert!(eval(&parse_str("corr(close, ctx.close)").unwrap(), &ctx).is_err());
         assert!(eval(&parse_str("corr(close, ctx.close, 3, 1)").unwrap(), &ctx).is_err());
     }
+
 }

@@ -313,12 +313,13 @@ factors:
 以下名字**不得**用作 `params`/`factors` 的键：
 
 - 内置标识符：`close` `open` `high` `low` `volume` `hour` `minute` `dow`
-- **持仓状态标识符（sim 专用保留名）**：`pos` `entry_price` `bars_held` `unreal_pnl` `max_price_since_entry` `min_price_since_entry`
-- 内置函数名：`sma` `ema` `wma` `rsi` `atr` `slope` `ref` `highest` `lowest` `crossover` `crossunder` `macd_line` `macd_signal` `macd_hist` `std` `sigmoid` `auto` `abs` `max` `min` `count` `barssince` `valuewhen` `log` `exp` `sqrt` `floor` `sign` `pow`
+- **持仓状态标识符（sim 专用保留名）**：`pos` `entry_price` `bars_held` `unreal_pnl` `max_price_since_entry` `min_price_since_entry` `bars_since_exit` `last_trip_return`
+- **日内锚定标识符（纯 Context 派生保留名）**：`session_open` `session_high` `session_low` `session_vwap` `bars_today`
+- 内置函数名：`sma` `ema` `wma` `rsi` `atr` `slope` `ref` `highest` `lowest` `crossover` `crossunder` `macd_line` `macd_signal` `macd_hist` `std` `sigmoid` `auto` `abs` `max` `min` `count` `barssince` `valuewhen` `log` `exp` `sqrt` `floor` `sign` `pow` `percentrank` `corr`
 
 与上述任一名字冲突，或在同一块中重复定义，均在加载时报错。
 
-> 持仓标识符 `pos`/`entry_price`/`bars_held`/`unreal_pnl` 在非 sim 模式下取默认值（`pos=0`、`bars_held=0`、`unreal_pnl=0`、`entry_price=NaN`），因此同一棵树可以在打分模式和 sim 模式下都运行——打分模式时 `pos==0` 永远为真，分支退化为 flat 路径，不影响前瞻评分语义。`entry_price` 为 NaN 时所有比较运算返回 false（NaN 弃权），空仓状态下引用它的条件自动弃权走 default；`max_price_since_entry`/`min_price_since_entry` 同此纪律（空仓/非 sim 恒为 NaN）。
+> 持仓标识符 `pos`/`entry_price`/`bars_held`/`unreal_pnl` 在非 sim 模式下取默认值（`pos=0`、`bars_held=0`、`unreal_pnl=0`、`entry_price=NaN`），因此同一棵树可以在打分模式和 sim 模式下都运行——打分模式时 `pos==0` 永远为真，分支退化为 flat 路径，不影响前瞻评分语义。`entry_price` 为 NaN 时所有比较运算返回 false（NaN 弃权），空仓状态下引用它的条件自动弃权走 default；`max_price_since_entry`/`min_price_since_entry` 同此纪律（空仓/非 sim 恒为 NaN）。**节流状态量** `bars_since_exit`/`last_trip_return` 在打分/portfolio/factor 模式下恒为 NaN（从未平仓），引用它们的冷却条件自动弃权为 false——**必须写为独立阻断分支**（见 [docs/dsl-reference.md 冷却写法纪律一节](dsl-reference.md#冷却写法纪律关键语义陷阱)），不能写入入场条件的 AND 子句（否则打分模式下该入场分支永不触发，树退化为纯 flat，评分/优化全废）。保留名总计：idents 21 / fns 31。
 
 ---
 
