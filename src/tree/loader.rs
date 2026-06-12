@@ -228,8 +228,11 @@ struct FactorOnlySpec {
 }
 
 /// 解析树 YAML 的 params/factors 并完成代入(params→常量、先序因子→内联),
-/// 返回文档序 (因子名, 已代入 Expr) 列表——**不分配 Cached 槽**,供独立求值
+/// 返回文档序 (因子名, 已代入 Expr) 列表,供独立求值
 /// (桌面端决策回放因子表/K线因子叠加,spec §4-2)。
+/// 注意:引用先序因子处会内嵌 Cached(slot,..) 节点,槽位每次调用从 0 起分配——
+/// **不要把两次调用的结果对同一个 Context 求值**(槽位撞车=静默串值);
+/// 同一次调用的列表共享一个 Context 求值是安全且高效的(先序因子缓存命中)。
 /// 与 load_tree_str 的物化语义同源:共享同一内部助手,禁止复制粘贴两份代入逻辑。
 pub fn resolve_factor_exprs(yaml: &str) -> Result<Vec<(String, crate::dsl::ast::Expr)>> {
     let spec: FactorOnlySpec = serde_yaml::from_str(yaml)?;
