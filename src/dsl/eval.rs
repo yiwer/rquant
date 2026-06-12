@@ -4,6 +4,18 @@ use crate::features::indicators;
 use crate::{Error, Result};
 use chrono::{Datelike, Timelike};
 
+/// 当日尾部连续段：可见窗内 date == t.date() 的末段切片范围。
+/// 从窗尾向前扫，遇到日期变化为止（全 Scalar、纯 Context 派生，无前视）。
+fn session_range(ctx: &Context) -> std::ops::Range<usize> {
+    let bars = &ctx.primary.bars;
+    let today = ctx.t.date();
+    let mut start = bars.len();
+    while start > 0 && bars[start - 1].time.date() == today {
+        start -= 1;
+    }
+    start..bars.len()
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Series(Vec<f64>),
@@ -66,6 +78,54 @@ pub fn eval(expr: &Expr, ctx: &Context) -> Result<Value> {
             "min_price_since_entry" => Ok(Value::Scalar(ctx.sim.min_price_since_entry)),
             "bars_since_exit" => Ok(Value::Scalar(ctx.sim.bars_since_exit)),
             "last_trip_return" => Ok(Value::Scalar(ctx.sim.last_trip_return)),
+            // 日内锚定族：当日尾部连续段（从窗尾向前扫 date==today）；全 Scalar、无前视。
+            "bars_today" => {
+                let r = session_range(ctx);
+                // r 不可能为空（t 本身即窗尾 bar 时间，至少含 1 根）；防御仍给 1.0
+                Ok(Value::Scalar(if r.is_empty() { 1.0 } else { r.len() as f64 }))
+            }
+            "session_open" => {
+                let r = session_range(ctx);
+                Ok(Value::Scalar(if r.is_empty() {
+                    f64::NAN
+                } else {
+                    ctx.primary.bars[r.start].open
+                }))
+            }
+            "session_high" => {
+                let r = session_range(ctx);
+                Ok(Value::Scalar(if r.is_empty() {
+                    f64::NAN
+                } else {
+                    ctx.primary.bars[r.clone()]
+                        .iter()
+                        .map(|b| b.high)
+                        .fold(f64::NEG_INFINITY, f64::max)
+                }))
+            }
+            "session_low" => {
+                let r = session_range(ctx);
+                Ok(Value::Scalar(if r.is_empty() {
+                    f64::NAN
+                } else {
+                    ctx.primary.bars[r.clone()]
+                        .iter()
+                        .map(|b| b.low)
+                        .fold(f64::INFINITY, f64::min)
+                }))
+            }
+            "session_vwap" => {
+                let r = session_range(ctx);
+                if r.is_empty() {
+                    return Ok(Value::Scalar(f64::NAN));
+                }
+                let (sum_cv, sum_v) = ctx.primary.bars[r.clone()].iter().fold(
+                    (0.0_f64, 0.0_f64),
+                    |(scv, sv), b| (scv + b.close * b.volume, sv + b.volume),
+                );
+                // Σv ≤ 0 → NaN 弃权（含全零量 volume 场景）
+                Ok(Value::Scalar(if sum_v <= 0.0 { f64::NAN } else { sum_cv / sum_v }))
+            }
             _ => Ok(Value::Series(resolve_series(name, ctx)?)),
         },
         Expr::Index(inner, k) => {
@@ -815,6 +875,162 @@ mod tests {
         assert_eq!(f("barssince(crossover(close, 2.5)) == 0"), Value::Bool(true));
         // 预热 NaN 段不产生事件：sma(close,3)=[N,N,2.0,2.67,2.33,2.67]，上穿仅 idx3、idx5 → 2
         assert_eq!(f("count(crossover(sma(close,3), 2.5), 6) == 2"), Value::Bool(true));
+    }
+
+    /// 两天数据工厂（day1: 3 根 + day2: 2 根），t = day2 第二根（index 4）。
+    /// 每根 bar 有真实不同日期，用于日内锚定族测试。
+    fn ctx_two_days() -> Context {
+        use chrono::NaiveDate;
+        let d1 = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+        let d2 = NaiveDate::from_ymd_opt(2024, 1, 3).unwrap();
+        let bars = vec![
+            // day1: 3 根
+            Bar {
+                time: d1.and_hms_opt(10, 0, 0).unwrap(),
+                open: 10.0, high: 10.5, low: 9.8, close: 10.2, volume: 100.0,
+            },
+            Bar {
+                time: d1.and_hms_opt(10, 15, 0).unwrap(),
+                open: 10.2, high: 10.7, low: 10.0, close: 10.4, volume: 150.0,
+            },
+            Bar {
+                time: d1.and_hms_opt(10, 30, 0).unwrap(),
+                open: 10.4, high: 10.9, low: 10.2, close: 10.6, volume: 120.0,
+            },
+            // day2: 2 根
+            Bar {
+                time: d2.and_hms_opt(10, 0, 0).unwrap(),
+                open: 10.6, high: 11.0, low: 10.4, close: 10.8, volume: 80.0,
+            },
+            Bar {
+                time: d2.and_hms_opt(10, 15, 0).unwrap(),
+                open: 10.8, high: 11.2, low: 10.6, close: 11.0, volume: 90.0,
+            },
+        ];
+        let t = bars[4].time;
+        Context {
+            t,
+            primary: Window { bars: bars.clone() },
+            context: Window { bars },
+            news: None,
+            aux: std::collections::BTreeMap::new(),
+            sim: crate::features::context::SimState::default(),
+            eval_cache: Default::default(),
+        }
+    }
+
+    /// 两天数据工厂（volume=0），用于 session_vwap NaN 弃权测试。
+    fn ctx_two_days_zero_vol() -> Context {
+        use chrono::NaiveDate;
+        let d1 = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+        let d2 = NaiveDate::from_ymd_opt(2024, 1, 3).unwrap();
+        let bars = vec![
+            Bar {
+                time: d1.and_hms_opt(10, 0, 0).unwrap(),
+                open: 10.0, high: 10.5, low: 9.8, close: 10.2, volume: 0.0,
+            },
+            Bar {
+                time: d2.and_hms_opt(10, 0, 0).unwrap(),
+                open: 10.6, high: 11.0, low: 10.4, close: 10.8, volume: 0.0,
+            },
+        ];
+        let t = bars[1].time;
+        Context {
+            t,
+            primary: Window { bars: bars.clone() },
+            context: Window { bars },
+            news: None,
+            aux: std::collections::BTreeMap::new(),
+            sim: crate::features::context::SimState::default(),
+            eval_cache: Default::default(),
+        }
+    }
+
+    /// 单日首根退化工厂（t = day1 首根，bars_today == 1）。
+    fn ctx_single_bar_first() -> Context {
+        use chrono::NaiveDate;
+        let d1 = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+        let d2 = NaiveDate::from_ymd_opt(2024, 1, 3).unwrap();
+        // 窗口内只有 day1 的两根 + day2 的首根，t = day2 首根
+        let bars = vec![
+            Bar {
+                time: d1.and_hms_opt(10, 0, 0).unwrap(),
+                open: 10.0, high: 10.5, low: 9.8, close: 10.2, volume: 100.0,
+            },
+            Bar {
+                time: d1.and_hms_opt(10, 15, 0).unwrap(),
+                open: 10.2, high: 10.7, low: 10.0, close: 10.4, volume: 150.0,
+            },
+            Bar {
+                time: d2.and_hms_opt(10, 0, 0).unwrap(),
+                open: 10.6, high: 11.0, low: 10.4, close: 10.8, volume: 80.0,
+            },
+        ];
+        let t = bars[2].time; // day2 首根 = 单日首根退化
+        Context {
+            t,
+            primary: Window { bars: bars.clone() },
+            context: Window { bars },
+            news: None,
+            aux: std::collections::BTreeMap::new(),
+            sim: crate::features::context::SimState::default(),
+            eval_cache: Default::default(),
+        }
+    }
+
+    #[test]
+    fn session_anchors_two_day_window() {
+        // 两天数据：day1 3 根 + day2 2 根，t = day2 第二根（index 4）
+        // 手算：
+        //   bars_today = 2（day2 两根）
+        //   session_open = day2 首根 open = 10.6
+        //   session_high = max(day2-bar0.high=11.0, day2-bar1.high=11.2) = 11.2
+        //   session_low  = min(day2-bar0.low=10.4,  day2-bar1.low=10.6)  = 10.4
+        //   session_vwap = (10.8*80 + 11.0*90)/(80+90) = (864+990)/170 = 1854/170
+        let ctx = ctx_two_days();
+        let f = |src: &str| eval(&parse_str(src).unwrap(), &ctx).unwrap();
+
+        assert_eq!(f("bars_today == 2"), Value::Bool(true));
+        assert_eq!(f("session_open == 10.6"), Value::Bool(true));
+        assert_eq!(f("session_high == 11.2"), Value::Bool(true));
+        assert_eq!(f("session_low == 10.4"), Value::Bool(true));
+
+        // session_vwap 手算: 1854/170
+        let expected_vwap = 1854.0_f64 / 170.0;
+        match f("session_vwap") {
+            Value::Scalar(v) => assert!((v - expected_vwap).abs() < 1e-9,
+                "session_vwap: got {v}, expected {expected_vwap}"),
+            other => panic!("expected Scalar, got {other:?}"),
+        }
+        // 全部标量形态
+        assert!(matches!(f("bars_today"), Value::Scalar(_)));
+        assert!(matches!(f("session_open"), Value::Scalar(_)));
+        assert!(matches!(f("session_high"), Value::Scalar(_)));
+        assert!(matches!(f("session_low"), Value::Scalar(_)));
+        assert!(matches!(f("session_vwap"), Value::Scalar(_)));
+    }
+
+    #[test]
+    fn session_anchors_single_bar_degeneration() {
+        // 单日首根退化：t = day2 首根 → bars_today == 1
+        let ctx = ctx_single_bar_first();
+        let f = |src: &str| eval(&parse_str(src).unwrap(), &ctx).unwrap();
+        assert_eq!(f("bars_today == 1"), Value::Bool(true));
+        // session_open = day2-bar0.open = 10.6
+        assert_eq!(f("session_open == 10.6"), Value::Bool(true));
+        // session_high = session_low = 单根的 high/low
+        assert_eq!(f("session_high == 11.0"), Value::Bool(true));
+        assert_eq!(f("session_low == 10.4"), Value::Bool(true));
+    }
+
+    #[test]
+    fn session_vwap_zero_volume_abstains() {
+        // volume 全 0 → Σv=0 → NaN → 比较弃权
+        let ctx = ctx_two_days_zero_vol();
+        let f = |src: &str| eval(&parse_str(src).unwrap(), &ctx).unwrap();
+        // NaN 的任何比较返回 false（弃权）
+        assert_eq!(f("session_vwap > 0"), Value::Bool(false));
+        assert_eq!(f("session_vwap == session_vwap"), Value::Bool(false));
     }
 
     #[test]

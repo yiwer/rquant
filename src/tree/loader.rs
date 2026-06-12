@@ -5,11 +5,12 @@ use crate::{Error, Result};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-const RESERVED_IDENTS: [&str; 16] = [
+const RESERVED_IDENTS: [&str; 21] = [
     "close", "open", "high", "low", "volume", "hour", "minute", "dow",
     "pos", "entry_price", "bars_held", "unreal_pnl",
     "max_price_since_entry", "min_price_since_entry",
     "bars_since_exit", "last_trip_return",
+    "session_open", "session_high", "session_low", "session_vwap", "bars_today",
 ];
 const RESERVED_FNS: [&str; 29] = [
     "sma", "ema", "wma", "rsi", "atr", "slope", "ref", "highest", "lowest",
