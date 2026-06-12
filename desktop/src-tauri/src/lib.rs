@@ -7,6 +7,8 @@ pub mod error;
 pub mod journal;
 pub mod paths;
 pub mod readers;
+pub mod runlog;
+pub mod schtask;
 pub mod tasks;
 
 pub fn run() {

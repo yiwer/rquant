@@ -8,18 +8,19 @@ edition = "2024"
 name = "rquant_desktop"
 
 [dependencies]
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+csv = "1"
 rquant = { path = "../.." }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
-chrono = { version = "0.4", features = ["serde"] }
-anyhow = "1"
 tauri = { version = "2", features = [] }
 tauri-plugin-log = "2"
-tokio = { version = "1", features = ["rt-multi-thread"] }
 # PINNED transitive dep: time 0.3.48 adds a From<OffsetDateTime> impl that conflicts
 # with cookie 0.18.1 (pulled by tauri/wry). Direct `=` req keeps `cargo update` from
 # advancing it. Drop this line once tauri's cookie dep updates. Context: commit b5db7a5.
 time = "=0.3.47"
+tokio = { version = "1", features = ["rt-multi-thread"] }
 ts-rs = { version = "10", features = ["serde-compat"] }
 
 [dev-dependencies]
