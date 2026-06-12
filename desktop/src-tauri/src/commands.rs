@@ -116,6 +116,8 @@ pub fn task_cancel(state: tauri::State<AppState>, id: String) {
 
 // ───────────────────────── M2: 回测中心 / 数据工作台 ─────────────────────────
 
+// TODO(M3 cache): 每次挂载对 examples/+deploy/ 逐文件 load_tree_file(<10 文件,~ms 级可接受);
+// 与 readers.rs 的 TODO(M2) 树缓存属同一专项。
 pub fn assemble_tree_list(ws: &Workspace) -> Vec<crate::dto::TreeInfoDto> {
     let mut v = Vec::new();
     for (dir, frozen) in [(ws.root().join("examples"), false), (ws.deploy_dir(), true)] {
@@ -162,6 +164,7 @@ pub fn backtest_run(
     state: tauri::State<AppState>,
     config: crate::dto::BacktestConfigDto,
 ) -> Result<String, String> {
+    // config 由 IPC 反序列化而来已是 owned,直接 move;ws 从 state 克隆(state 非 'static)。
     let ws = state.ws.clone();
     state
         .tasks
