@@ -3,6 +3,7 @@ import { Layout, Menu, Typography } from "antd";
 import Cockpit from "./pages/Cockpit";
 import BookDetail from "./pages/BookDetail";
 import Backtest from "./pages/Backtest";
+import DataBench from "./pages/DataBench";
 import TaskDrawer from "./components/TaskDrawer";
 
 export const MODULES = [
@@ -42,7 +43,8 @@ function Shell() {
           <Route path="/cockpit" element={<Cockpit />} />
           <Route path="/cockpit/:book" element={<BookDetail />} />
           <Route path="/backtest" element={<Backtest />} />
-          {MODULES.filter((m) => m.key !== "cockpit" && m.key !== "backtest").map((m) => (
+          <Route path="/data" element={<DataBench />} />
+          {MODULES.filter((m) => m.key !== "cockpit" && m.key !== "backtest" && m.key !== "data").map((m) => (
             <Route key={m.key} path={`/${m.key}`} element={<Placeholder name={m.label} />} />
           ))}
           <Route path="*" element={<Navigate to="/cockpit" replace />} />
