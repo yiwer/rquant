@@ -44,6 +44,9 @@ pub struct BacktestConfig {
     pub folds: usize,
     /// 外部 aux 序列挂载列表：(name, csv_path)，DSL 经 `aux.<name>.<column>` 引用。
     pub aux_paths: Vec<(String, std::path::PathBuf)>,
+    /// 可选:sim 硬模式逐 bar 完整决策轨迹(Trace JSONL)输出路径。
+    /// None(默认,CLI 不暴露)=零行为变化;桌面端决策回放消费(spec §4-3)。
+    pub decision_traces_path: Option<std::path::PathBuf>,
 }
 
 #[allow(clippy::too_many_arguments)]

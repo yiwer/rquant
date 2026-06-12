@@ -397,6 +397,12 @@ pub async fn run_sim(cfg: &BacktestConfig, llm: &LlmEvaluator, soft: bool) -> Re
     let rate = cfg.cost_bps / 2.0 / 10_000.0;
     let start = cfg.warmup.min(primary.len());
 
+    // 决策轨迹写入器(硬模式专属;软遍历无单一路径)
+    let mut decision_w = match (&cfg.decision_traces_path, soft) {
+        (Some(p), false) => Some(std::io::BufWriter::new(std::fs::File::create(p)?)),
+        _ => None,
+    };
+
     // ── 主循环（顺序，无 buffered） ──────────────────────────────────────────
     let mut acc = SimAccount::default();
     let mut trips: Vec<RoundTrip> = Vec::new();
@@ -437,24 +443,30 @@ pub async fn run_sim(cfg: &BacktestConfig, llm: &LlmEvaluator, soft: bool) -> Re
         };
 
         // 风控覆盖（spec §3.2）：pos≠0 时按 stop→tp→max_hold 顺序检查
-        let (target, reason): (f64, &str) = if acc.pos.abs() > EPS {
-            if let Some(risk) = &tree.risk {
-                if risk.stop_loss.is_some_and(|sl| unreal_pnl <= -sl) {
-                    (0.0, "stop")
-                } else if risk.take_profit.is_some_and(|tp| unreal_pnl >= tp) {
-                    (0.0, "tp")
-                } else if risk.max_hold_bars.is_some_and(|mh| acc.bars_held >= mh) {
-                    (0.0, "max_hold")
+        let (target, reason, bar_trace): (f64, &str, Option<crate::engine::trace::Trace>) =
+            if acc.pos.abs() > EPS {
+                if let Some(risk) = &tree.risk {
+                    if risk.stop_loss.is_some_and(|sl| unreal_pnl <= -sl) {
+                        (0.0, "stop", None)
+                    } else if risk.take_profit.is_some_and(|tp| unreal_pnl >= tp) {
+                        (0.0, "tp", None)
+                    } else if risk.max_hold_bars.is_some_and(|mh| acc.bars_held >= mh) {
+                        (0.0, "max_hold", None)
+                    } else {
+                        // 未触发风控 → 树目标
+                        tree_target(&tree, &ctx, llm, soft).await?
+                    }
                 } else {
-                    // 未触发风控 → 树目标
                     tree_target(&tree, &ctx, llm, soft).await?
                 }
             } else {
                 tree_target(&tree, &ctx, llm, soft).await?
-            }
-        } else {
-            tree_target(&tree, &ctx, llm, soft).await?
-        };
+            };
+        // 决策轨迹(硬模式专属;软遍历无单一路径)
+        if let (Some(w), Some(tr)) = (decision_w.as_mut(), bar_trace.as_ref()) {
+            serde_json::to_writer(&mut *w, tr)?;
+            writeln!(w)?;
+        }
 
         // 执行 sim_step
         if let Some(rt) = sim_step(
@@ -479,6 +491,12 @@ pub async fn run_sim(cfg: &BacktestConfig, llm: &LlmEvaluator, soft: bool) -> Re
             pos: acc.pos,
             nav: acc.nav,
         });
+    }
+
+    // 决策轨迹缓冲区刷盘
+    if let Some(mut w) = decision_w {
+        use std::io::Write as _;
+        w.flush()?;
     }
 
     // 期末清算
@@ -545,12 +563,13 @@ pub async fn run_sim(cfg: &BacktestConfig, llm: &LlmEvaluator, soft: bool) -> Re
 }
 
 /// 从树取目标仓位：硬模式 = traverse → leaf stance×weight；软模式 = traverse_soft → Σ p·w·dir。
+/// 硬模式额外返回完整 Trace（供调用方写决策轨迹）；软模式返回 None。
 async fn tree_target<'a>(
     tree: &crate::tree::loader::Tree,
     ctx: &crate::features::context::Context,
     llm: &LlmEvaluator,
     soft: bool,
-) -> Result<(f64, &'a str)> {
+) -> Result<(f64, &'a str, Option<crate::engine::trace::Trace>)> {
     if soft {
         let soft_trace = traverse_soft(tree, ctx, llm).await?;
         let mut e = 0.0_f64;
@@ -559,13 +578,13 @@ async fn tree_target<'a>(
                 e += p * leaf.weight_at(ctx) * stance_dir(leaf.stance);
             }
         }
-        Ok((e, "tree"))
+        Ok((e, "tree", None))
     } else {
         let trace = traverse(tree, ctx, llm).await?;
         let target = tree.leaves.get(&trace.leaf).map_or(0.0, |l| {
             stance_dir(l.stance) * l.weight_at(ctx)
         });
-        Ok((target, "tree"))
+        Ok((target, "tree", Some(trace)))
     }
 }
 
@@ -932,6 +951,7 @@ time,open,high,low,close,volume
             holidays_path: None,
             folds: 1,
             aux_paths: Vec::new(),
+            decision_traces_path: None,
         }
     }
 
@@ -1254,5 +1274,37 @@ time,open,high,low,close,volume
         assert_eq!(report.n_round_trips, 1);
         assert_relative_eq!(report.trades[0].entry_px, 10.0);
         assert_relative_eq!(report.trades[0].max_abs_pos, 1.0);
+    }
+
+    #[tokio::test]
+    async fn decision_traces_written_when_path_set_and_report_unchanged() {
+        // 两跑:None vs Some——SimReport serde 串必须完全相等(行为零变锁);
+        // Some 跑的文件每行可反序列化为 Trace 且 path 非空。
+        let tree_f = write_tree_yaml(ENTER_HOLD_EXIT_TREE);
+        let bars_f = write_rising_bars_csv();
+
+        let out_f1 = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+        let mut cfg1 = make_cfg(&tree_f, &bars_f, &out_f1, None);
+        cfg1.decision_traces_path = None;
+        let r1 = run_sim(&cfg1, &LlmEvaluator::Disabled, false).await.unwrap();
+
+        let dt = tempfile::Builder::new().suffix(".jsonl").tempfile().unwrap();
+        let out_f2 = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+        let mut cfg2 = make_cfg(&tree_f, &bars_f, &out_f2, None);
+        cfg2.decision_traces_path = Some(dt.path().to_path_buf());
+        let r2 = run_sim(&cfg2, &LlmEvaluator::Disabled, false).await.unwrap();
+
+        assert_eq!(
+            serde_json::to_string(&r1).unwrap(),
+            serde_json::to_string(&r2).unwrap(),
+            "report must be identical regardless of decision trace emission"
+        );
+        let txt = std::fs::read_to_string(dt.path()).unwrap();
+        let lines: Vec<_> = txt.lines().collect();
+        assert!(!lines.is_empty());
+        for l in &lines {
+            let tr: crate::engine::trace::Trace = serde_json::from_str(l).unwrap();
+            assert!(!tr.path.is_empty(), "trace path must be recorded");
+        }
     }
 }

@@ -87,6 +87,7 @@ async fn end_to_end_uptrend_yields_positive_long_edge() {
         holidays_path: None,
         folds: 3,
         aux_paths: vec![],
+        decision_traces_path: None,
     };
 
     let report = run(&cfg, &LlmEvaluator::Disabled).await.unwrap();
@@ -163,6 +164,7 @@ async fn run_llm_e2e(ev: &LlmEvaluator) -> rquant::report::Report {
         holidays_path: None,
         folds: 0,
         aux_paths: vec![],
+        decision_traces_path: None,
     };
     run(&cfg, ev).await.unwrap()
 }
@@ -200,6 +202,7 @@ async fn soft_mode_yields_positive_engaged_edge() {
         holidays_path: None,
         folds: 3,
         aux_paths: vec![],
+        decision_traces_path: None,
     };
 
     let ev = LlmEvaluator::Stub(StubLlm {
@@ -250,6 +253,7 @@ async fn soft_traces_written_when_path_given() {
         holidays_path: None,
         folds: 0,
         aux_paths: vec![],
+        decision_traces_path: None,
     };
 
     let ev = LlmEvaluator::Stub(StubLlm {
@@ -286,6 +290,7 @@ async fn report_html_renders_with_curve() {
         holidays_path: None,
         folds: 0,
         aux_paths: vec![],
+        decision_traces_path: None,
     };
 
     let _report = run(&cfg, &LlmEvaluator::Disabled).await.unwrap();
@@ -330,6 +335,7 @@ async fn soft_report_html_renders() {
         holidays_path: None,
         folds: 0,
         aux_paths: vec![],
+        decision_traces_path: None,
     };
 
     let ev = LlmEvaluator::Stub(StubLlm {
@@ -395,6 +401,7 @@ async fn soft_quant_strength_engages() {
         holidays_path: None,
         folds: 0,
         aux_paths: vec![],
+        decision_traces_path: None,
     };
 
     let report = run_soft(&cfg, &LlmEvaluator::Disabled).await.unwrap();
@@ -427,6 +434,7 @@ async fn render_report_files_soft_end_to_end() {
         holidays_path: None,
         folds: 0,
         aux_paths: vec![],
+        decision_traces_path: None,
     };
 
     let ev = LlmEvaluator::Stub(StubLlm {
@@ -505,6 +513,7 @@ leaves:
         holidays_path: None,
         folds: 0,
         aux_paths: vec![],
+        decision_traces_path: None,
     };
 
     // Hard run
@@ -631,6 +640,7 @@ leaves:
         holidays_path: None,
         folds: 0,
         aux_paths: vec![("idx".into(), aux_f.path().to_path_buf())],
+        decision_traces_path: None,
     };
 
     let report = run(&cfg, &LlmEvaluator::Disabled).await.unwrap();
@@ -695,6 +705,7 @@ leaves:
         holidays_path: None,
         folds: 0,
         aux_paths: vec![],
+        decision_traces_path: None,
     };
     let sim_report = run_sim(&sim_cfg, &LlmEvaluator::Disabled, false)
         .await
@@ -839,6 +850,7 @@ leaves:
         holidays_path: None,
         folds: 0,
         aux_paths: vec![],
+        decision_traces_path: None,
     };
 
     // Hard mode
@@ -1093,6 +1105,7 @@ async fn sim_legacy_tree_compat() {
         holidays_path: None,
         folds: 0,
         aux_paths: vec![],
+        decision_traces_path: None,
     };
 
     // Legacy tree (no pos conditions) through run_sim must not panic and return Ok
@@ -1151,6 +1164,7 @@ leaves:
         holidays_path: None,
         folds: 0,
         aux_paths: vec![],
+        decision_traces_path: None,
     };
 
     run_sim(&cfg, &LlmEvaluator::Disabled, false)
