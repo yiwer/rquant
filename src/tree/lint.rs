@@ -357,10 +357,22 @@ leaves:
                 other => panic!("SERIES_FNS member '{src}' returned {other:?}, not Series — sync SERIES_FNS in lint.rs"),
             }
         }
-        // 代表性非成员：不得返回 Series
-        for src in ["count(close > 1, 2)", "barssince(close > 1)", "valuewhen(close > 1, close)", "abs(slope(close, 2))", "sigmoid(close)"] {
+        // 代表性非成员：不得返回 Series（T1 提升前的旧非成员，仍为 Scalar/Bool）
+        for src in ["count(close > 1, 2)", "barssince(close > 1)", "valuewhen(close > 1, close)"] {
             let v = eval(&parse_str(src).unwrap(), &ctx).unwrap();
             assert!(!matches!(v, Value::Series(_)), "'{src}' returned Series but is NOT in SERIES_FNS");
+        }
+        // T2 点态提升后：pointwise_fn(Series) → Series（实参含 Series 侧则结果为 Series）
+        for src in ["abs(slope(close, 2))", "sigmoid(close)", "abs(close)", "min(close, 3)", "max(close, 3)"] {
+            match eval(&parse_str(src).unwrap(), &ctx).unwrap() {
+                Value::Series(_) => {}
+                other => panic!("'{src}' pointwise(Series) should return Series, got {other:?}"),
+            }
+        }
+        // T2 点态提升：全标量实参仍 Scalar（守则锁）
+        for src in ["abs(pos)", "min(1, pos)", "max(1, pos)", "floor(2.9)", "sign(0)", "sqrt(9)", "exp(1)", "log(1)", "pow(2, 3)"] {
+            let v = eval(&parse_str(src).unwrap(), &ctx).unwrap();
+            assert!(!matches!(v, Value::Series(_)), "'{src}' all-scalar args should return Scalar, got Series");
         }
     }
 }

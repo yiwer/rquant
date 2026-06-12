@@ -148,6 +148,31 @@ fn resolve_series(name: &str, ctx: &Context) -> Result<Vec<f64>> {
     }
 }
 
+/// 一元点态提升：Series → 逐位 map；Scalar → 标量。NaN 自然传播（f(NaN)=NaN）。
+/// Bool → Err（与 as_scalar 同等拒绝）。
+fn pointwise1(v: &Value, f: impl Fn(f64) -> f64) -> Result<Value> {
+    match v {
+        Value::Scalar(x) => Ok(Value::Scalar(f(*x))),
+        Value::Series(s) => Ok(Value::Series(s.iter().map(|&x| f(x)).collect())),
+        Value::Bool(_) => Err(Error::Eval("expected number, got bool".into())),
+    }
+}
+
+/// 二元点态提升：≥1 侧 Series → 尾对齐逐位；双标量 → 标量；NaN 规则由闭包自带。
+/// Bool → Err（与 arith 同等拒绝）。
+fn pointwise2(a: &Value, b: &Value, f: impl Fn(f64, f64) -> f64) -> Result<Value> {
+    match (a, b) {
+        (Value::Bool(_), _) | (_, Value::Bool(_)) => {
+            Err(Error::Eval("expected number, got bool".into()))
+        }
+        (Value::Scalar(x), Value::Scalar(y)) => Ok(Value::Scalar(f(*x, *y))),
+        _ => {
+            let (xs, ys) = tail_align(a, b)?;
+            Ok(Value::Series(xs.iter().zip(&ys).map(|(&x, &y)| f(x, y)).collect()))
+        }
+    }
+}
+
 /// 算术逐位提升：≥1 侧 Series → 尾对齐逐位运算返回 Series（末位恒等于旧标量结果）；
 /// 双标量 → 标量（形态守则：lint L2 依赖）；Bool → Err（与 as_scalar 同等拒绝）。
 fn arith(op: &BinaryOp, lv: &Value, rv: &Value) -> Result<Value> {
@@ -396,24 +421,53 @@ fn eval_call(name: &str, args: &[Expr], ctx: &Context) -> Result<Value> {
         "std"     => { need(&vals, 2, name)?; Ok(Value::Series(indicators::std_roll(&as_series(&vals[0])?, as_usize(&vals[1])?))) }
         "sigmoid" => {
             need(&vals, 1, name)?;
-            Ok(Value::Scalar(1.0 / (1.0 + (-as_scalar(&vals[0])?).exp())))
+            pointwise1(&vals[0], |x| 1.0 / (1.0 + (-x).exp()))
         }
         "abs" => {
             need(&vals, 1, name)?;
-            Ok(Value::Scalar(as_scalar(&vals[0])?.abs()))
+            pointwise1(&vals[0], f64::abs)
         }
-        "max" | "min" => {
+        "max" => {
             need(&vals, 2, name)?;
-            let (a, b) = (as_scalar(&vals[0])?, as_scalar(&vals[1])?);
-            // f64::max(NaN, x) 返回 x，会吞掉预热弃权 → 显式传播 NaN
-            let v = if a.is_nan() || b.is_nan() {
-                f64::NAN
-            } else if name == "max" {
-                a.max(b)
-            } else {
-                a.min(b)
-            };
-            Ok(Value::Scalar(v))
+            // f64::max(NaN, x) 返回 x，会吞掉预热弃权 → 显式传播 NaN（逐位同等规则）
+            pointwise2(&vals[0], &vals[1], |a, b| {
+                if a.is_nan() || b.is_nan() { f64::NAN } else { a.max(b) }
+            })
+        }
+        "min" => {
+            need(&vals, 2, name)?;
+            // f64::min(NaN, x) 返回 x，会吞掉预热弃权 → 显式传播 NaN（逐位同等规则）
+            pointwise2(&vals[0], &vals[1], |a, b| {
+                if a.is_nan() || b.is_nan() { f64::NAN } else { a.min(b) }
+            })
+        }
+        // 新数学函数（点态提升）
+        "log" => {
+            need(&vals, 1, name)?;
+            // 自然对数；负定义域 → NaN（Rust 原生），恰合弃权语义
+            pointwise1(&vals[0], f64::ln)
+        }
+        "exp" => {
+            need(&vals, 1, name)?;
+            pointwise1(&vals[0], f64::exp)
+        }
+        "sqrt" => {
+            need(&vals, 1, name)?;
+            // 负数 → NaN（Rust 原生），恰合弃权语义
+            pointwise1(&vals[0], f64::sqrt)
+        }
+        "floor" => {
+            need(&vals, 1, name)?;
+            pointwise1(&vals[0], f64::floor)
+        }
+        "sign" => {
+            need(&vals, 1, name)?;
+            // 数学惯例：sign(0)=0（Rust signum(0.0)=1.0 不合惯例，故自写）；NaN→NaN 自然成立
+            pointwise1(&vals[0], |x| if x == 0.0 { 0.0 } else { x.signum() })
+        }
+        "pow" => {
+            need(&vals, 2, name)?;
+            pointwise2(&vals[0], &vals[1], f64::powf)
         }
         _ => Err(Error::Eval(format!("unknown function: {name}"))),
     }
@@ -894,5 +948,76 @@ mod tests {
         // 0-99 两标量 → Scalar(-99)；NaN>-99→false，其余 1>-99→true
         // bools=[F,F,T,T,T]，count 末 5=3；3==3→true
         assert_eq!(f("count(close - sma(close,3) > 0 - 99, 5) == 3"), Value::Bool(true));
+    }
+
+    /// T2：点态函数提升（abs/min/max/sigmoid）+ 数学补全（log/exp/sqrt/floor/sign/pow）
+    /// ctx_from_closes: open=close=high=low=c, volume=1.0（常数）; closes [1,2,3,4,5]
+    #[test]
+    fn pointwise_fns_lift_and_new_math() {
+        let ctx = ctx_from_closes(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+        let f = |src: &str| eval(&parse_str(src).unwrap(), &ctx).unwrap();
+
+        // abs 提升：abs(close - 3) 逐位 [|1-3|,|2-3|,|3-3|,|4-3|,|5-3|] = [2,1,0,1,2]
+        // >0 的位：[T,T,F,T,T] → count 末 5 = 4
+        assert_eq!(f("count(abs(close - 3) > 0, 5) == 4"), Value::Bool(true));
+
+        // abs 全标量仍 Scalar 形态：pos=0（Scalar），abs(pos-1)=abs(-1)=1.0 → Scalar
+        assert!(matches!(f("abs(pos - 1)"), Value::Scalar(_)));
+
+        // min 提升 + 广播：min(close, 3) 逐位 [min(1,3),min(2,3),min(3,3),min(4,3),min(5,3)]
+        // = [1,2,3,3,3]；==3 逐位 [F,F,T,T,T] → count=3
+        assert_eq!(f("count(min(close, 3) == 3, 5) == 3"), Value::Bool(true));
+
+        // max 提升 + 广播：max(close, 3) 逐位 [3,3,3,4,5]；==3 逐位 [T,T,T,F,F] → count=3
+        assert_eq!(f("count(max(close, 3) == 3, 5) == 3"), Value::Bool(true));
+
+        // min/max 双标量仍 Scalar（weight 表达式回归保障）
+        assert!(matches!(f("min(1, pos + 0.25)"), Value::Scalar(_)));
+        assert!(matches!(f("max(1, pos + 0.25)"), Value::Scalar(_)));
+
+        // 新函数标量形态：floor
+        // floor(2.9)=2；2==2→true
+        assert_eq!(f("floor(2.9) == 2"), Value::Bool(true));
+
+        // sign：数学惯例 sign(0)=0，sign(-3)=-1；(0-3)=-3，sign(-3)=-1；(0-1)=-1；-1==-1→true
+        assert_eq!(f("sign(0 - 3) == 0 - 1"), Value::Bool(true));
+        // sign(0)=0（数学惯例，Rust signum(0.0)=1.0 不同）
+        assert_eq!(f("sign(0) == 0"), Value::Bool(true));
+
+        // sqrt：sqrt(9)=3
+        assert_eq!(f("sqrt(9) == 3"), Value::Bool(true));
+
+        // pow：pow(2,10)=1024
+        assert_eq!(f("pow(2, 10) == 1024"), Value::Bool(true));
+
+        // log/exp：log(exp(2))≈2
+        assert_eq!(f("log(exp(2)) > 1.999 and log(exp(2)) < 2.001"), Value::Bool(true));
+
+        // 负定义域 → NaN → 弃权（比较恒 false）
+        // log(0-1)=log(-1)=NaN；NaN>(0-99)→false
+        assert_eq!(f("log(0 - 1) > 0 - 99"), Value::Bool(false));
+        // sqrt(0-1)=sqrt(-1)=NaN；NaN>(0-99)→false
+        assert_eq!(f("sqrt(0 - 1) > 0 - 99"), Value::Bool(false));
+
+        // 序列提升：log(close)=[ln1,ln2,ln3,ln4,ln5]=[0,ln2,ln3,ln4,ln5]
+        // log(close)-log(ref(close,1))：ref(close,1)=[1,2,3,4]（末截去1），
+        // log([2,3,4,5])-log([1,2,3,4])=[ln2,ln3,ln4,ln5]-[0,ln2,ln3,ln4]
+        // = [ln2-0,ln3-ln2,ln4-ln3,ln5-ln4] → 均 >0（对数递增）
+        // count 末 4 = 4；4==4→true
+        assert_eq!(
+            f("count(log(close) - log(ref(close,1)) > 0, 4) == 4"),
+            Value::Bool(true)
+        );
+
+        // min/max 的 NaN 显式传播在逐位下保持：
+        // sma(close,3)=[NaN,NaN,2,3,4]；min(close, sma)=[NaN,NaN,min(3,2),min(4,3),min(5,4)]
+        // = [NaN,NaN,2,3,4]；>0 逐位=[F,F,T,T,T]（NaN→false）→ count 末 5=3
+        assert_eq!(f("count(min(close, sma(close,3)) > 0, 5) == 3"), Value::Bool(true));
+
+        // sigmoid 提升（全标量回归）：sigmoid(0)=0.5
+        match f("sigmoid(0)") {
+            Value::Scalar(x) => assert!((x - 0.5).abs() < 1e-9),
+            o => panic!("expected Scalar from sigmoid(0), got {o:?}"),
+        }
     }
 }
