@@ -495,7 +495,6 @@ pub async fn run_sim(cfg: &BacktestConfig, llm: &LlmEvaluator, soft: bool) -> Re
 
     // 决策轨迹缓冲区刷盘
     if let Some(mut w) = decision_w {
-        use std::io::Write as _;
         w.flush()?;
     }
 
@@ -564,12 +563,12 @@ pub async fn run_sim(cfg: &BacktestConfig, llm: &LlmEvaluator, soft: bool) -> Re
 
 /// 从树取目标仓位：硬模式 = traverse → leaf stance×weight；软模式 = traverse_soft → Σ p·w·dir。
 /// 硬模式额外返回完整 Trace（供调用方写决策轨迹）；软模式返回 None。
-async fn tree_target<'a>(
+async fn tree_target(
     tree: &crate::tree::loader::Tree,
     ctx: &crate::features::context::Context,
     llm: &LlmEvaluator,
     soft: bool,
-) -> Result<(f64, &'a str, Option<crate::engine::trace::Trace>)> {
+) -> Result<(f64, &'static str, Option<crate::engine::trace::Trace>)> {
     if soft {
         let soft_trace = traverse_soft(tree, ctx, llm).await?;
         let mut e = 0.0_f64;
@@ -1306,5 +1305,46 @@ time,open,high,low,close,volume
             let tr: crate::engine::trace::Trace = serde_json::from_str(l).unwrap();
             assert!(!tr.path.is_empty(), "trace path must be recorded");
         }
+    }
+
+    #[tokio::test]
+    async fn decision_traces_skip_risk_override_bars() {
+        // 风控覆盖 bar 不遍历树 → 无 Trace 行;文件行数必须少于决策 bar 总数。
+        // 构造方式照抄 run_sim_stop_loss_fires(STOP_LOSS_TREE + 下跌 bars),
+        // 仅多设 decision_traces_path。
+        // 断言:1) run 正常完成且 trades 含 reason=="stop"
+        //      2) decision jsonl 行数 < SimStepRecord 总数 —— 用一个保守断言:
+        //         行数 < (traces_path 也设上,数其行数)
+        let tree_f = write_tree_yaml(STOP_LOSS_TREE);
+        let bars_f = write_falling_bars_csv();
+
+        let dt = tempfile::Builder::new().suffix(".jsonl").tempfile().unwrap();
+        let tr = tempfile::Builder::new().suffix(".jsonl").tempfile().unwrap();
+        let out_f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+        let mut cfg = make_cfg(&tree_f, &bars_f, &out_f, Some(&tr));
+        cfg.decision_traces_path = Some(dt.path().to_path_buf());
+        let report = run_sim(&cfg, &LlmEvaluator::Disabled, false).await.unwrap();
+
+        // 1) run 正常完成且 trades 含 reason=="stop"
+        assert!(
+            !report.trades.is_empty(),
+            "expected at least one trade, got 0"
+        );
+        let first_reason = &report.trades[0].reason;
+        assert_eq!(
+            first_reason, "stop",
+            "first trip reason should be 'stop', got '{first_reason}'"
+        );
+
+        // 2) decision jsonl 行数 < SimStepRecord 总数
+        let d_lines = std::fs::read_to_string(dt.path()).unwrap().lines().count();
+        let s_lines = std::fs::read_to_string(tr.path()).unwrap().lines().count();
+        assert!(d_lines > 0, "decision traces should have at least one line");
+        assert!(
+            d_lines < s_lines,
+            "risk-override bars must be absent from decision traces ({} vs {})",
+            d_lines,
+            s_lines
+        );
     }
 }
