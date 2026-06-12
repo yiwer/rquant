@@ -1,0 +1,140 @@
+# =====================================================================
+# 横截面持续型强度树 v1 — 组合层选择专用（与触发树分工）
+#
+# 分工教义（v4 扩样实验的架构级结论,docs/superpowers/2026-06-12-tree-v4-expanded-sample.md）:
+#   本树   = 选择层:"此刻该持有什么"——横截面 top-N 的连续打分,
+#            每根 bar 有定义、随因子平滑变化、跨标的可比;
+#   触发树 = 执行层:"何时动手"——单标的事件入场 + 持仓状态机
+#            (regime_adaptive v4,吊灯/冷却/S1 都属于执行域)。
+#   两者共享因子语言;本树**禁用**一切事件条件(crossover/反转 bar)与
+#   sim 状态量(打分模式 pos≡0、entry/极值/节流量 NaN——引用即假/弃权)。
+#
+# 连续性三来源:
+#   1. 全状态条件:EMA 排列、count 持续度、百分位带——对持续区间恒真;
+#   2. 分级叶:动量百分位四档权重(1.0/0.75/0.5/0.3),硬模式即阶梯分;
+#   3. 全分支 auto 软强度:--soft 下 E = Σp·w·dir 随因子平滑变化
+#      (组合层推荐 --soft;score_symbol 取 E 为横截面分)。
+#
+# 跨标的可比性:percentrank 自归一化(各标的对自己历史排位),阈值
+# 跨标的/跨周期同义;动量为核是 F-1 工作台的实证(mom20 RankIC 0.109/
+# t 2.59/单调 0.90,rsi 与其相关 0.80 故弃)。
+#
+# 层次(由粗到细,全部是"过滤-分级"而非"触发"):
+#   G1 波动闸: 自身波动分位 <q_vol_lo 死寂 / >q_vol_hi 失控 → flat
+#   G2 创伤闸: 距 n_dd 高点回撤超 dd 容忍 → flat(破位名出局)
+#   G3 趋势态: EMA 快慢排列 + 收盘在趋势线上方的持续度 ≥ thr_q
+#   G4 强度带: 动量自身分位四档 → 分级 long 叶
+#
+# 窗口算术(window=100/warmup=80 预算):mom_raw 耗 ref(n_mom=20) →
+# 有限尾 = 可见-20 ≥ 60 = n_rank ✓ 决策点处 percentrank 恒有值。
+# =====================================================================
+
+meta:
+  name: "横截面强度 · 动量分位选择 v1"
+  forward_window: 8             # 打分回测用;组合选择不消费 horizon
+  stances: [long, flat]         # 组合 top-N 只取 score>0,short 无用武之地
+
+params:
+  # ---- 周期 ----
+  n_mom: 20                     # 动量回看(F-1 实证窗)
+  n_rank: 60                    # 百分位自归一回看窗(受 window 预算约束,见头注)
+  n_q: 20                       # 趋势持续度统计窗
+  n_trend: 20                   # 趋势 EMA
+  n_fast: 8                     # 快 EMA
+  n_atr: 14
+  n_dd: 60                      # 创伤闸回看高点窗
+  # ---- 阈值(自归一化分位,跨标的同义;少量绝对值已注明) ----
+  q_vol_lo: 0.10                # 波动分位下限(承 v4 WFO 结论)
+  q_vol_hi: 0.99                # 上限近乎不封顶(同上)
+  dd_keep: 0.85                 # 创伤闸:close ≥ n_dd 高 × 0.85(回撤容忍 15%,绝对值)
+  thr_q: 0.55                   # 趋势持续度门槛:近 n_q 根多数收于趋势线上
+  thr_hi: 0.85                  # 动量分位三道门
+  thr_mid: 0.65
+  thr_lo: 0.45
+
+factors:
+  atr_v:     "atr(n_atr)"
+  ema_t:     "ema(close, n_trend)"
+  ema_f:     "ema(close, n_fast)"
+  vol_ratio: "atr_v / close"                       # 派生序列
+  vol_pct:   "percentrank(vol_ratio, n_rank)"      # 波动自身分位
+  mom_raw:   "close / ref(close, n_mom) - 1"       # n_mom 根动量(派生序列)
+  mom_pct:   "percentrank(mom_raw, n_rank)"        # 动量自身分位(核心强度因子)
+  trend_q:   "count(close > ema_t, n_q) / n_q"     # 趋势持续度 0..1(状态量,非事件)
+  hi_dd:     "highest(close, n_dd)"                # 创伤闸锚(含当前 bar——量距离用,非突破比较)
+
+root: gate_vol
+
+nodes:
+  # ---- G1 波动闸(自适应分位,承 v4) ----
+  gate_vol:
+    type: quant
+    branches:
+      - when: "vol_pct < q_vol_lo"
+        strength: "auto(0.05)"
+        goto: flat_idle
+        label: dead_vol
+      - when: "vol_pct > q_vol_hi"
+        strength: "auto(0.05)"
+        goto: flat_chaos
+        label: chaos_vol
+    default:
+      goto: gate_damage
+      label: vol_ok
+
+  # ---- G2 创伤闸:距高点回撤过深 = 破位名,不参与选择 ----
+  gate_damage:
+    type: quant
+    branches:
+      - when: "close < hi_dd * dd_keep"
+        strength: "auto(0.05)"
+        goto: flat_damaged
+        label: deep_drawdown
+    default:
+      goto: trend_state
+      label: intact
+
+  # ---- G3 趋势态(状态判定:排列 + 持续度,无事件) ----
+  trend_state:
+    type: quant
+    branches:
+      - when: "ema_f > ema_t and trend_q >= thr_q"
+        strength: "auto(0.08)"
+        goto: strength_bands
+        label: uptrend_state
+    default:
+      goto: flat_weak
+      label: no_trend
+
+  # ---- G4 强度带:动量分位分级(连续打分的主体) ----
+  strength_bands:
+    type: quant
+    branches:
+      - when: "mom_pct >= thr_hi"
+        strength: "auto(0.08)"
+        goto: leaf_s_hi
+        label: band_hi
+      - when: "mom_pct >= thr_mid"
+        strength: "auto(0.08)"
+        goto: leaf_s_mid
+        label: band_mid
+      - when: "mom_pct >= thr_lo"
+        strength: "auto(0.08)"
+        goto: leaf_s_lo
+        label: band_lo
+    default:
+      goto: leaf_s_base                             # 趋势确认但动量分位弱:基础持有分
+      label: band_base
+
+leaves:
+  # flat 族(路径区分:为什么出局)
+  flat_idle:    { stance: flat }    # 死寂
+  flat_chaos:   { stance: flat }    # 失控
+  flat_damaged: { stance: flat }    # 创伤(深回撤)
+  flat_weak:    { stance: flat }    # 无趋势态
+
+  # 分级强度叶:权重即横截面分(硬=阶梯,软=E 平滑)
+  leaf_s_hi:   { stance: long, weight: 1.0,  horizon: 8 }
+  leaf_s_mid:  { stance: long, weight: 0.75, horizon: 8 }
+  leaf_s_lo:   { stance: long, weight: 0.5,  horizon: 8 }
+  leaf_s_base: { stance: long, weight: 0.3,  horizon: 8 }
