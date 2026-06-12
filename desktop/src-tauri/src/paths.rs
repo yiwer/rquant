@@ -52,8 +52,8 @@ mod tests {
         let ws = Workspace::new(std::path::PathBuf::from("E:/rust-app/rquant"));
         assert!(ws.paper_dir().ends_with("paper"));
         assert!(ws.deploy_dir().ends_with("deploy"));
-        assert!(ws.journal_path().ends_with(".rquant-desktop/journal/paper-journal.jsonl")
-            || ws.journal_path().ends_with(".rquant-desktop\\journal\\paper-journal.jsonl"));
+        // Path::ends_with 按组件比较,/ 与 \ 在 Windows 解析为相同组件序列
+        assert!(ws.journal_path().ends_with(".rquant-desktop/journal/paper-journal.jsonl"));
     }
 
     #[test]
