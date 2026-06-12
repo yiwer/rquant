@@ -68,6 +68,32 @@ close[-3]    # 三根前收盘价
 
 括号 `( )` 可改变优先级。
 
+### 算术运算的逐位提升（DSL Phase-2）
+
+算术运算符（`+` `-` `*` `/`）和一元负号（`-x`）遵循**逐位提升**规则：
+
+| 两侧形态 | 结果形态 | 说明 |
+|---|---|---|
+| Scalar ∘ Scalar | Scalar | 双标量保持标量，lint 形态推断依赖此守则 |
+| Series ∘ Scalar（或反） | Series | 标量广播为全序列，逐位运算 |
+| Series ∘ Series | Series | 尾对齐（取右端公共长度），逐位运算 |
+| Bool 参与算术 | 错误 | `(close > 1) + 1` 报错，与旧版同等拒绝 |
+
+**末位恒等定理**：提升后结果序列的最后一个元素，恒等于旧版将两侧各取末位后的标量运算值——标量消费者（`when`/`strength`/叶子 `weight`）只看末位，升级语义零破坏，旧 YAML 无需修改。
+
+**NaN 传播**：逐位算术中，某位 NaN（如指标暖机期）→ 该位结果 NaN；进入 `count`/`barssince` 条件后，NaN 位自动弃权（不计入 count，不触发 barssince）。
+
+**新能力（Phase-2 解锁）**：算术结果（派生序列）可直接送入窗口函数和逐位条件，无需任何转换：
+
+```yaml
+# 成交额序列进 sma（滚动 VWAP 地基）
+when: "sma(close * volume, 20) / sma(volume, 20) > sma(close, 20)"
+# 派生序列进逐位条件
+when: "count((high - low) > atr(14), 10) >= 3"
+# 对数收益进 std（zscore 归一化）
+when: "(log(close) - log(ref(close,1))) / std(log(close), 60) > 1.5"
+```
+
 ### 归约语义（Series → 标量）
 
 表达式的最终值类型需满足当前上下文：
@@ -120,14 +146,22 @@ BinaryOp::Ne => { let (a,b) = ...; !a.is_nan() && !b.is_nan() && a != b }
 
 > **标量上下文语义零变**：highest/lowest/std/slope 现在返回 Series，但在比较表达式（`when: "highest(high,20) < close"`）外层仍会取末位标量——数值与旧版完全相同，旧 YAML 无需修改。新能力：在 `count`/`barssince` 的逐位条件内，它们作为滚动序列逐位比较（Task1 解锁）。
 
-### 标量函数（返回 `Scalar`，单个 f64）
+### 标量/点态函数（输入全标量 → Scalar；含序列 → 逐位提升为 Series）
 
-| 函数 | 参数 | 不足时 | 说明 | 示例 |
+以下函数均支持**点态提升**：当任一实参为 Series 时，结果升为 Series（逐位运算，NaN 自然传播）；全为 Scalar 时结果仍为 Scalar（lint 形态推断依赖此守则，`weight` 表达式不会意外变 Series）。
+
+| 函数 | 参数 | NaN 行为 | 说明 | 示例 |
 |---|---|---|---|---|
-| `sigmoid(x)` | x: Scalar | — | 1/(1+e^−x)，常用于 strength 表达式 | `sigmoid((close - sma(close,20)) / 0.5)` |
-| `abs(x)` | x: Scalar | — | 绝对值 | `abs(close - entry_price)` |
-| `max(a, b)` | a, b: Scalar | 任一 NaN → NaN | 较大值；**显式 NaN 传播**（不吃弃权） | `max(pos, 0.25)` |
-| `min(a, b)` | a, b: Scalar | 任一 NaN → NaN | 较小值；NaN 传播同 max | `min(1, pos + 0.25)` |
+| `sigmoid(x)` | x: Scalar 或 Series | NaN 传播 | 1/(1+e^−x)，常用于 strength；**点态提升** | `sigmoid((close - sma(close,20)) / 0.5)` |
+| `abs(x)` | x: Scalar 或 Series | NaN 传播 | 绝对值；**点态提升** | `abs(close - sma(close,20))` |
+| `max(a, b)` | a, b: Scalar 或 Series | 任一 NaN → NaN（显式传播，不吃弃权）| 较大值；**点态提升** | `max(pos, 0.25)` |
+| `min(a, b)` | a, b: Scalar 或 Series | 任一 NaN → NaN（显式传播）| 较小值；**点态提升** | `min(1, pos + 0.25)` |
+| `log(x)` | x: Scalar 或 Series | 负域/零 → NaN（弃权） | 自然对数（底 e）；负定义域返回 NaN，不报错；**点态提升** | `log(close)` |
+| `exp(x)` | x: Scalar 或 Series | NaN 传播 | 自然指数 e^x；**点态提升** | `exp(slope(close,5))` |
+| `sqrt(x)` | x: Scalar 或 Series | 负域 → NaN（弃权） | 平方根；负输入返回 NaN；**点态提升** | `sqrt(abs(close - ref(close,1)))` |
+| `floor(x)` | x: Scalar 或 Series | NaN 传播 | 向下取整；**点态提升** | `floor(atr(14) * 10)` |
+| `sign(x)` | x: Scalar 或 Series | NaN 传播 | 符号函数：`x>0→1`，`x<0→−1`，**`x=0→0`**（数学惯例，非 Rust `signum`）；**点态提升** | `sign(close - sma(close,20))` |
+| `pow(a, b)` | a, b: Scalar 或 Series | NaN 传播 | 幂运算 a^b（对应 Rust `f64::powf`）；**点态提升** | `pow(close / ref(close,1), 252)` |
 | `count(cond, n)` | cond: 布尔表达式, n: int≥1 | 序列 < n → NaN | 末 n 位中 cond 为 true 的个数；cond **逐位**求值（见下节） | `count(close > ema(close,20), 10)` |
 | `barssince(cond)` | cond: 布尔表达式 | 从未 true → NaN | 距最近一次 cond=true 的 bar 数（当前 bar=0） | `barssince(crossover(close, sma(close,20)))` |
 | `valuewhen(cond, expr[, k])` | cond: 布尔表达式, expr: Series/Scalar, k: int≥0（默认 0） | 从未触发或次数不足 → NaN 弃权 | 最近第 k+1 次 cond=true 处的 expr 值（k=0 = 最近一次）；常用于事件锚定（回踩价、突破价） | `valuewhen(crossover(close, ema(close,8)), close)` |
@@ -164,6 +198,27 @@ BinaryOp::Ne => { let (a,b) = ...; !a.is_nan() && !b.is_nan() && a != b }
 窗口纪律：布尔序列长度 < n（或 `barssince`/`valuewhen` 从未触发）→ 返回 NaN，外层比较自动弃权走 default。
 
 > **空转陷阱**：条件两侧均为标量形（如 `count(bars_held > 2, 5)`），逐位序列长度为 1，n>1 时 count 恒弃权。加载期 lint 会对此类写法告警（L2 规则，见"加载期 lint"一节）。
+
+### 派生序列惯用法（DSL Phase-2 新增）
+
+以下三条惯用法均依赖 Phase-2 算术/点态提升，已在合成数据上验证语义正确（无运行错误，结果符合数学预期）。
+
+```yaml
+# 滚动 VWAP（成交量加权均价，n 根）
+# 验证：volume 为常数时 sma(close*volume, n)/sma(volume, n) == sma(close, n)（数学恒等）
+factors:
+  vwap_20: "sma(close * volume, 20) / sma(volume, 20)"
+
+# 真实波幅计数（高低差大于 ATR 的 bar 计数，需真实 OHLC 数据；纯平 bar 时 high-low=0 全弃权）
+# 注：high-low 是派生序列（phase-2 提升），可直接进 count 逐位条件——无需任何转换
+when: "count((high - low) > atr(14), 10) >= 3"
+
+# 对数收益 zscore（自归一化阈值地基）
+# log(close)-log(ref(close,1))=ln(close/prev_close) 是对数收益序列（phase-2 提升）
+# std(log(close), 60) 是滚动标准差序列，两者做序列除法得 zscore 序列
+# 预热期（< 60 根）std 为 NaN → 除以 NaN → NaN → 比较弃权（安全）
+when: "(log(close) - log(ref(close,1))) / std(log(close), 60) > 1.5"
+```
 
 ### 价格行为惯用法
 
@@ -209,6 +264,8 @@ when: "close < valuewhen(crossover(close, ema(close,8)), close) * 0.99"
 **触发条件**：`count`/`barssince`/`valuewhen` 的条件表达式两侧均为标量形（数值字面量、持仓状态量 `pos`/`bars_held` 等），推断布尔序列长度必然为 1——`count(n>1)` 恒弃权、`barssince`/`valuewhen` 仅看 1 个位置。
 
 **不触发**：条件含任意 Series 形一侧（`close`/`ema(...)`/`highest(...)`/`ref(...)` 等），逐位序列长度来自数据窗口。
+
+**形态推断覆盖提升后的算术与点态函数**：L2 的静态形态推断已完整跟踪 Phase-2 的逐位提升规则——`close - open`、`abs(close - sma(close,3))`、`log(close)` 等派生序列在条件中被正确识别为 Series 形，不会产生误报；`pos * 2`、`abs(pos)`、`floor(2.9)` 等全标量路径仍被识别为 Scalar 形并正常告警。
 
 ---
 

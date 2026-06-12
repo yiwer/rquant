@@ -314,7 +314,7 @@ factors:
 
 - 内置标识符：`close` `open` `high` `low` `volume` `hour` `minute` `dow`
 - **持仓状态标识符（sim 专用保留名）**：`pos` `entry_price` `bars_held` `unreal_pnl` `max_price_since_entry` `min_price_since_entry`
-- 内置函数名：`sma` `ema` `wma` `rsi` `atr` `slope` `ref` `highest` `lowest` `crossover` `crossunder` `macd_line` `macd_signal` `macd_hist` `std` `sigmoid` `auto` `abs` `max` `min` `count` `barssince` `valuewhen`
+- 内置函数名：`sma` `ema` `wma` `rsi` `atr` `slope` `ref` `highest` `lowest` `crossover` `crossunder` `macd_line` `macd_signal` `macd_hist` `std` `sigmoid` `auto` `abs` `max` `min` `count` `barssince` `valuewhen` `log` `exp` `sqrt` `floor` `sign` `pow`
 
 与上述任一名字冲突，或在同一块中重复定义，均在加载时报错。
 
