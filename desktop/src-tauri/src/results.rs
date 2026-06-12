@@ -60,6 +60,10 @@ pub fn equity_series(ws: &Workspace, id: &str) -> Result<Vec<EquityPointDto>, St
 }
 
 pub fn trades(ws: &Workspace, id: &str) -> Result<Vec<TradeDto>, String> {
+    let meta = crate::runs::read_meta(ws, id).ok_or_else(|| format!("run {} not found", id))?;
+    if !meta.kind.starts_with("sim") {
+        return Err(format!("trades not available for {} runs", meta.kind));
+    }
     let config = runs::read_config(ws, id).map_err(|e| e.to_string())?;
     let rp = runs::run_paths(ws, id);
     let txt = std::fs::read_to_string(&rp.result_json).map_err(|e| e.to_string())?;
@@ -132,5 +136,14 @@ mod tests {
         for t in &ts {
             assert!((t.pnl_amount - 100000.0 * t.trip_return).abs() < 1e-6);
         }
+    }
+
+    #[test]
+    fn sim_soft_summary_parses_ok() {
+        let (_td, w, id) = run_one("sim_soft");
+        let s = run_summary(&w, &id).unwrap();
+        assert_eq!(s.meta.kind, "sim_soft");
+        assert!(s.total_return.is_some());
+        assert!(s.raw.is_none());
     }
 }
