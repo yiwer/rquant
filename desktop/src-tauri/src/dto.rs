@@ -154,3 +154,183 @@ pub struct GateDto {
     pub gate: String,
     pub message: Option<String>,
 }
+
+// ───────────────────────── M2: 回测中心 / 数据工作台 ─────────────────────────
+
+/// 回测运行配置(留档 config.json 原文;Deserialize 供读回与重跑)。
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct BacktestConfigDto {
+    /// 工作区相对路径(examples/.. 或 deploy/..)。
+    pub tree_path: String,
+    /// 主行情 CSV(工作区相对)。fetch 置时由任务先拉取生成。
+    pub primary_path: String,
+    /// "sim_hard" | "sim_soft" | "score_hard" | "score_soft"
+    pub mode: String,
+    pub cost_bps: f64,
+    pub warmup: u32,
+    pub window: u32,
+    /// 展示层初始资金(元);默认 100000。引擎 nav 语义不感知此值。
+    pub initial_capital: f64,
+    /// 可选:运行前刷新行情。
+    pub fetch: Option<FetchSpecDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct FetchSpecDto {
+    pub symbol: String,
+    /// 分钟:15/60;日线:240。
+    pub scale: u32,
+    pub datalen: u32,
+    /// "qfq" | "none"
+    pub adjust: String,
+}
+
+/// 留档条目(meta.json;Deserialize 供列表读回)。
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RunMetaDto {
+    pub id: String,
+    /// 同 BacktestConfigDto.mode。
+    pub kind: String,
+    /// 用户可改名;默认 "<树名> × <primary 文件名>"。
+    pub name: String,
+    pub tree_name: String,
+    pub created: String,
+    pub ok: bool,
+    pub error: Option<String>,
+}
+
+/// 概览指标卡(sim 全量;score 仅 kind/tree_name + raw)。
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct RunSummaryDto {
+    pub meta: RunMetaDto,
+    pub config: BacktestConfigDto,
+    pub total_return: Option<f64>,
+    pub max_drawdown: Option<f64>,
+    pub n_round_trips: Option<u32>,
+    pub win_rate: Option<f64>,
+    pub avg_hold_bars: Option<f64>,
+    pub turnover: Option<f64>,
+    pub buy_and_hold: Option<f64>,
+    pub sharpe: Option<f64>,
+    /// 资金换算(严格口径):initial_capital×(1+total_return) / ×total_return。
+    pub final_equity: Option<f64>,
+    pub net_pnl: Option<f64>,
+    /// score 模式:result.json 原样(UI 原始视图/简版概览用)。sim 模式 None。
+    #[ts(type = "unknown")]
+    pub raw: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct EquityPointDto {
+    pub t: String,
+    pub nav: f64,
+    /// nav × initial_capital。
+    pub equity: f64,
+    pub pos: f64,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct TradeDto {
+    pub entry_t: String,
+    pub exit_t: String,
+    pub entry_px: f64,
+    pub exit_px: f64,
+    pub max_abs_pos: f64,
+    pub trip_return: f64,
+    pub bars_held: u32,
+    pub reason: String,
+    /// 资金×trip_return——单利近似口径(UI 注明)。
+    pub pnl_amount: f64,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct ReplayStepDto {
+    pub node_id: String,
+    pub label: String,
+    pub confidence: f64,
+    pub rationale: String,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct ReplayFrameDto {
+    pub t: String,
+    pub leaf: String,
+    pub stance: String,
+    pub path: Vec<ReplayStepDto>,
+    /// sim 模式由 SimStepRecord 对齐补充;score 模式 None。
+    pub target: Option<f64>,
+    pub pos: Option<f64>,
+    pub nav: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct FactorValueDto {
+    pub name: String,
+    /// 非有限→None(NaN 弃权语义如实呈现)。
+    pub value: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct BarDto {
+    pub t: String,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+    pub volume: f64,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct FactorPointDto {
+    pub t: String,
+    pub value: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct CsvInfoDto {
+    /// 工作区相对路径。
+    pub path: String,
+    /// 解析失败→None(坏文件如实列出)。
+    pub rows: Option<u32>,
+    pub first_t: Option<String>,
+    pub last_t: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct UniverseEntryDto {
+    pub symbol: String,
+    pub primary: String,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct UniverseInfoDto {
+    pub path: String,
+    pub name: String,
+    /// deploy/ 下=true(只读)。
+    pub frozen: bool,
+    pub entries: Vec<UniverseEntryDto>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct TreeInfoDto {
+    pub path: String,
+    /// load 失败→None + error。
+    pub name: Option<String>,
+    pub frozen: bool,
+    pub error: Option<String>,
+}

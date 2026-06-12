@@ -11,6 +11,7 @@ pub mod manual_run;
 pub mod paths;
 pub mod readers;
 pub mod runlog;
+pub mod runs;
 pub mod schtask;
 pub mod tasks;
 
