@@ -25,8 +25,8 @@ fn read_all(ws: &Workspace) -> Vec<JournalEntry> {
     txt.lines().filter_map(|l| serde_json::from_str(l).ok()).collect()
 }
 
-// TODO(T11): 两处调用方(overview + task 完成回调)并发时存在 lost-update 窗口
-// (rename 保护主文件不损坏;下次 overview 刷新幂等补录)。引入第二个调用者时加 Mutex。
+// TODO(M2+): 当前唯一调用方是 overview(commands.rs);若引入第二个写者,读-改-写
+// 周期需加 Mutex 防 lost-update(rename 已保护主文件不损坏;overview 刷新可幂等补录)。
 /// 追加条目(按 (book, state_time) 去重,保持原有顺序,新条目排尾)。
 pub fn append_entries(ws: &Workspace, new: &[JournalEntry]) -> anyhow::Result<()> {
     let mut all = read_all(ws);
