@@ -42,13 +42,7 @@ export default function KlineSignalsView({
     return () => { cancelled = true; };
   }, [runId, primaryPath, isSim]);
 
-  if (loading) return <Spin />;
-
-  if (!bars.length) return <Typography.Text type="secondary">行情 CSV 不可读({primaryPath})</Typography.Text>;
-
-  const barTimes = new Set(bars.map((b) => b.t));
-  const visibleCount = trades.filter((t) => barTimes.has(t.entry_t) || barTimes.has(t.exit_t)).length;
-
+  // All hooks must run unconditionally before any early return.
   const markers = useMemo<TradeMarker[]>(
     () => trades.flatMap((t) => [
       { t: t.entry_t, price: t.entry_px, kind: "entry" as const, label: "买" },
@@ -56,6 +50,13 @@ export default function KlineSignalsView({
     ]),
     [trades],
   );
+
+  if (loading) return <Spin />;
+
+  if (!bars.length) return <Typography.Text type="secondary">行情 CSV 不可读({primaryPath})</Typography.Text>;
+
+  const barTimes = new Set(bars.map((b) => b.t));
+  const visibleCount = trades.filter((t) => barTimes.has(t.entry_t) || barTimes.has(t.exit_t)).length;
 
   return (
     <div>
