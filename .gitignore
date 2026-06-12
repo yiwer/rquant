@@ -11,6 +11,9 @@ test_output.log
 # 实验临时数据
 /tmps
 
+# 桌面端留档（journal/回测 runs,可再生）
+/.rquant-desktop
+
 # 头脑风暴可视化伴侣会话（mockup/事件,不入库）
 /.superpowers
 

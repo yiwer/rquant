@@ -21,3 +21,6 @@ sha2 = "0.10"
 [dev-dependencies]
 approx = "0.5"
 tempfile = "3"
+
+[workspace]
+members = ["desktop/src-tauri"]
