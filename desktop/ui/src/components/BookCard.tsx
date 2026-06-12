@@ -24,7 +24,7 @@ export default function BookCard({ card }: { card: BookCardDto }) {
         <>
           <Statistic title="nav" value={card.nav ?? 0} precision={4} />
           <Typography.Text type="secondary">
-            持仓 {card.pos} · 回撤 {((card.max_drawdown ?? 0) * 100).toFixed(2)}% · {card.state_time}
+            持仓 {card.pos?.toFixed(2) ?? "—"} · 回撤 {((card.max_drawdown ?? 0) * 100).toFixed(2)}% · {card.state_time}
           </Typography.Text>
         </>
       )}

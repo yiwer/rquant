@@ -25,7 +25,7 @@ export default function RunStatusPanel({
           schtask: {schtask ? `${schtask.status ?? "?"} · 下次 ${schtask.next_run ?? "?"}` : "未检测到 rquant-paper"}
         </Typography.Text>
       </div>
-      <a onClick={onOpenLog}>查看 run.log</a>
+      <Typography.Link onClick={onOpenLog}>查看 run.log</Typography.Link>
     </Card>
   );
 }

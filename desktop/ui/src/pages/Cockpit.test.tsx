@@ -1,10 +1,14 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
+import { afterEach } from "vitest";
 import { HashRouter } from "react-router-dom";
 import { App as AntApp } from "antd";
 import Cockpit from "./Cockpit";
 import { useCockpit } from "../stores/cockpit";
 import type { OverviewDto } from "@bindings/OverviewDto";
+
+const realApi = useCockpit.getState().api;
+afterEach(() => useCockpit.setState({ api: realApi, overview: null, loading: false, error: null }));
 
 const OVERVIEW: OverviewDto = {
   cards: [
