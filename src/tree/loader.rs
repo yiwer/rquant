@@ -175,6 +175,74 @@ pub fn load_tree_file(path: &Path) -> Result<Tree> {
     load_tree_str(&src)
 }
 
+/// 内部助手：将 params 物化为常量、将 factors 按文档序逐个代入（先序因子可引用已定义者），
+/// 返回两份产物：
+///   1. `env`：含 `Expr::Cached` 包裹的完整替换环境，供加载路径继续代入节点/叶子条件。
+///   2. `raw`：与 `env` 同序的 `(因子名, 已代入、外层未包 Cached 的 Expr（引用先序因子处可含内嵌 Cached(slot,..)）)` 列表，
+///      供 `resolve_factor_exprs` 直接返回给调用方（独立求值路径无需缓存包裹）。
+///
+/// 两份产物同源，保证不存在两份代入逻辑。
+type FactorEnvResult = (HashMap<String, Expr>, Vec<(String, Expr)>);
+fn build_factor_env(
+    params: &HashMap<String, f64>,
+    factors: &serde_yaml::Mapping,
+) -> Result<FactorEnvResult> {
+    let mut env: HashMap<String, Expr> = HashMap::new();
+    for (k, v) in params {
+        check_name(k, &env)?;
+        env.insert(k.clone(), Expr::Number(*v));
+    }
+    let mut raw: Vec<(String, Expr)> = Vec::with_capacity(factors.len());
+    for (slot, (k, v)) in (0_u32..).zip(factors) {
+        let name = k
+            .as_str()
+            .ok_or_else(|| Error::Tree("factor name must be a string".into()))?;
+        let src_expr = v
+            .as_str()
+            .ok_or_else(|| Error::Tree(format!("factor '{name}' expr must be a string")))?;
+        check_name(name, &env)?;
+        let e = parse_str(src_expr)
+            .map_err(|e| Error::Tree(format!("factor '{name}': {e}")))?;
+        let e = substitute(&e, &env);
+        check_no_unknown_idents(&e, &format!("factor '{name}'"))?;
+        // raw に代入済み（Cached なし）を記録 — resolve_factor_exprs 用
+        raw.push((name.to_string(), e.clone()));
+        // 包缓存槽：所有引用处共享同一槽位 → 每个 Context 只真算一次（params 是字面量，不包）。
+        // INVARIANT：槽位 id 必须全树唯一（本计数器は唯一分配点）——id 撞车会造成静默値串用。
+        // 布尔因子同样包裹：硬 when 多处引用照常命中；fuzzy strength 路径对 Cached 透传重算
+        //（fuzzy 真值依赖 scale，不消费 Value 缓存），正确性不受影响、只是该路径无缓存收益。
+        let cached = Expr::Cached(slot, Box::new(e));
+        env.insert(name.to_string(), cached);
+    }
+    Ok((env, raw))
+}
+
+// TODO(M3+): 顶层键拼写错误(如 "factor:"/"paramss:")会被宽松解析静默吞掉→返回空表,
+// 桌面端 UI 将显示"该树无 factors 块"。可加后解析启发式告警(对照原文顶层键)。
+
+/// 最小 YAML 结构，仅含 `params` 和 `factors`——用于 resolve_factor_exprs 的部分解析。
+/// 无需完整 TreeSpec（后者要求节点/叶子/label 等字段），保证宽松 YAML 也可解析。
+#[derive(serde::Deserialize)]
+struct FactorOnlySpec {
+    #[serde(default)]
+    params: HashMap<String, f64>,
+    #[serde(default)]
+    factors: serde_yaml::Mapping,
+}
+
+/// 解析树 YAML 的 params/factors 并完成代入(params→常量、先序因子→内联),
+/// 返回文档序 (因子名, 已代入 Expr) 列表,供独立求值
+/// (桌面端决策回放因子表/K线因子叠加,spec §4-2)。
+/// 注意:引用先序因子处会内嵌 Cached(slot,..) 节点,槽位每次调用从 0 起分配——
+/// **不要把两次调用的结果对同一个 Context 求值**(槽位撞车=静默串值);
+/// 同一次调用的列表共享一个 Context 求值是安全且高效的(先序因子缓存命中)。
+/// 与 load_tree_str 的物化语义同源:共享同一内部助手,禁止复制粘贴两份代入逻辑。
+pub fn resolve_factor_exprs(yaml: &str) -> Result<Vec<(String, crate::dsl::ast::Expr)>> {
+    let spec: FactorOnlySpec = serde_yaml::from_str(yaml)?;
+    let (_env, raw) = build_factor_env(&spec.params, &spec.factors)?;
+    Ok(raw)
+}
+
 /// 以参数覆盖加载决策树（override 键必须存在于树 params 块；既有全部校验保留）。
 ///
 /// 验证规则：root 必须是节点；所有 goto 目标已定义；从 root 可达所有节点；
@@ -196,30 +264,8 @@ pub fn load_tree_str_with_overrides(
     let stances: HashSet<Stance> = spec.meta.stances.iter().copied().collect();
 
     // Build substitution environment: params first, then factors (document order).
-    let mut env: HashMap<String, Expr> = HashMap::new();
-    for (k, v) in &spec.params {
-        check_name(k, &env)?;
-        env.insert(k.clone(), Expr::Number(*v));
-    }
-    for (slot, (k, v)) in (0_u32..).zip(&spec.factors) {
-        let name = k
-            .as_str()
-            .ok_or_else(|| Error::Tree("factor name must be a string".into()))?;
-        let src_expr = v
-            .as_str()
-            .ok_or_else(|| Error::Tree(format!("factor '{name}' expr must be a string")))?;
-        check_name(name, &env)?;
-        let e = parse_str(src_expr)
-            .map_err(|e| Error::Tree(format!("factor '{name}': {e}")))?;
-        let e = substitute(&e, &env);
-        check_no_unknown_idents(&e, &format!("factor '{name}'"))?;
-        // 包缓存槽：所有引用处共享同一槽位 → 每个 Context 只真算一次（params 是字面量，不包）。
-        // INVARIANT：槽位 id 必须全树唯一（本计数器是唯一分配点）——id 撞车会造成静默值串用。
-        // 布尔因子同样包裹：硬 when 多处引用照常命中；fuzzy strength 路径对 Cached 透传重算
-        //（fuzzy 真值依赖 scale，不消费 Value 缓存），正确性不受影响、只是该路径无缓存收益。
-        let e = Expr::Cached(slot, Box::new(e));
-        env.insert(name.to_string(), e);
-    }
+    // Uses shared helper — same materialization logic as resolve_factor_exprs.
+    let (env, _raw) = build_factor_env(&spec.params, &spec.factors)?;
 
     let mut leaves = HashMap::new();
     for (id, l) in &spec.leaves {
@@ -1132,6 +1178,71 @@ leaves:
         assert!(load_tree_str(&yaml("min")).is_err());
         assert!(load_tree_str(&yaml("count")).is_err());
         assert!(load_tree_str(&yaml("barssince")).is_err());
+    }
+
+    #[test]
+    fn resolve_factor_exprs_substitutes_params_and_prior_factors() {
+        let yaml = r#"
+meta: { name: "t", forward_window: 4, stances: [long, flat] }
+params: { n: 3.0 }
+factors:
+  base: "sma(close, n)"
+  derived: "base / close"
+root: r
+nodes:
+  r:
+    type: quant
+    branches:
+      - when: "derived > 1.0"
+        goto: l
+    default: { goto: f }
+leaves:
+  l: { stance: long }
+  f: { stance: flat }
+"#;
+        let factors = resolve_factor_exprs(yaml).unwrap();
+        assert_eq!(factors.len(), 2);
+        assert_eq!(factors[0].0, "base");
+        assert_eq!(factors[1].0, "derived");
+        // 求值验证代入正确:5 根 close=10 → sma(close,3)=10 → derived=1.0
+        let bars: Vec<crate::data::bar::Bar> = (0..5)
+            .map(|i| crate::data::bar::Bar {
+                time: chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
+                    .unwrap()
+                    .and_hms_opt(9, 30 + i, 0)
+                    .unwrap(),
+                open: 10.0, high: 10.0, low: 10.0, close: 10.0, volume: 1.0,
+            })
+            .collect();
+        let ctx = crate::features::context::build_context(
+            &bars, &bars, &[], &std::collections::BTreeMap::new(), bars[4].time, 5,
+        );
+        let v = crate::dsl::eval::eval(&factors[1].1, &ctx).unwrap();
+        let last = match v {
+            crate::dsl::eval::Value::Scalar(x) => x,
+            crate::dsl::eval::Value::Series(s) => *s.last().unwrap(),
+            _ => panic!("unexpected value kind"),
+        };
+        assert!((last - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn resolve_factor_exprs_empty_factors_ok() {
+        let yaml = r#"
+meta: { name: "t", forward_window: 4, stances: [long, flat] }
+root: r
+nodes:
+  r:
+    type: quant
+    branches:
+      - when: "close > open"
+        goto: l
+    default: { goto: f }
+leaves:
+  l: { stance: long }
+  f: { stance: flat }
+"#;
+        assert!(resolve_factor_exprs(yaml).unwrap().is_empty());
     }
 
     #[test]

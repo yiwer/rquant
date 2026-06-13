@@ -135,10 +135,20 @@ pub fn read_paper_state(path: &Path, tree_name: &str) -> Result<Option<PaperStat
     Ok(Some(st))
 }
 
+/// 原子落盘：同目录写 .json.tmp 再 rename 替换（Windows MoveFileEx 替换语义，std 文档保证）。
+/// spec §7——半写状态文件不可能被 read_paper_state 观测为 corrupt。
+fn write_json_atomic(path: &Path, json: &str) -> Result<()> {
+    // 调用方须传 .json 路径;with_extension 替换的是最后一段扩展名。
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json)?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
 /// 将 paper state 写入文件（JSON pretty，人可读）。
 pub fn write_paper_state(path: &Path, st: &PaperState) -> Result<()> {
     let json = serde_json::to_string_pretty(st)?;
-    std::fs::write(path, json)?;
+    write_json_atomic(path, &json)?;
     Ok(())
 }
 
@@ -498,7 +508,7 @@ pub fn read_holdings_state(path: &Path, tree_name: &str) -> Result<Option<Holdin
 /// 将 holdings state 写入文件（JSON pretty，人可读）。
 pub fn write_holdings_state(path: &Path, st: &HoldingsState) -> Result<()> {
     let json = serde_json::to_string_pretty(st)?;
-    std::fs::write(path, json)?;
+    write_json_atomic(path, &json)?;
     Ok(())
 }
 
@@ -1788,5 +1798,54 @@ leaves:
             msg_empty.contains("corrupt"),
             "empty holdings state file must be treated as corrupt, got: {msg_empty}"
         );
+    }
+
+    #[test]
+    fn write_paper_state_is_atomic_and_overwrites() {
+        let td = tempfile::tempdir().unwrap();
+        let path = td.path().join("st.json");
+        let tree_name = "t".to_string();
+        let mk = |nav: f64| {
+            let mut acc = SimAccount::default();
+            acc.nav = nav;
+            PaperState {
+                version: 1,
+                tree_name: tree_name.clone(),
+                last_time: None,
+                account: acc.snapshot(),
+            }
+        };
+        write_paper_state(&path, &mk(1.0)).unwrap();
+        write_paper_state(&path, &mk(1.5)).unwrap(); // 覆盖既有文件(Windows rename 替换语义)
+        let back = read_paper_state(&path, &tree_name).unwrap().unwrap();
+        assert!((back.account.nav - 1.5).abs() < 1e-12);
+        // 临时文件不得残留
+        let leftovers: Vec<_> = std::fs::read_dir(td.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map(|x| x == "tmp").unwrap_or(false))
+            .collect();
+        assert!(leftovers.is_empty(), "tmp leftover: {:?}", leftovers);
+    }
+
+    #[test]
+    fn write_holdings_state_is_atomic_and_overwrites() {
+        let td = tempfile::tempdir().unwrap();
+        let path = td.path().join("h.json");
+        let mk = |w: f64| {
+            let mut holdings = std::collections::BTreeMap::new();
+            holdings.insert("sh600000".to_string(), w);
+            HoldingsState { version: 1, tree_name: "t".into(), last_time: None, holdings }
+        };
+        write_holdings_state(&path, &mk(0.5)).unwrap();
+        write_holdings_state(&path, &mk(1.0)).unwrap();
+        let back = read_holdings_state(&path, "t").unwrap().unwrap();
+        assert!((back.holdings["sh600000"] - 1.0).abs() < 1e-12);
+        let leftovers: Vec<_> = std::fs::read_dir(td.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map(|x| x == "tmp").unwrap_or(false))
+            .collect();
+        assert!(leftovers.is_empty(), "tmp leftover: {:?}", leftovers);
     }
 }

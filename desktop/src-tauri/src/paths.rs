@@ -38,9 +38,25 @@ impl Workspace {
     pub fn journal_path(&self) -> PathBuf {
         self.desktop_data_dir().join("journal").join("paper-journal.jsonl")
     }
+    pub fn runs_dir(&self) -> PathBuf {
+        self.desktop_data_dir().join("runs")
+    }
+    pub fn data_dir(&self) -> PathBuf {
+        self.desktop_data_dir().join("data")
+    }
+    pub fn universes_dir(&self) -> PathBuf {
+        self.desktop_data_dir().join("universes")
+    }
     pub fn run_log_path(&self) -> PathBuf {
         self.paper_dir().join("run.log")
     }
+}
+
+/// A股代码白名单:sh/sz/bj + 6 位数字。写路径由此防注入(.. 或分隔符)。
+pub(crate) fn valid_symbol(s: &str) -> bool {
+    s.len() == 8
+        && (s.starts_with("sh") || s.starts_with("sz") || s.starts_with("bj"))
+        && s[2..].bytes().all(|c| c.is_ascii_digit())
 }
 
 #[cfg(test)]
@@ -54,6 +70,9 @@ mod tests {
         assert!(ws.deploy_dir().ends_with("deploy"));
         // Path::ends_with 按组件比较,/ 与 \ 在 Windows 解析为相同组件序列
         assert!(ws.journal_path().ends_with(".rquant-desktop/journal/paper-journal.jsonl"));
+        assert!(ws.runs_dir().ends_with(".rquant-desktop/runs"));
+        assert!(ws.data_dir().ends_with(".rquant-desktop/data"));
+        assert!(ws.universes_dir().ends_with(".rquant-desktop/universes"));
     }
 
     #[test]

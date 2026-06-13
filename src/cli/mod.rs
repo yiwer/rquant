@@ -354,7 +354,7 @@ pub async fn main() -> anyhow::Result<()> {
             let cfg = BacktestConfig {
                 tree_path: tree, primary_path: primary, context_path: context, news_path: news,
                 out_path: out, traces_path: traces, cost_bps, warmup, window, concurrency,
-                holidays_path: holidays, folds, aux_paths,
+                holidays_path: holidays, folds, aux_paths, decision_traces_path: None,
             };
             if sim {
                 if folds >= 2 {

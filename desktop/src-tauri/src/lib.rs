@@ -1,8 +1,10 @@
 //! rquant 桌面端桥接层：DTO 转换 + 任务调度 + 工作区路径解析。
 //! 零业务逻辑——一切计算调 `rquant` 库；spec: docs/superpowers/specs/2026-06-12-rquant-desktop-design.md
 
+pub mod backtest_run;
 pub mod books;
 pub mod commands;
+pub mod data_bench;
 pub mod dto;
 pub mod error;
 pub mod gates;
@@ -10,7 +12,10 @@ pub mod journal;
 pub mod manual_run;
 pub mod paths;
 pub mod readers;
+pub mod replay;
+pub mod results;
 pub mod runlog;
+pub mod runs;
 pub mod schtask;
 pub mod tasks;
 
@@ -45,6 +50,21 @@ pub fn run() {
             commands::manual_run,
             commands::task_list,
             commands::task_cancel,
+            commands::tree_list,
+            commands::backtest_run,
+            commands::runs_list,
+            commands::run_delete,
+            commands::run_summary,
+            commands::run_equity,
+            commands::run_trades,
+            commands::run_replay_frames,
+            commands::run_replay_factors,
+            commands::data_csv_list,
+            commands::data_read_bars,
+            commands::data_eval_factor,
+            commands::universe_list,
+            commands::universe_write,
+            commands::fetch_batch,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
