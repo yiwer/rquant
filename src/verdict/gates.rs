@@ -119,6 +119,34 @@ pub fn gate_param_drift(reports: &[(String, OptimizeReport)], th: &GateThreshold
     }
 }
 
+/// ④ 内部最优：所有轴 interior 的标的占比 ≥ 阈值；axes 空的标的保守计非内点。
+pub fn gate_interior(reports: &[(String, OptimizeReport)], th: &GateThresholds) -> GateOutcome {
+    let n = reports.len();
+    let mut interior_ok = 0usize;
+    let mut missing = 0usize;
+    for (_, r) in reports {
+        if r.axes.is_empty() {
+            missing += 1; // 无延伸信息 → 保守不计内点
+            continue;
+        }
+        if r.axes.iter().all(|a| a.interior) { interior_ok += 1; }
+    }
+    let value = if n == 0 { 0.0 } else { interior_ok as f64 / n as f64 };
+    let status = if n == 0 {
+        GateStatus::Indeterminate
+    } else if value >= th.interior_symbol_frac {
+        GateStatus::Pass
+    } else {
+        GateStatus::Fail
+    };
+    let note = if missing > 0 {
+        format!("{interior_ok}/{n} symbols all-axes-interior; {missing} lack axes (re-run optimize --auto-extend)")
+    } else {
+        format!("{interior_ok}/{n} symbols all-axes-interior")
+    };
+    GateOutcome { gate: "T4_interior".into(), status, value, threshold: th.interior_symbol_frac, note }
+}
+
 /// ① OS 广度：有 OS 正折的标的占比 ≥ 阈值。
 pub fn gate_os_breadth(reports: &[(String, OptimizeReport)], th: &GateThresholds) -> GateOutcome {
     let n = reports.len();
@@ -275,5 +303,40 @@ mod tests {
             .collect();
         let g = gate_param_drift(&reps, &GateThresholds::default());
         assert_eq!(g.status, GateStatus::Fail);
+    }
+
+    fn axis(name: &str, interior: bool) -> crate::optimize::AxisOutcome {
+        crate::optimize::AxisOutcome {
+            name: name.into(), final_values: vec![1.0, 2.0, 3.0],
+            best_value: Some(2.0), interior, extended_steps: 0,
+        }
+    }
+
+    #[test]
+    fn t4_interior_pass_when_60pct_all_axes_interior() {
+        let reps: Vec<_> = (0..10)
+            .map(|i| {
+                let interior = i < 6;
+                let folds = vec![(Some(1.0), Some(1.0), None)];
+                let r = mk_report(&format!("s{i}"), &folds, vec![], None, vec![axis("n_s", interior)]);
+                (format!("s{i}"), r)
+            })
+            .collect();
+        let g = gate_interior(&reps, &GateThresholds::default());
+        assert_eq!(g.status, GateStatus::Pass);
+    }
+
+    #[test]
+    fn t4_interior_fail_and_flags_missing_axes() {
+        // 全部 axes 空（未跑 --auto-extend）→ 0 内点 Fail + note 提示
+        let reps: Vec<_> = (0..10)
+            .map(|i| {
+                let folds = vec![(Some(1.0), Some(1.0), None)];
+                (format!("s{i}"), mk_report(&format!("s{i}"), &folds, vec![], None, vec![]))
+            })
+            .collect();
+        let g = gate_interior(&reps, &GateThresholds::default());
+        assert_eq!(g.status, GateStatus::Fail);
+        assert!(g.note.contains("auto-extend"));
     }
 }
