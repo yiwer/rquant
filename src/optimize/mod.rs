@@ -298,6 +298,20 @@ pub struct ParamDrift {
     pub n_unique: usize,
 }
 
+/// 单条网格轴的内部最优分析结果（仅 --auto-extend 时填充）。
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AxisOutcome {
+    pub name: String,
+    /// 延伸后该轴实际候选值（升序）。
+    pub final_values: Vec<f64>,
+    /// 全样本最优在该轴的取值。
+    pub best_value: Option<f64>,
+    /// best 是否为内部最优（内点收敛 / IS 转劣确认峰值=true；达 N 步仍贴边=false）。
+    pub interior: bool,
+    /// 实际追加的延伸步数（0=无需延伸）。
+    pub extended_steps: usize,
+}
+
 /// Full optimize report (serialized to JSON).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OptimizeReport {
@@ -311,6 +325,12 @@ pub struct OptimizeReport {
     pub drift: Vec<ParamDrift>,
     /// IS top-5 per OS fold (each inner Vec len <= 5, descending IS objective).
     pub is_top5: Vec<Vec<ComboScore>>,
+    /// 每条网格轴的内部最优分析（仅 --auto-extend；否则空）。
+    #[serde(default)]
+    pub axes: Vec<AxisOutcome>,
+    /// 主数据标识（primary 路径字符串），eval 用作 symbol 标签。
+    #[serde(default)]
+    pub primary: String,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -331,6 +351,8 @@ pub struct OptimizeConfig {
     pub soft: bool,
     pub grids: Vec<String>,
     pub max_combos: usize,
+    /// --auto-extend N：门槛④边界逃逸最大步数（0=关，行为冻结）。
+    pub auto_extend: usize,
     pub out_path: PathBuf,
 }
 
@@ -558,6 +580,114 @@ pub async fn run_optimize(cfg: &OptimizeConfig, llm: &LlmEvaluator) -> Result<Op
             }
         });
 
+    // ── Step 5b: auto-extend (gate-4 boundary escape; only when cfg.auto_extend > 0) ──
+    // Control flow mirrors analyze_axis_interior exactly; this version uses .await
+    // instead of a synchronous objective closure, so the two cannot be unified without
+    // block_on (which is an anti-pattern inside an async context). The pure function
+    // analyze_axis_interior covers the same logic for unit tests.
+    let axis_outcomes: Vec<AxisOutcome> = if cfg.auto_extend > 0 {
+        if let Some(best) = &full_sample_best {
+            let mut outs: Vec<AxisOutcome> = Vec::with_capacity(axes.len());
+            for ax in &axes {
+                let best_on_axis = match best.params.get(&ax.name).copied() {
+                    Some(v) if v.is_finite() => v,
+                    _ => continue,
+                };
+                let mut av: Vec<f64> = ax.values.clone();
+                av.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+                // Single-value axis: already interior.
+                if av.len() < 2 {
+                    outs.push(AxisOutcome {
+                        name: ax.name.clone(),
+                        final_values: av,
+                        best_value: Some(best_on_axis),
+                        interior: true,
+                        extended_steps: 0,
+                    });
+                    continue;
+                }
+
+                let lo = av[0];
+                let hi = *av.last().unwrap();
+                let dir: i32 = if (best_on_axis - lo).abs() < 1e-9 {
+                    -1
+                } else if (best_on_axis - hi).abs() < 1e-9 {
+                    1
+                } else {
+                    // Already interior.
+                    outs.push(AxisOutcome {
+                        name: ax.name.clone(),
+                        final_values: av,
+                        best_value: Some(best_on_axis),
+                        interior: true,
+                        extended_steps: 0,
+                    });
+                    continue;
+                };
+
+                let step = if dir < 0 { av[1] - av[0] } else { hi - av[av.len() - 2] };
+                let mut cur = best_on_axis;
+                let mut cur_obj = {
+                    let mut combo = best.params.clone();
+                    combo.insert(ax.name.clone(), cur);
+                    match crate::tree::loader::load_tree_str_with_overrides(&yaml_src, &combo) {
+                        Ok(tree) => evaluate(&tree, &data, llm, full_range.clone(), mode)
+                            .await
+                            .ok()
+                            .flatten()
+                            .unwrap_or(f64::NEG_INFINITY),
+                        Err(_) => f64::NEG_INFINITY,
+                    }
+                };
+                let mut steps = 0usize;
+                let mut interior = false;
+
+                while steps < cfg.auto_extend {
+                    let cand = cur + dir as f64 * step;
+                    let cand_obj = {
+                        let mut combo = best.params.clone();
+                        combo.insert(ax.name.clone(), cand);
+                        match crate::tree::loader::load_tree_str_with_overrides(&yaml_src, &combo) {
+                            Ok(tree) => evaluate(&tree, &data, llm, full_range.clone(), mode)
+                                .await
+                                .ok()
+                                .flatten()
+                                .unwrap_or(f64::NEG_INFINITY),
+                            Err(_) => f64::NEG_INFINITY,
+                        }
+                    };
+                    match av.binary_search_by(|v| {
+                        v.partial_cmp(&cand).unwrap_or(std::cmp::Ordering::Equal)
+                    }) {
+                        Ok(_) => {}
+                        Err(pos) => av.insert(pos, cand),
+                    }
+                    steps += 1;
+                    if cand_obj <= cur_obj {
+                        interior = true;
+                        break;
+                    }
+                    cur = cand;
+                    cur_obj = cand_obj;
+                }
+
+                outs.push(AxisOutcome {
+                    name: ax.name.clone(),
+                    final_values: av,
+                    best_value: Some(cur),
+                    interior,
+                    extended_steps: steps,
+                });
+            }
+            outs
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
     // ── Step 6: drift ──────────────────────────────────────────────────────────
     let param_names: Vec<String> = axes.iter().map(|a| a.name.clone()).collect();
     let drift: Vec<ParamDrift> = param_names
@@ -598,6 +728,8 @@ pub async fn run_optimize(cfg: &OptimizeConfig, llm: &LlmEvaluator) -> Result<Op
         full_sample_best,
         drift,
         is_top5: is_top5_all,
+        axes: axis_outcomes,
+        primary: cfg.primary_path.to_string_lossy().to_string(),
     };
 
     let json = serde_json::to_string_pretty(&report)?;
@@ -691,6 +823,112 @@ pub fn print_optimize_summary(report: &OptimizeReport) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// analyze_axis_interior — boundary-escape pure function
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Analyse whether the full-sample optimum on a single axis is an interior
+/// maximum, extending the grid boundary when it is not.
+///
+/// `best_on_axis`: the current optimum value on this axis.
+/// `objective(x)`: synchronous objective for value `x` (other params fixed).
+/// `max_steps`: upper bound on extension steps.
+///
+/// Returns an `AxisOutcome` that records:
+/// - `interior = true`  iff the peak is confirmed interior (either already
+///   not on a boundary, or "one step outside turns worse").
+/// - `interior = false` iff `max_steps` exhausted while still improving
+///   (boundary artefact suspected).
+///
+/// This pure function is used in unit tests. The async version of the same
+/// control flow lives inside `run_optimize` (uses `.await` instead of the
+/// synchronous closure). `allow(dead_code)` suppresses the "never used"
+/// warning that arises because the function is only called from `#[test]`.
+#[allow(dead_code)]
+fn analyze_axis_interior(
+    axis: &grid::GridAxis,
+    best_on_axis: f64,
+    max_steps: usize,
+    objective: &dyn Fn(f64) -> f64,
+) -> AxisOutcome {
+    let mut values: Vec<f64> = axis.values.clone();
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Single-value axis: not a real search dimension — treat as interior.
+    if values.len() < 2 {
+        return AxisOutcome {
+            name: axis.name.clone(),
+            final_values: values,
+            best_value: Some(best_on_axis),
+            interior: true,
+            extended_steps: 0,
+        };
+    }
+
+    let lo = values[0];
+    let hi = *values.last().unwrap();
+
+    // Determine extension direction. If best is not on either boundary, it is
+    // already an interior optimum — return immediately.
+    let dir: i32 = if (best_on_axis - lo).abs() < 1e-9 {
+        -1 // best on lower boundary → extend downward
+    } else if (best_on_axis - hi).abs() < 1e-9 {
+        1 // best on upper boundary → extend upward
+    } else {
+        return AxisOutcome {
+            name: axis.name.clone(),
+            final_values: values,
+            best_value: Some(best_on_axis),
+            interior: true,
+            extended_steps: 0,
+        };
+    };
+
+    // Step size = the local grid spacing at the boundary being extended.
+    let step = if dir < 0 {
+        values[1] - values[0] // downward: use gap between first two points
+    } else {
+        hi - values[values.len() - 2] // upward: use gap between last two points
+    };
+
+    let mut cur = best_on_axis;
+    let mut cur_obj = objective(cur);
+    let mut steps = 0usize;
+    let mut interior = false;
+
+    while steps < max_steps {
+        let cand = cur + dir as f64 * step;
+        let cand_obj = objective(cand);
+
+        // Insert candidate into the sorted values list (skip if already present).
+        match values.binary_search_by(|v| v.partial_cmp(&cand).unwrap_or(std::cmp::Ordering::Equal)) {
+            Ok(_) => {}
+            Err(pos) => values.insert(pos, cand),
+        }
+        steps += 1;
+
+        if cand_obj <= cur_obj {
+            // One step beyond the boundary is worse → cur is the peak → interior.
+            interior = true;
+            break;
+        }
+
+        // Still improving: advance cur and keep searching outward.
+        cur = cand;
+        cur_obj = cand_obj;
+    }
+    // If the loop exhausted max_steps while still improving, interior remains
+    // false, signalling a suspected boundary artefact.
+
+    AxisOutcome {
+        name: axis.name.clone(),
+        final_values: values,
+        best_value: Some(cur),
+        interior,
+        extended_steps: steps,
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -700,6 +938,33 @@ mod tests {
     use crate::data::bar::Bar;
     use crate::tree::loader::load_tree_str;
     use chrono::NaiveDateTime;
+
+    #[test]
+    fn optimize_report_new_fields_default_empty() {
+        // 旧 JSON（无 axes/primary）反序列化 → 字段取默认（serde default）
+        let json = r#"{
+            "mode":"sim","objective_name":"sharpe_or_total_return","folds":4,"n_combos":12,
+            "fold_results":[],"os_mean_objective":null,"full_sample_best":null,"drift":[],"is_top5":[]
+        }"#;
+        let r: OptimizeReport = serde_json::from_str(json).unwrap();
+        assert!(r.axes.is_empty(), "axes 默认空");
+        assert_eq!(r.primary, "", "primary 默认空串");
+    }
+
+    #[test]
+    fn axis_outcome_roundtrips() {
+        let a = AxisOutcome {
+            name: "n_s".into(),
+            final_values: vec![40.0, 55.0, 60.0, 90.0],
+            best_value: Some(55.0),
+            interior: true,
+            extended_steps: 0,
+        };
+        let s = serde_json::to_string(&a).unwrap();
+        let b: AxisOutcome = serde_json::from_str(&s).unwrap();
+        assert_eq!(b.best_value, Some(55.0));
+        assert!(b.interior);
+    }
 
     fn bar(t: &str, open: f64, close: f64) -> Bar {
         Bar {
@@ -887,5 +1152,42 @@ leaves:
             evaluate(&tree, &data, &llm, 0..(bars.len() - 1), ObjectiveMode::Sim).await.unwrap();
         assert!(result.is_some(), "sim mode on rising data should return Some(...)");
         assert!(result.unwrap().is_finite(), "sim mode objective should be finite");
+    }
+
+    // ── analyze_axis_interior unit tests ────────────────────────────────────
+
+    #[test]
+    fn auto_extend_detects_peak_just_outside_grid() {
+        // obj(x) = -(x-30)^2  →  peak at 30.  Original grid [40, 55, 90]: best = 40 (lower boundary).
+        // Extension step = 55 - 40 = 15.  Candidates: 25 (better than 40) → 10 (worse) → interior.
+        let axis = crate::optimize::grid::GridAxis { name: "n_s".into(), values: vec![40.0, 55.0, 90.0] };
+        let objective = |x: f64| -((x - 30.0).powi(2));
+        let out = analyze_axis_interior(&axis, 40.0, 4, &objective);
+        assert_eq!(out.name, "n_s");
+        // After extending downward: 40→25 (better) → 10 (worse) → peak confirmed at 25 → interior.
+        assert!(out.interior, "extension should confirm peak as interior");
+        assert!(out.extended_steps >= 1);
+        assert!(out.final_values.iter().any(|v| (*v - 25.0).abs() < 1e-9));
+    }
+
+    #[test]
+    fn auto_extend_marks_boundary_artifact_when_monotone() {
+        // obj(x) = x  →  monotone increasing; upper boundary 90 is best, always improving outward.
+        // After max_steps=3 extensions, interior remains false (boundary artefact).
+        let axis = crate::optimize::grid::GridAxis { name: "n_s".into(), values: vec![40.0, 55.0, 90.0] };
+        let objective = |x: f64| x;
+        let out = analyze_axis_interior(&axis, 90.0, 3, &objective);
+        assert!(!out.interior, "monotone objective never confirms interior — should stay false");
+        assert_eq!(out.extended_steps, 3);
+    }
+
+    #[test]
+    fn auto_extend_no_op_when_interior() {
+        // best = 2.0 is strictly between 1.0 and 3.0 → not on boundary → interior immediately.
+        let axis = crate::optimize::grid::GridAxis { name: "k".into(), values: vec![1.0, 2.0, 3.0] };
+        let out = analyze_axis_interior(&axis, 2.0, 4, &|x: f64| -((x - 2.0).powi(2)));
+        assert!(out.interior);
+        assert_eq!(out.extended_steps, 0);
+        assert_eq!(out.best_value, Some(2.0));
     }
 }

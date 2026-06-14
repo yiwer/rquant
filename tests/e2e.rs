@@ -1420,6 +1420,7 @@ leaves:
         soft: false,
         grids: vec!["thr=5,15,100".to_string()],
         max_combos: 500,
+        auto_extend: 0,
         out_path: out_f.path().to_path_buf(),
     };
 

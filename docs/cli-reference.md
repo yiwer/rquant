@@ -17,6 +17,7 @@ rquant <SUBCOMMAND>
   factor      横截面因子检验：IC/RankIC、衰减阶梯、分层回测、相关性矩阵
   signal      生成今日交易信号（单标的纸面盘 / 组合清单）
   optimize    锚定扩展 Walk-Forward Optimization 参数网格寻优与泛化评估
+  eval        对 N 个标的的 optimize 报告执行 WFO 五门槛策略级自动裁决
 ```
 
 ---
@@ -385,6 +386,17 @@ rquant optimize [OPTIONS]
 | `--llm-model <string>` | string | `""` | LLM 模型名（空则 Disabled）|
 | `--llm-base-url <string>` | string | `""` | LLM API base URL |
 | `--llm-cache-dir <PATH>` | PathBuf | `.rquant-cache/llm` | LLM 缓存目录 |
+| `--auto-extend <usize>` | usize | `0`（关） | 门槛④边界逃逸最大步数；见下方「`--auto-extend` 说明」|
+
+### `--auto-extend N` 说明
+
+默认 0（关），行为与历史输出完全相同（行为冻结）。设 `N > 0` 时，在 full-sample 最优参数附近，对每条网格轴（`--grid`）检测是否贴边：
+
+- **贴下边界**：向更小方向延伸，步长 = 该轴最小步距（`values[1] − values[0]`）；
+- **贴上边界**：向更大方向延伸，步长 = 最大步距（`values[-1] − values[-2]`）；
+- **内部最优**：不做延伸，直接标记 `interior = true`。
+
+每次延伸最多 `N` 步：若延伸一步后目标转劣，则确认当前值为峰值（`interior = true`）；若延伸满 `N` 步目标仍在改善，标记 `interior = false`（边界假象）。结果写入 `OptimizeReport.axes`（每轴一条 `AxisOutcome`），供 `rquant eval` 门槛④（T4_interior）读取。
 
 ### 输出字段表（OptimizeReport JSON）
 
@@ -399,6 +411,8 @@ rquant optimize [OPTIONS]
 | `full_sample_best` | Option\<ComboScore\> | 全样本最优组合（事后偷看基准）|
 | `drift` | Vec\<ParamDrift\> | 每参数最优值跨折漂移情况 |
 | `is_top5` | Vec\<Vec\<ComboScore\>\> | 每 OS 折 IS 前 5 组合（IS 降序）|
+| `axes` | Vec\<AxisOutcome\> | 每条网格轴的内部最优分析（仅 `--auto-extend > 0` 时非空，默认 `[]`）|
+| `primary` | string | 主数据标识（`--primary` 路径字符串），`eval` 用作 symbol 标签（默认 `""`）|
 
 **FoldResult 子表**
 
@@ -419,6 +433,16 @@ rquant optimize [OPTIONS]
 | `name` | 参数名 |
 | `values` | 每 OS 折最优值（None = 该折无 best）|
 | `n_unique` | Some 值中 distinct 的 f64 个数（bit-pattern 去重）|
+
+**AxisOutcome 子表**（仅 `--auto-extend > 0` 时 `axes` 字段含有数据）
+
+| 字段 | 说明 |
+|---|---|
+| `name` | 参数轴名称（对应 `--grid` 的 `NAME`）|
+| `final_values` | 延伸后该轴实际候选值（升序）|
+| `best_value` | 全样本最优在该轴的取值 |
+| `interior` | 是否内部最优（峰值在搜索范围内确认 = true；达 N 步仍贴边 = false）|
+| `extended_steps` | 实际追加的延伸步数（0 = 本就是内点，无需延伸）|
 
 ### 防过拟合判读指南
 
@@ -543,6 +567,87 @@ state 文件以 JSON 格式落盘，人可读。**关键不变量与守卫**：
 - **成本口径**：往返 `cost_bps` 基点，单边 `cost_bps / 2`，不区分印花税与佣金。
 - **假设历史信号全部按 sim 口径成交**：无停牌、无涨跌停、无盘中滑点。实盘中若存在停牌或涨/跌停，纸面 nav 将虚高（实际无法成交）。
 - **无期末清算**：持仓在历史重放中滚动，不在 session 末尾强制平仓。
+
+---
+
+## `eval` 子命令
+
+```
+rquant eval --reports <PATH>... [--name <STRATEGY>] [--out <PATH>]
+```
+
+对一个策略的 N 个标的的 `optimize` 报告执行 WFO 五门槛策略级自动裁决（Phase-1 机械裁决），输出 `Verdict` JSON 并以退出码通知 CI。
+
+### 标志一览
+
+| 标志 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `--reports <PATH>`（可重复，必填）| PathBuf | — | 每标的一个 `OptimizeReport` JSON（`optimize --out` 产出）；至少一个 |
+| `--name <string>` | string | `""` | 策略名（写入 Verdict；空则取第一份报告的 `primary` 字段）|
+| `--out <PATH>` | PathBuf | 可选 | 若给出则将 `Verdict` JSON 写入该路径 |
+
+### 五门槛与阈值
+
+阈值来自 `GateThresholds::default()`（Phase-1 不支持 CLI 覆盖）：
+
+| 门槛 | Gate ID | 判定逻辑 | 阈值 |
+|---|---|---|---|
+| T1 OS 广度 | `T1_os_breadth` | 有 ≥1 个正 OS 折的标的占比 ≥ 阈值 | 0.6（60%）|
+| T2 退化比 | `T2_degradation` | 可判定标的中，中位退化率（`os/is`）> 下限的标的占比 ≥ 阈值；退化率下限 = 0.5 | 0.6（60%）|
+| T3 参数漂移 | `T3_param_drift` | ①标的内：全参数 `n_unique ≤ ⌈0.5 × OS折数⌉` 的稳定标的占比 ≥ 0.6；②跨标的：每参数全样本最优取值众数共识率 ≥ 0.6；两项同时满足才 Pass | 0.6 / 0.6 |
+| T4 内部最优 | `T4_interior` | 所有轴均 `interior = true` 的标的占比 ≥ 阈值；`axes` 为空的标的保守计非内点（需先跑 `optimize --auto-extend`）| 0.6（60%）|
+| T5 非单标的 | `T5_not_single` | 最大单标的正 OS 份额 ≤ 0.5 且 贡献标的（正 OS 和 > 0）≥ 2 | 0.5 |
+
+### 退出码与 CI 集成
+
+| 退出码 | 含义 |
+|---|---|
+| `0` | 五门槛全 Pass → 策略**认证通过**（`certified: true`）|
+| `1` | 任意门槛未 Pass（Fail 或 Indeterminate）→ **未认证**（`certified: false`）|
+
+`Indeterminate` 视同未通过（保守裁决）。退出码可直接作为 CI pre-commit / pre-merge 门槛：
+
+```sh
+rquant eval --reports wfo_*.json --name ma_stack --out verdict.json && echo "CERTIFIED"
+```
+
+### Verdict JSON 结构
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `strategy` | string | 策略名（来自 `--name` 或 `primary`）|
+| `n_symbols` | usize | 标的数 |
+| `certified` | bool | 五门槛全 Pass 为 true |
+| `gates` | Vec\<GateOutcome\> | 五门槛逐项结果（见下表）|
+| `failed_gates` | Vec\<string\> | 未 Pass 门槛的 Gate ID 列表 |
+
+**GateOutcome 子表**
+
+| 字段 | 说明 |
+|---|---|
+| `gate` | Gate ID（`T1_os_breadth` 等）|
+| `status` | `"pass"` / `"fail"` / `"indeterminate"` |
+| `value` | 实际计算值（如广度比 0.7）|
+| `threshold` | 对应阈值 |
+| `note` | 人可读证据摘要（如 `"7/10 symbols have >=1 positive OS fold"`）|
+
+### 工作流说明
+
+**标准评估流程（含 T4 边界检测）：**
+
+```sh
+# 1. 每标的跑 optimize + 边界逃逸
+rquant optimize --tree ma_stack.yaml --primary sh600030.csv ... \
+    --auto-extend 4 --out wfo_sh600030.json
+
+# 2. 汇总所有标的出裁决
+rquant eval --reports wfo_sh600030.json wfo_sh600036.json [...] \
+    --name ma_stack --out verdict.json
+```
+
+**不含 T4（快速评估）：** 跳过 `--auto-extend`，T4 将因所有标的 `axes` 为空而判 Fail，须在 `note` 中提示重跑 `--auto-extend`。
+
+**机械裁决与 regime 叙事的边界：** `eval` 的裁决是纯机械的、无参数的；「策略无 edge」vs「策略有 edge 但依赖特定 regime」的叙事区分属于主观分析，超出 `eval` 的职能范围，需人工结合 OS 分布和市场背景判断。
 
 ---
 

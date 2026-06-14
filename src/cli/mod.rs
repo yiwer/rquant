@@ -269,6 +269,9 @@ enum Cmd {
         llm_base_url: String,
         #[arg(long, default_value = ".rquant-cache/llm")]
         llm_cache_dir: PathBuf,
+        /// Boundary-escape for gate-4 interior optimum: max extension steps per axis (0 = off)
+        #[arg(long, default_value_t = 0)]
+        auto_extend: usize,
     },
     /// Cross-sectional portfolio: run one tree across a universe, hold top-N equal-weight
     Portfolio {
@@ -300,6 +303,18 @@ enum Cmd {
         llm_base_url: String,
         #[arg(long, default_value = ".rquant-cache/llm")]
         llm_cache_dir: PathBuf,
+    },
+    /// Apply the 5-gate WFO certification to N per-symbol optimize reports.
+    Eval {
+        /// Repeatable: one optimize JSON per symbol (a strategy's universe).
+        #[arg(long = "reports", value_name = "PATH", required = true)]
+        reports: Vec<PathBuf>,
+        /// Strategy name for the verdict (default: derived from first symbol).
+        #[arg(long, default_value = "")]
+        name: String,
+        /// Write Verdict JSON here.
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
 }
 
@@ -373,6 +388,7 @@ pub async fn main() -> anyhow::Result<()> {
         Cmd::Optimize {
             tree, primary, context, news, grid, folds, sim, soft, max_combos,
             warmup, window, cost_bps, aux, out, llm_model, llm_base_url, llm_cache_dir,
+            auto_extend,
         } => {
             if sim && soft {
                 return Err(anyhow::anyhow!(
@@ -400,6 +416,7 @@ pub async fn main() -> anyhow::Result<()> {
                 soft,
                 grids: grid,
                 max_combos,
+                auto_extend,
                 out_path: out,
             };
             let report = run_optimize(&ocfg, &llm).await?;
@@ -579,8 +596,73 @@ pub async fn main() -> anyhow::Result<()> {
             let report = run_portfolio(&pcfg, &llm).await?;
             print_portfolio_summary(&report);
         }
+        Cmd::Eval { reports, name, out } => {
+            if reports.is_empty() {
+                return Err(anyhow::anyhow!("--reports: at least one optimize report is required"));
+            }
+            let mut loaded: Vec<(String, crate::optimize::OptimizeReport)> = Vec::new();
+            for p in &reports {
+                let txt = std::fs::read_to_string(p)
+                    .map_err(|e| anyhow::anyhow!("read {}: {e}", p.display()))?;
+                let r: crate::optimize::OptimizeReport = serde_json::from_str(&txt)
+                    .map_err(|e| anyhow::anyhow!("parse {}: {e}", p.display()))?;
+                let symbol = if r.primary.is_empty() {
+                    p.file_stem()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| p.display().to_string())
+                } else {
+                    r.primary.clone()
+                };
+                loaded.push((symbol, r));
+            }
+            let strategy = if name.is_empty() {
+                loaded.first().map(|(s, _)| s.clone()).unwrap_or_default()
+            } else {
+                name
+            };
+            let verdict = crate::verdict::certify(
+                &loaded,
+                &strategy,
+                &crate::verdict::GateThresholds::default(),
+            );
+            print_verdict(&verdict);
+            if let Some(op) = out {
+                std::fs::write(&op, serde_json::to_string_pretty(&verdict)?)?;
+            }
+            if !verdict.certified {
+                std::process::exit(1);
+            }
+        }
     }
     Ok(())
+}
+
+fn print_verdict(v: &crate::verdict::Verdict) {
+    use crate::verdict::GateStatus;
+    println!(
+        "=== WFO 5-Gate Verdict: {} ({} symbols) ===",
+        v.strategy, v.n_symbols
+    );
+    println!("{:<16} {:<14} {:>8} {:>8}  note", "gate", "status", "value", "thresh");
+    for g in &v.gates {
+        let st = match g.status {
+            GateStatus::Pass => "PASS",
+            GateStatus::Fail => "FAIL",
+            GateStatus::Indeterminate => "INDET",
+        };
+        println!(
+            "{:<16} {:<14} {:>8.3} {:>8.3}  {}",
+            g.gate, st, g.value, g.threshold, g.note
+        );
+    }
+    if v.certified {
+        println!("RESULT: CERTIFIED");
+    } else {
+        println!(
+            "RESULT: NOT CERTIFIED  failed: [{}]",
+            v.failed_gates.join(", ")
+        );
+    }
 }
 
 #[cfg(test)]
