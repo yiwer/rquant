@@ -3,6 +3,7 @@
 - 日期：2026-06-14
 - 状态：设计已与用户逐节确认，待审阅 → writing-plans
 - 范围：把"严格 WFO 五门槛"从文档方法学固化为代码，自动从 optimize 输出算出策略级机器裁决。仅 Phase-1。
+- 实现修正（落地后回填）：新模块实际命名 **`src/verdict/`**（非本文下文所写的 `src/eval/`）——因既有 `src/eval/` 已是节点求值模块（quant/llm），为避撞名改用 `verdict`。CLI 子命令对外名仍是 `eval`。下文 `src/eval/{mod,gates}.rs` 字样一律以 `src/verdict/{mod,gates}.rs` 为准。
 
 ## 1. 背景与动机
 
@@ -46,7 +47,7 @@ optimize (--auto-extend N)  ──►  OptimizeReport JSON (新增 axes/primary)
 ```
 
 - **optimize**：找到最优并**验证其为内点**（边界逃逸延伸），把内点证据写进输出。
-- **gates lib**（`src/eval/gates.rs`）：纯函数，吃 N 个 OptimizeReport 出 Verdict。全单测。
+- **gates lib**（`src/verdict/gates.rs`）：纯函数，吃 N 个 OptimizeReport 出 Verdict。全单测。
 - **eval CLI**（`Cmd::Eval` 薄臂）：读 JSON → 调 `certify` → 打印 + 落 JSON + 退出码。
 
 ## 5. 策略级裁决模型（核心）
@@ -100,7 +101,7 @@ pub primary: String,             // 标的标识（主数据路径/symbol），�
 - Phase-1 延伸**围绕全样本最优**做（非逐折逐参数 IS 曲线分析），是对手工逐折延伸的合理简化。文档明示此简化。
 - 门槛④降级：JSON 的 `axes` 为空（未开 --auto-extend）→ eval 把④判为保守"非内点"，note 标"重跑 --auto-extend 以判定"。
 
-## 7. gates 纯函数库（`src/eval/gates.rs`）
+## 7. gates 纯函数库（`src/verdict/gates.rs`）
 
 ### 7.1 阈值与类型
 
@@ -175,7 +176,7 @@ rquant eval --reports <glob|path...> [--name <strategy>] [--out <verdict.json>]
 
 | 文件 | 改动 |
 |---|---|
-| `src/eval/mod.rs`、`src/eval/gates.rs` | 新模块：GateThresholds/GateStatus/GateOutcome/Verdict + certify() + 五门槛纯函数 |
+| `src/verdict/mod.rs`、`src/verdict/gates.rs` | 新模块：GateThresholds/GateStatus/GateOutcome/Verdict + certify() + 五门槛纯函数 |
 | `src/optimize/mod.rs` | auto-extend 算法；OptimizeReport 加 `axes: Vec<AxisOutcome>` + `primary: String`；AxisOutcome 类型 |
 | `src/cli/mod.rs` | `Cmd::Eval` 薄臂（参数解析 + 调 certify + 打印 + 退出码） |
 | `docs/cli-reference.md` | eval 子命令 + optimize `--auto-extend` 文档 |
