@@ -1,0 +1,99 @@
+# =====================================================================
+# 均值回归 · 超跌反弹 v1 — 单标的触发树（执行层，日线）
+# 理论：A股短期反转异象，与 v4 趋势跟踪正交（四棵中正交性最强）。
+# 结构：gate_pos 分流 → 持仓查 ATR 止损 + 回归均线出场 / 空仓查冷却 → 创伤闸 → 超卖入场。
+# 纪律：stop_n*atr 在树内(WFO 可扫)，risk.stop_loss 宽兜底；冷却阻断分支；
+#   打分模式 pos≡0 只评入场逻辑(纯价格/RSI)，sim/signal 才走持仓分支。
+# 窗口预算：std(20)/ema(20)/highest(60) → warmup 80 够。
+# =====================================================================
+meta:
+  name: "均值回归 · 超跌反弹 v1"
+  forward_window: 8
+  stances: [long, flat]
+
+params:
+  n_ma: 20
+  n_std: 20
+  n_rsi: 14
+  n_atr: 14
+  n_dd: 60
+  dd_keep: 0.80
+  cool_k: 3
+  k_dev: 2.0
+  rsi_lo: 30.0
+  stop_n: 2.0
+
+factors:
+  atr_v: "atr(n_atr)"
+  ema_m: "ema(close, n_ma)"
+  lower_band: "ema_m - k_dev * std(close, n_std)"
+  rsi_v: "rsi(close, n_rsi)"
+  hi_dd: "highest(close, n_dd)"
+
+root: gate_pos
+
+nodes:
+  gate_pos:
+    type: quant
+    branches:
+      - when: "pos > 0"
+        goto: holding
+        label: in_position
+    default:
+      goto: cooldown_gate
+      label: flat_side
+
+  holding:
+    type: quant
+    branches:
+      - when: "close < entry_price - stop_n * atr_v"
+        goto: exit_flat
+        label: atr_stop
+      - when: "close > ema_m"
+        goto: exit_flat
+        label: revert_to_mean
+    default:
+      goto: hold_long
+      label: stay
+
+  cooldown_gate:
+    type: quant
+    branches:
+      - when: "bars_since_exit < cool_k"
+        goto: flat_cooldown
+        label: cooling
+    default:
+      goto: regime_gate
+      label: cool_ok
+
+  regime_gate:
+    type: quant
+    branches:
+      - when: "close < hi_dd * dd_keep"
+        goto: flat_damaged
+        label: deep_drawdown
+    default:
+      goto: entry
+      label: intact
+
+  entry:
+    type: quant
+    branches:
+      - when: "close < lower_band and rsi_v < rsi_lo"
+        goto: enter_long
+        label: oversold_dip
+    default:
+      goto: flat_wait
+      label: no_signal
+
+leaves:
+  enter_long:    { stance: long, weight: 1.0, horizon: 8 }
+  hold_long:     { stance: long, weight: "abs(pos)", horizon: 8 }
+  exit_flat:     { stance: flat }
+  flat_cooldown: { stance: flat }
+  flat_damaged:  { stance: flat }
+  flat_wait:     { stance: flat }
+
+risk:
+  stop_loss: 0.12
+  max_hold_bars: 10
