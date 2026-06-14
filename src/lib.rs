@@ -17,6 +17,7 @@ pub mod backtest;
 pub mod report;
 pub mod factor;
 pub mod optimize;
+pub mod verdict;
 pub mod signal;
 pub mod cli;
 
