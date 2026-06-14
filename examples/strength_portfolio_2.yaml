@@ -8,6 +8,9 @@
 #   percentrank 后越超卖排名越高，与动量形成正交互补（跌深反弹≠强动量）。
 # 验证：因子前置(PQ-5)+ 时间切片 + top×reb 敏感性(无折叠 WFO——组合工具缺口)。
 # 注：强度/选择树禁用 sim 状态量(pos/entry_price 等)；全状态条件 + auto 软强度。
+# 窗口算术: blend_pct 最长暖机 = max(mom_raw n_mom=20, rev5_raw n_rev=5) + n_rank=60 = 80 根
+#   → portfolio --warmup 默认 100 已覆盖;若自定义 warmup 须 ≥80,否则暖机期 blend_pct=NaN
+#   落 leaf_s_base(0.3) 制造无信息基础分。
 # =====================================================================
 meta:
   name: "横截面强度 · 动量×短期反转 v2"
