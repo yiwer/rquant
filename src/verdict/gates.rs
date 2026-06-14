@@ -119,6 +119,40 @@ pub fn gate_param_drift(reports: &[(String, OptimizeReport)], th: &GateThreshold
     }
 }
 
+/// 该标的所有正 OS 折之和。
+fn positive_os_sum(r: &OptimizeReport) -> f64 {
+    r.fold_results.iter().filter_map(|f| f.os_objective).filter(|v| *v > 0.0).sum()
+}
+
+/// ⑤ 非单标的：最大单标的正 OS 份额 ≤ 阈值 且 贡献标的 ≥2。
+pub fn gate_not_single(reports: &[(String, OptimizeReport)], th: &GateThresholds) -> GateOutcome {
+    let sums: Vec<f64> = reports.iter().map(|(_, r)| positive_os_sum(r)).collect();
+    let total: f64 = sums.iter().sum();
+    let contributing = sums.iter().filter(|v| **v > 0.0).count();
+    if total <= 0.0 {
+        return GateOutcome {
+            gate: "T5_not_single".into(),
+            status: GateStatus::Indeterminate,
+            value: 0.0,
+            threshold: th.max_single_symbol_os_share,
+            note: "no positive OS across any symbol".into(),
+        };
+    }
+    let max_share = sums.iter().map(|v| v / total).fold(0.0_f64, f64::max);
+    let status = if max_share <= th.max_single_symbol_os_share && contributing >= 2 {
+        GateStatus::Pass
+    } else {
+        GateStatus::Fail
+    };
+    GateOutcome {
+        gate: "T5_not_single".into(),
+        status,
+        value: max_share,
+        threshold: th.max_single_symbol_os_share,
+        note: format!("max single-symbol positive-OS share {max_share:.2}, {contributing} contributing symbols"),
+    }
+}
+
 /// ④ 内部最优：所有轴 interior 的标的占比 ≥ 阈值；axes 空的标的保守计非内点。
 pub fn gate_interior(reports: &[(String, OptimizeReport)], th: &GateThresholds) -> GateOutcome {
     let n = reports.len();
@@ -338,5 +372,30 @@ mod tests {
         let g = gate_interior(&reps, &GateThresholds::default());
         assert_eq!(g.status, GateStatus::Fail);
         assert!(g.note.contains("auto-extend"));
+    }
+
+    #[test]
+    fn t5_not_single_pass_when_no_symbol_dominates() {
+        // 5 标的各 +1 正 OS → 每个份额 0.2，max 0.2 ≤0.5 且 ≥2 贡献 Pass
+        let reps: Vec<_> = (0..5).map(|i| os_only(&format!("s{i}"), &[1.0, -2.0])).collect();
+        let g = gate_not_single(&reps, &GateThresholds::default());
+        assert_eq!(g.status, GateStatus::Pass);
+        assert!((g.value - 0.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn t5_not_single_fail_when_one_dominates() {
+        // s0 正 OS=10、其余各 0.1 → s0 份额 ≈0.96 >0.5 Fail
+        let mut reps: Vec<_> = vec![os_only("s0", &[10.0])];
+        for i in 1..5 { reps.push(os_only(&format!("s{i}"), &[0.1])); }
+        let g = gate_not_single(&reps, &GateThresholds::default());
+        assert_eq!(g.status, GateStatus::Fail);
+    }
+
+    #[test]
+    fn t5_not_single_indeterminate_when_no_positive_os() {
+        let reps: Vec<_> = (0..5).map(|i| os_only(&format!("s{i}"), &[-1.0])).collect();
+        let g = gate_not_single(&reps, &GateThresholds::default());
+        assert_eq!(g.status, GateStatus::Indeterminate);
     }
 }
