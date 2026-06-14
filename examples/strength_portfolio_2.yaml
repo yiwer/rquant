@@ -1,0 +1,125 @@
+# =====================================================================
+# 横截面强度 · 动量 × 短期反转 v2 — 组合层选择树（日线 top-N）
+# 理论：strength-v1 纯动量 + 第二验证因子(短期反转 rev5，PQ-5 因子检验
+#   胜出：RankIC +0.162/t 2.53/与 mom20 相关 −0.50 正交)正交增强。
+# 结构：承 v1 三道闸(波动/创伤/趋势态)+ 分级叶；强度分 =
+#   w_mom*动量分位 + (1-w_mom)*反转分位（超卖→高分位→优先入选）。
+# 方向铁律：rev5_raw = 0-(close/ref(close,5)-1)，跌得越多值越大(超卖)；
+#   percentrank 后越超卖排名越高，与动量形成正交互补（跌深反弹≠强动量）。
+# 验证：因子前置(PQ-5)+ 时间切片 + top×reb 敏感性(无折叠 WFO——组合工具缺口)。
+# 注：强度/选择树禁用 sim 状态量(pos/entry_price 等)；全状态条件 + auto 软强度。
+# =====================================================================
+meta:
+  name: "横截面强度 · 动量×短期反转 v2"
+  forward_window: 8
+  stances: [long, flat]
+
+params:
+  # ---- 周期 ----
+  n_mom: 20                     # 动量回看（F-1 实证窗）
+  n_rev: 5                      # 反转回看（5 日短期反转，PQ-5 实证）
+  n_rank: 60                    # 百分位自归一回看窗
+  n_q: 20                       # 趋势持续度统计窗
+  n_trend: 20                   # 趋势 EMA
+  n_fast: 8                     # 快 EMA
+  n_atr: 14
+  n_dd: 60                      # 创伤闸回看高点窗
+  # ---- 阈值(自归一化分位,跨标的同义) ----
+  q_vol_lo: 0.10                # 波动分位下限
+  q_vol_hi: 0.99                # 上限近乎不封顶
+  dd_keep: 0.85                 # 创伤闸容忍（回撤 15%）
+  thr_q: 0.55                   # 趋势持续度门槛
+  thr_hi: 0.85                  # 混合强度分位三道门
+  thr_mid: 0.65
+  thr_lo: 0.45
+  w_mom: 0.6                    # 动量权重（敏感性在 PQ-7 扫，默认 0.6）
+
+factors:
+  atr_v:     "atr(n_atr)"
+  ema_t:     "ema(close, n_trend)"
+  ema_f:     "ema(close, n_fast)"
+  vol_ratio: "atr_v / close"                       # 波动率（波动闸用，非第二强度因子）
+  vol_pct:   "percentrank(vol_ratio, n_rank)"      # 波动自身分位（G1 闸用）
+  mom_raw:   "close / ref(close, n_mom) - 1"       # n_mom 根动量
+  mom_pct:   "percentrank(mom_raw, n_rank)"        # 动量自身分位（第一强度因子）
+  rev5_raw:  "0 - (close / ref(close, n_rev) - 1)" # 5 日反转原始量：跌得越多值越大（超卖）
+  rev5_pct:  "percentrank(rev5_raw, n_rank)"       # 反转分位：越超卖排名越高（第二强度因子）
+  blend_pct: "w_mom * mom_pct + (1 - w_mom) * rev5_pct"  # 混合强度（动量×反转加权）
+  trend_q:   "count(close > ema_t, n_q) / n_q"    # 趋势持续度 0..1
+  hi_dd:     "highest(close, n_dd)"               # 创伤闸锚
+
+root: gate_vol
+
+nodes:
+  # ---- G1 波动闸（自适应分位，承 v1） ----
+  gate_vol:
+    type: quant
+    branches:
+      - when: "vol_pct < q_vol_lo"
+        strength: "auto(0.05)"
+        goto: flat_idle
+        label: dead_vol
+      - when: "vol_pct > q_vol_hi"
+        strength: "auto(0.05)"
+        goto: flat_chaos
+        label: chaos_vol
+    default:
+      goto: gate_damage
+      label: vol_ok
+
+  # ---- G2 创伤闸：距高点回撤过深 = 破位名，不参与选择 ----
+  gate_damage:
+    type: quant
+    branches:
+      - when: "close < hi_dd * dd_keep"
+        strength: "auto(0.05)"
+        goto: flat_damaged
+        label: deep_drawdown
+    default:
+      goto: trend_state
+      label: intact
+
+  # ---- G3 趋势态（状态判定：排列 + 持续度，无事件） ----
+  trend_state:
+    type: quant
+    branches:
+      - when: "ema_f > ema_t and trend_q >= thr_q"
+        strength: "auto(0.08)"
+        goto: strength_bands
+        label: uptrend_state
+    default:
+      goto: flat_weak
+      label: no_trend
+
+  # ---- G4 强度带：blend_pct 分级（动量×反转混合）----
+  strength_bands:
+    type: quant
+    branches:
+      - when: "blend_pct >= thr_hi"
+        strength: "auto(0.08)"
+        goto: leaf_s_hi
+        label: band_hi
+      - when: "blend_pct >= thr_mid"
+        strength: "auto(0.08)"
+        goto: leaf_s_mid
+        label: band_mid
+      - when: "blend_pct >= thr_lo"
+        strength: "auto(0.08)"
+        goto: leaf_s_lo
+        label: band_lo
+    default:
+      goto: leaf_s_base
+      label: band_base
+
+leaves:
+  # flat 族（路径区分：为什么出局）
+  flat_idle:    { stance: flat }    # 死寂
+  flat_chaos:   { stance: flat }    # 失控
+  flat_damaged: { stance: flat }    # 创伤（深回撤）
+  flat_weak:    { stance: flat }    # 无趋势态
+
+  # 分级强度叶：权重即横截面分（硬=阶梯，软=E 平滑）
+  leaf_s_hi:   { stance: long, weight: 1.0,  horizon: 8 }
+  leaf_s_mid:  { stance: long, weight: 0.75, horizon: 8 }
+  leaf_s_lo:   { stance: long, weight: 0.5,  horizon: 8 }
+  leaf_s_base: { stance: long, weight: 0.3,  horizon: 8 }
