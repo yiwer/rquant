@@ -1,0 +1,82 @@
+# =====================================================================
+# 趋势均线多头排列 v1 — 单标的触发树（执行层，日线）
+# 理论：经典三均线多头排列(快>中>慢),最教科书趋势跟踪。与 v4 风格最近、正交性最弱,
+#   价值在干净基准趋势树(v4 是 regime 切换 Brooks,本棵是纯排列)。
+# 结构：gate_pos 分流 → 持仓查吊灯/排列瓦解 / 空仓查冷却 → 多头排列入场(回踩不破)。
+# 网格只扫慢线 n_s + chand_n(optimize 笛卡尔积不能扫耦合三元组),快/中线固定 10/20。
+# =====================================================================
+meta:
+  name: "趋势均线多头排列 v1"
+  forward_window: 12
+  stances: [long, flat]
+
+params:
+  n_f: 10
+  n_m: 20
+  n_s: 55
+  n_atr: 14
+  cool_k: 6
+  chand_n: 3.0
+
+factors:
+  atr_v: "atr(n_atr)"
+  ema_f: "ema(close, n_f)"
+  ema_m: "ema(close, n_m)"
+  ema_s: "ema(close, n_s)"
+
+root: gate_pos
+
+nodes:
+  gate_pos:
+    type: quant
+    branches:
+      - when: "pos > 0"
+        goto: holding
+        label: in_position
+    default:
+      goto: cooldown_gate
+      label: flat_side
+
+  holding:
+    type: quant
+    branches:
+      - when: "close < max_price_since_entry - chand_n * atr_v"
+        goto: exit_flat
+        label: chandelier
+      - when: "crossunder(ema_f, ema_m)"
+        goto: exit_flat
+        label: stack_break
+    default:
+      goto: hold_long
+      label: stay
+
+  cooldown_gate:
+    type: quant
+    branches:
+      - when: "bars_since_exit < cool_k"
+        goto: flat_cooldown
+        label: cooling
+    default:
+      goto: entry
+      label: cool_ok
+
+  entry:
+    type: quant
+    branches:
+      - when: "ema_f > ema_m and ema_m > ema_s and close > ema_f"
+        goto: enter_long
+        label: bullish_stack
+    default:
+      goto: flat_wait
+      label: no_stack
+
+leaves:
+  enter_long:    { stance: long, weight: 1.0, horizon: 12 }
+  hold_long:     { stance: long, weight: "abs(pos)", horizon: 12 }
+  exit_flat:     { stance: flat }
+  flat_cooldown: { stance: flat }
+  flat_wait:     { stance: flat }
+
+risk:
+  stop_loss: 0.12
+  max_hold_bars: 120
