@@ -373,14 +373,14 @@ git commit -m "feat(strategy): donchian breakout tree v1 (lint-clean, sim runs)"
 for S in sh600030 sh600036 sh600276 sh600519 sh600900 sh601088 sh601318 sz000333 sz000858 sz300750; do
   target/release/rquant.exe optimize --tree examples/donchian_breakout_1.yaml \
     --primary paper/pd_$S.csv --context paper/pd_$S.csv \
-    --grid "n_break=20,40,55" --grid "vol_mult=1.2,1.5,2.0" --grid "chand_n=2.5,3.0,3.5" \
+    --grid "n_break=20,40,55" --grid "vol_mult=1.2,1.5,2.0" --grid "chand_n=2.5,3.0,3.5" --grid "s1_on=0,1" \
     --folds 4 --sim --out tmps/wfo_dc_$S.json
 done
 ```
 
 - [ ] **Step 2: 收集 + 五门槛判读 + 内点复核**
 
-同 Task 2 Step 2-3 流程：10 行表（OS/退化率/n_break/vol_mult/chand_n 共识/漂移）→ 五门槛 → 边界则扩格复核（如 n_break=55 边界→扩 70；chand_n=3.5 边界→扩 4.0）→ 结局判定。Donchian 在趋势标的(300750/600519)预期较强、震荡标的较弱——可能是 regime 依赖结局。
+同 Task 2 Step 2-3 流程：10 行表（OS/退化率/n_break/vol_mult/chand_n/s1_on 共识/漂移）→ 五门槛 → 边界则扩格复核（如 n_break=55 边界→扩 70；chand_n=3.5 边界→扩 4.0）→ 结局判定。Donchian 在趋势标的(300750/600519)预期较强、震荡标的较弱——可能是 regime 依赖结局。
 
 - [ ] **Step 3: 写报告树 2 节 + Commit**
 

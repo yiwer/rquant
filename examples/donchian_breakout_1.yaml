@@ -1,0 +1,88 @@
+# =====================================================================
+# 动量突破 · Donchian 通道 v1 — 单标的触发树（执行层，日线）
+# 理论：动量为核(mom20 F-1 实证)；Donchian N 日新高是动量经典触发,
+#   与 v4 Brooks 回调入场形态不同。
+# 结构：gate_pos 分流 → 持仓查 ATR 吊灯 / 空仓查冷却+S1跳赢家 → 突破入场(量能+趋势确认)。
+# 纪律：突破比较 ref(highest,1) 防自指；吊灯用 max_price_since_entry 状态量(承 v3)；
+#   S1 跳赢家 last_trip_return>0 是阻断分支(打分模式 NaN→落空)。
+# =====================================================================
+meta:
+  name: "动量突破 · Donchian 通道 v1"
+  forward_window: 12
+  stances: [long, flat]
+
+params:
+  n_break: 20
+  n_vol: 20
+  n_fast: 20
+  n_slow: 60
+  n_atr: 14
+  cool_k: 6
+  vol_mult: 1.5
+  chand_n: 3.0
+  s1_on: 0.0        # Turtle S1 跳赢家门控,默认关(中性基线=纯 Donchian+冷却);WFO 扫 {0,1} 自归因
+
+factors:
+  atr_v: "atr(n_atr)"
+  break_hi: "highest(ref(high, 1), n_break)"
+  vol_ma: "sma(volume, n_vol)"
+  ema_f: "ema(close, n_fast)"
+  ema_s: "ema(close, n_slow)"
+
+root: gate_pos
+
+nodes:
+  gate_pos:
+    type: quant
+    branches:
+      - when: "pos > 0"
+        goto: holding
+        label: in_position
+    default:
+      goto: cooldown_gate
+      label: flat_side
+
+  holding:
+    type: quant
+    branches:
+      - when: "close < max_price_since_entry - chand_n * atr_v"
+        goto: exit_flat
+        label: chandelier
+    default:
+      goto: hold_long
+      label: stay
+
+  cooldown_gate:
+    type: quant
+    branches:
+      - when: "bars_since_exit < cool_k"
+        goto: flat_cooldown
+        label: cooling
+      - when: "s1_on > 0 and last_trip_return > 0"
+        goto: flat_s1_skip
+        label: skip_winner
+    default:
+      goto: entry
+      label: cool_ok
+
+  entry:
+    type: quant
+    branches:
+      - when: "close > break_hi and volume > vol_ma * vol_mult and ema_f > ema_s"
+        goto: enter_long
+        label: breakout
+    default:
+      goto: flat_wait
+      label: no_break
+
+leaves:
+  enter_long:    { stance: long, weight: 1.0, horizon: 12 }
+  hold_long:     { stance: long, weight: "abs(pos)", horizon: 12 }
+  exit_flat:     { stance: flat }
+  flat_cooldown: { stance: flat }
+  flat_s1_skip:  { stance: flat }
+  flat_wait:     { stance: flat }
+
+risk:
+  stop_loss: 0.12
+  max_hold_bars: 60
