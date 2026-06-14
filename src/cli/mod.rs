@@ -400,6 +400,7 @@ pub async fn main() -> anyhow::Result<()> {
                 soft,
                 grids: grid,
                 max_combos,
+                auto_extend: 0,
                 out_path: out,
             };
             let report = run_optimize(&ocfg, &llm).await?;

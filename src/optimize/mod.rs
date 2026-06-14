@@ -298,6 +298,20 @@ pub struct ParamDrift {
     pub n_unique: usize,
 }
 
+/// 单条网格轴的内部最优分析结果（仅 --auto-extend 时填充）。
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AxisOutcome {
+    pub name: String,
+    /// 延伸后该轴实际候选值（升序）。
+    pub final_values: Vec<f64>,
+    /// 全样本最优在该轴的取值。
+    pub best_value: Option<f64>,
+    /// best 是否为内部最优（内点收敛 / IS 转劣确认峰值=true；达 N 步仍贴边=false）。
+    pub interior: bool,
+    /// 实际追加的延伸步数（0=无需延伸）。
+    pub extended_steps: usize,
+}
+
 /// Full optimize report (serialized to JSON).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OptimizeReport {
@@ -311,6 +325,12 @@ pub struct OptimizeReport {
     pub drift: Vec<ParamDrift>,
     /// IS top-5 per OS fold (each inner Vec len <= 5, descending IS objective).
     pub is_top5: Vec<Vec<ComboScore>>,
+    /// 每条网格轴的内部最优分析（仅 --auto-extend；否则空）。
+    #[serde(default)]
+    pub axes: Vec<AxisOutcome>,
+    /// 主数据标识（primary 路径字符串），eval 用作 symbol 标签。
+    #[serde(default)]
+    pub primary: String,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -331,6 +351,8 @@ pub struct OptimizeConfig {
     pub soft: bool,
     pub grids: Vec<String>,
     pub max_combos: usize,
+    /// --auto-extend N：门槛④边界逃逸最大步数（0=关，行为冻结）。
+    pub auto_extend: usize,
     pub out_path: PathBuf,
 }
 
@@ -598,6 +620,8 @@ pub async fn run_optimize(cfg: &OptimizeConfig, llm: &LlmEvaluator) -> Result<Op
         full_sample_best,
         drift,
         is_top5: is_top5_all,
+        axes: Vec::new(), // Task 9 由 auto-extend 填充
+        primary: cfg.primary_path.to_string_lossy().to_string(),
     };
 
     let json = serde_json::to_string_pretty(&report)?;
@@ -700,6 +724,33 @@ mod tests {
     use crate::data::bar::Bar;
     use crate::tree::loader::load_tree_str;
     use chrono::NaiveDateTime;
+
+    #[test]
+    fn optimize_report_new_fields_default_empty() {
+        // 旧 JSON（无 axes/primary）反序列化 → 字段取默认（serde default）
+        let json = r#"{
+            "mode":"sim","objective_name":"sharpe_or_total_return","folds":4,"n_combos":12,
+            "fold_results":[],"os_mean_objective":null,"full_sample_best":null,"drift":[],"is_top5":[]
+        }"#;
+        let r: OptimizeReport = serde_json::from_str(json).unwrap();
+        assert!(r.axes.is_empty(), "axes 默认空");
+        assert_eq!(r.primary, "", "primary 默认空串");
+    }
+
+    #[test]
+    fn axis_outcome_roundtrips() {
+        let a = AxisOutcome {
+            name: "n_s".into(),
+            final_values: vec![40.0, 55.0, 60.0, 90.0],
+            best_value: Some(55.0),
+            interior: true,
+            extended_steps: 0,
+        };
+        let s = serde_json::to_string(&a).unwrap();
+        let b: AxisOutcome = serde_json::from_str(&s).unwrap();
+        assert_eq!(b.best_value, Some(55.0));
+        assert!(b.interior);
+    }
 
     fn bar(t: &str, open: f64, close: f64) -> Bar {
         Bar {
