@@ -8,7 +8,7 @@
 # =====================================================================
 meta:
   name: "均值回归 · 超跌反弹 v1"
-  forward_window: 8
+  forward_window: 10
   stances: [long, flat]
 
 params:
@@ -28,7 +28,7 @@ factors:
   ema_m: "ema(close, n_ma)"
   lower_band: "ema_m - k_dev * std(close, n_std)"
   rsi_v: "rsi(close, n_rsi)"
-  hi_dd: "highest(close, n_dd)"
+  hi_dd: "highest(close, n_dd)"   # 含当前 bar(刻意):close<hi_dd*dd_keep 在当根即新高时恒假=未破位,非前视
 
 root: gate_pos
 
@@ -87,8 +87,8 @@ nodes:
       label: no_signal
 
 leaves:
-  enter_long:    { stance: long, weight: 1.0, horizon: 8 }
-  hold_long:     { stance: long, weight: "abs(pos)", horizon: 8 }
+  enter_long:    { stance: long, weight: 1.0, horizon: 10 }
+  hold_long:     { stance: long, weight: "abs(pos)", horizon: 10 }   # weight 仅 sim/signal 有真值;靠 gate_pos 的 pos>0 守卫,勿移除
   exit_flat:     { stance: flat }
   flat_cooldown: { stance: flat }
   flat_damaged:  { stance: flat }
