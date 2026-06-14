@@ -19,3 +19,6 @@ test_output.log
 
 # 纸面盘可变状态(state/行情/信号/日志——冻结树副本与运行脚本在 deploy/ 入库)
 /paper
+
+# deep-history research data (reproducible via data/fetch_deep.cmd)
+data/*.csv
