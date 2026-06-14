@@ -20,7 +20,7 @@ params:
   cool_k: 6
   vol_mult: 1.5
   chand_n: 3.0
-  s1_on: 1.0
+  s1_on: 0.0        # Turtle S1 跳赢家门控,默认关(中性基线=纯 Donchian+冷却);WFO 扫 {0,1} 自归因
 
 factors:
   atr_v: "atr(n_atr)"
