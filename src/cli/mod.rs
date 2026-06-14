@@ -316,6 +316,18 @@ enum Cmd {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Validate fetched CSV data quality (monotonic time, gross jumps, gaps, coverage).
+    ValidateData {
+        /// Repeatable: one CSV per call.
+        #[arg(long = "csv", value_name = "PATH", required = true)]
+        csv: Vec<PathBuf>,
+        /// Optional holidays file (YYYY-MM-DD per line) for accurate gap counting.
+        #[arg(long)]
+        holidays: Option<PathBuf>,
+        /// Suspicious-jump threshold on |daily return| (default 0.21 = beyond ChiNext ±20%).
+        #[arg(long, default_value_t = 0.21)]
+        jump: f64,
+    },
 }
 
 /// Fetch K-line bars from Sina and write to a CSV file.
@@ -633,8 +645,46 @@ pub async fn main() -> anyhow::Result<()> {
                 std::process::exit(1);
             }
         }
+        Cmd::ValidateData { csv, holidays, jump } => {
+            if csv.is_empty() {
+                return Err(anyhow::anyhow!("--csv: at least one CSV path is required"));
+            }
+            let calendar = match &holidays {
+                Some(hp) => crate::data::calendar::AShareCalendar::new(
+                    crate::data::calendar::read_holidays(hp)?,
+                ),
+                None => crate::data::calendar::AShareCalendar::new(std::collections::HashSet::new()),
+            };
+            let mut any_fail = false;
+            for path in &csv {
+                let bars = crate::data::reader::read_bars_csv(path)
+                    .map_err(|e| anyhow::anyhow!("read {}: {e}", path.display()))?;
+                let q = crate::data::quality::analyze(&bars, &calendar, jump);
+                print_quality(path, &q, holidays.is_none());
+                if !q.strictly_increasing || !q.suspicious_jumps.is_empty() {
+                    any_fail = true;
+                }
+            }
+            if any_fail {
+                std::process::exit(1);
+            }
+        }
     }
     Ok(())
+}
+
+fn print_quality(path: &std::path::Path, q: &crate::data::quality::QualityReport, no_holidays: bool) {
+    println!("=== {} ===", path.display());
+    println!("  bars       : {}", q.n_bars);
+    println!("  coverage   : {} .. {}", q.first, q.last);
+    println!("  monotonic  : {}", q.strictly_increasing);
+    println!("  max |ret|  : {:.4}", q.max_abs_daily_return);
+    println!("  jumps>thr  : {}", q.suspicious_jumps.len());
+    for (t, r) in &q.suspicious_jumps {
+        println!("    - {t}  ret={r:+.4}");
+    }
+    let gap_note = if no_holidays { " (incl. market holidays; pass --holidays for accuracy)" } else { "" };
+    println!("  gaps       : {}{}", q.calendar_gaps, gap_note);
 }
 
 fn print_verdict(v: &crate::verdict::Verdict) {
