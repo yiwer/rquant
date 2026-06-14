@@ -1,5 +1,4 @@
 //! 五门槛纯函数（设计 §7.2）。
-#![allow(unused)] // Task 3-7 逐个实现后移除
 use super::{GateOutcome, GateStatus, GateThresholds};
 use crate::optimize::OptimizeReport;
 
@@ -76,9 +75,8 @@ fn min_param_consensus(reports: &[(String, OptimizeReport)]) -> Option<f64> {
     for name in &names {
         let mut bits: Vec<u64> = Vec::new();
         for (_, r) in reports {
-            if let Some(b) = &r.full_sample_best {
-                if let Some(v) = b.params.get(name) { bits.push(v.to_bits()); }
-            }
+            if let Some(b) = &r.full_sample_best
+                && let Some(v) = b.params.get(name) { bits.push(v.to_bits()); }
         }
         if bits.is_empty() { continue; }
         let total = bits.len();
@@ -207,7 +205,6 @@ mod tests {
     use super::*;
     use crate::optimize::{AxisOutcome, ComboScore, FoldResult, OptimizeReport, ParamDrift};
     use chrono::NaiveDate;
-    use std::collections::BTreeMap;
 
     fn dt() -> chrono::NaiveDateTime {
         NaiveDate::from_ymd_opt(2025, 1, 1).unwrap().and_hms_opt(0, 0, 0).unwrap()
