@@ -9,3 +9,4 @@ pub mod sina;
 pub mod universe;
 pub mod tencent;
 pub mod adjust;
+pub mod quality;

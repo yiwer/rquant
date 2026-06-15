@@ -131,6 +131,9 @@ enum Cmd {
         /// Price adjustment: none (raw, default) or qfq (forward-adjusted via Tencent daily)
         #[arg(long, default_value = "none")]
         adjust: String,
+        /// Deep history: fetch from this date (YYYY-MM-DD) via multi-window stitching (daily qfq only).
+        #[arg(long)]
+        from: Option<String>,
     },
     /// Generate today's trading signal (single-symbol paper-sim or portfolio target list)
     Signal {
@@ -316,6 +319,18 @@ enum Cmd {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Validate fetched CSV data quality (monotonic time, gross jumps, gaps, coverage).
+    ValidateData {
+        /// Repeatable: one CSV per call.
+        #[arg(long = "csv", value_name = "PATH", required = true)]
+        csv: Vec<PathBuf>,
+        /// Optional holidays file (YYYY-MM-DD per line) for accurate gap counting.
+        #[arg(long)]
+        holidays: Option<PathBuf>,
+        /// Suspicious-jump threshold on |daily return| (default 0.21 = beyond ChiNext ±20%).
+        #[arg(long, default_value_t = 0.21)]
+        jump: f64,
+    },
 }
 
 /// Fetch K-line bars from Sina and write to a CSV file.
@@ -328,6 +343,7 @@ pub async fn run_fetch_to_csv(
     base_url: &str,
     adjust: &str,
     out: &std::path::Path,
+    from: Option<chrono::NaiveDate>,
 ) -> anyhow::Result<usize> {
     if adjust != "none" && adjust != "qfq" {
         return Err(anyhow::anyhow!("--adjust must be 'none' or 'qfq'"));
@@ -336,9 +352,17 @@ pub async fn run_fetch_to_csv(
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
     let bars = if adjust == "qfq" {
-        use crate::data::tencent::{fetch_tencent_daily, TENCENT_FQKLINE_BASE};
+        use crate::data::tencent::{fetch_tencent_daily, fetch_tencent_daily_deep, TENCENT_FQKLINE_BASE};
         if scale == 240 {
-            fetch_tencent_daily(&http, TENCENT_FQKLINE_BASE, symbol, datalen, "qfq").await?
+            let raw = match from {
+                Some(earliest) => fetch_tencent_daily_deep(&http, TENCENT_FQKLINE_BASE, symbol, earliest, "qfq").await?,
+                None => fetch_tencent_daily(&http, TENCENT_FQKLINE_BASE, symbol, datalen, "qfq").await?,
+            };
+            let (clean, trimmed) = crate::data::quality::trim_incoherent_leading(&raw, 0.5);
+            if trimmed > 0 {
+                eprintln!("[rquant] trimmed {trimmed} incoherent leading qfq bars for {symbol}");
+            }
+            clean
         } else {
             // 三源合成：因子表天数 = 分钟 bar 覆盖天数 + 30 裕量（240/scale = bars/日）
             let daily_len = (datalen * scale / 240 + 30).min(1023);
@@ -463,8 +487,12 @@ pub async fn main() -> anyhow::Result<()> {
                 println!("wrote factor HTML report to {}", html_path.display());
             }
         }
-        Cmd::Fetch { symbol, scale, out, datalen, base_url, adjust } => {
-            let n = run_fetch_to_csv(&symbol, scale, datalen, &base_url, &adjust, &out).await?;
+        Cmd::Fetch { symbol, scale, out, datalen, base_url, adjust, from } => {
+            let from_date = from
+                .map(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d"))
+                .transpose()
+                .map_err(|e| anyhow::anyhow!("--from: invalid date: {e}"))?;
+            let n = run_fetch_to_csv(&symbol, scale, datalen, &base_url, &adjust, &out, from_date).await?;
             println!("wrote {} bars to {}", n, out.display());
         }
         Cmd::Signal {
@@ -487,7 +515,7 @@ pub async fn main() -> anyhow::Result<()> {
             // ── optional pre-fetch ─────────────────────────────────────────────
             if let Some(ref sym) = fetch {
                 let primary_path = primary.as_ref().unwrap();
-                let n = run_fetch_to_csv(sym, scale, datalen, SINA_BASE_URL, &adjust, primary_path).await?;
+                let n = run_fetch_to_csv(sym, scale, datalen, SINA_BASE_URL, &adjust, primary_path, None).await?;
                 println!("fetched {} bars for {} → {}", n, sym, primary_path.display());
             }
 
@@ -633,8 +661,46 @@ pub async fn main() -> anyhow::Result<()> {
                 std::process::exit(1);
             }
         }
+        Cmd::ValidateData { csv, holidays, jump } => {
+            if csv.is_empty() {
+                return Err(anyhow::anyhow!("--csv: at least one CSV path is required"));
+            }
+            let calendar = match &holidays {
+                Some(hp) => crate::data::calendar::AShareCalendar::new(
+                    crate::data::calendar::read_holidays(hp)?,
+                ),
+                None => crate::data::calendar::AShareCalendar::new(std::collections::HashSet::new()),
+            };
+            let mut any_fail = false;
+            for path in &csv {
+                let bars = crate::data::reader::read_bars_csv(path)
+                    .map_err(|e| anyhow::anyhow!("read {}: {e}", path.display()))?;
+                let q = crate::data::quality::analyze(&bars, &calendar, jump);
+                print_quality(path, &q, holidays.is_none());
+                if !q.strictly_increasing || !q.suspicious_jumps.is_empty() {
+                    any_fail = true;
+                }
+            }
+            if any_fail {
+                std::process::exit(1);
+            }
+        }
     }
     Ok(())
+}
+
+fn print_quality(path: &std::path::Path, q: &crate::data::quality::QualityReport, no_holidays: bool) {
+    println!("=== {} ===", path.display());
+    println!("  bars       : {}", q.n_bars);
+    println!("  coverage   : {} .. {}", q.first, q.last);
+    println!("  monotonic  : {}", q.strictly_increasing);
+    println!("  max |ret|  : {:.4}", q.max_abs_daily_return);
+    println!("  jumps>thr  : {}", q.suspicious_jumps.len());
+    for (t, r) in &q.suspicious_jumps {
+        println!("    - {t}  ret={r:+.4}");
+    }
+    let gap_note = if no_holidays { " (incl. market holidays; pass --holidays for accuracy)" } else { "" };
+    println!("  gaps       : {}{}", q.calendar_gaps, gap_note);
 }
 
 fn print_verdict(v: &crate::verdict::Verdict) {
