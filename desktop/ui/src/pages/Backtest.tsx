@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Alert, App as AntApp, Card, Col, Row, Spin, Tabs, Typography } from "antd";
 import { useBacktest } from "../stores/backtest";
+import { friendlyError } from "../errors";
 import BacktestConfigForm from "../components/BacktestConfigForm";
 import RunHistoryList from "../components/RunHistoryList";
 import RunOverview from "../components/RunOverview";
@@ -35,7 +36,11 @@ export default function Backtest() {
             compareIds={st.compareIds}
             onSelect={(id) => void st.select(id)}
             onToggleCompare={st.toggleCompare}
-            onDelete={(id) => void st.remove(id).catch((e) => message.error(String(e)))}
+            onDelete={(id) => void st.remove(id).catch((e) => {
+              const fe = friendlyError(String(e));
+              console.error("[run delete]", fe.detail);
+              message.error(fe.title);
+            })}
           />
         </Card>
       </Col>

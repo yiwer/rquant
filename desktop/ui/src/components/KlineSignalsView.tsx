@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
-import { Typography, Spin } from "antd";
+import { Tooltip, Typography, Spin } from "antd";
+import { InfoCircleOutlined } from "@ant-design/icons";
 import type { BarDto } from "@bindings/BarDto";
 import type { TradeDto } from "@bindings/TradeDto";
 import { api } from "../api/ipc";
@@ -63,7 +64,10 @@ export default function KlineSignalsView({
       <KlineChart bars={bars} markers={markers} />
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
         {isSim ? `${visibleCount} 笔交易标注/${trades.length} 笔共计(箭头=入场,旗标=出场)` : "打分模式无交易标注"}
-        ;显示末 2000 根
+        {" ；显示末 2000 根 "}
+        <Tooltip title="仅展示末2000根，完整数据已参与回测">
+          <InfoCircleOutlined style={{ color: "#8c8c8c" }} />
+        </Tooltip>
       </Typography.Text>
     </div>
   );

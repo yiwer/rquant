@@ -115,7 +115,7 @@ pub fn read_book_card(ws: &Workspace, book: &Book) -> BookCardDto {
                     }
                     Ok(None) => {
                         card.advice = Some(
-                            "state 未建账:等待 15:35 schtask 首跑,或手动触发 run(收盘后)".into(),
+                            "账本未初始化——运行手动触发以建立首个快照（或等待 15:35 计划任务首跑）".into(),
                         );
                     }
                     Err(e) => {
@@ -156,7 +156,7 @@ pub fn read_book_card(ws: &Workspace, book: &Book) -> BookCardDto {
                     }
                     Ok(None) => {
                         card.advice = Some(
-                            "holdings 未建账:首次 commit 在周一 15:35(周频 reb5)".into(),
+                            "账本未初始化——运行手动触发以建立首个持仓快照（周频首次 commit 在周一 15:35）".into(),
                         );
                     }
                     Err(e) => {

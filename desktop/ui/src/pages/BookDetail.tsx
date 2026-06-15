@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { Alert, Card, Descriptions, Spin, Typography } from "antd";
+import { Alert, Card, Descriptions, Spin, Tooltip, Typography } from "antd";
 import type { BookDetailDto } from "@bindings/BookDetailDto";
 import { api } from "../api/ipc";
+import { snapshotFieldZh } from "../labels";
 import NavChart from "../components/NavChart";
 
 export default function BookDetail() {
@@ -25,7 +26,12 @@ export default function BookDetail() {
       <Typography.Title level={4}>
         <Link to="/cockpit">驾驶舱</Link> / {data.card.title}
       </Typography.Title>
-      <Card size="small" title={data.card.kind === "portfolio" ? "持仓成员数(journal)" : "纸面净值(journal,自桌面端启用日积累)"} style={{ marginBottom: 12 }}>
+      <Card
+        size="small"
+        title={data.card.kind === "portfolio" ? "持仓成员数 (journal)" : "纸面净值 (journal)"}
+        extra={<Typography.Text type="secondary" style={{ fontSize: 12 }}>自桌面端启用日积累</Typography.Text>}
+        style={{ marginBottom: 12 }}
+      >
         {data.journal.length ? (
           <NavChart points={data.journal} portfolio={data.card.kind === "portfolio"} />
         ) : (
@@ -33,21 +39,51 @@ export default function BookDetail() {
         )}
       </Card>
       {s && (
-        <Card size="small" title="AccountSnapshot(13 字段,只读)">
+        <Card
+          size="small"
+          title={
+            <span>
+              持仓快照{" "}
+              <Typography.Text type="secondary" style={{ fontSize: 12, fontWeight: "normal" }}>
+                只读 · 13 字段
+              </Typography.Text>
+            </span>
+          }
+        >
           <Descriptions size="small" column={3} bordered>
-            <Descriptions.Item label="pos">{s.pos}</Descriptions.Item>
-            <Descriptions.Item label="entry_price">{s.entry_price?.toFixed(2) ?? "—"}</Descriptions.Item>
-            <Descriptions.Item label="bars_held">{s.bars_held}</Descriptions.Item>
-            <Descriptions.Item label="nav">{s.nav.toFixed(6)}</Descriptions.Item>
-            <Descriptions.Item label="peak_nav">{s.peak_nav.toFixed(6)}</Descriptions.Item>
-            <Descriptions.Item label="max_drawdown">{(s.max_drawdown * 100).toFixed(2)}%</Descriptions.Item>
-            <Descriptions.Item label="turnover">{s.turnover.toFixed(4)}</Descriptions.Item>
-            <Descriptions.Item label="last_increase_date">{s.last_increase_date ?? "—"}</Descriptions.Item>
-            <Descriptions.Item label="max_price_since_entry">{s.max_price_since_entry?.toFixed(2) ?? "—"}</Descriptions.Item>
-            <Descriptions.Item label="min_price_since_entry">{s.min_price_since_entry?.toFixed(2) ?? "—"}</Descriptions.Item>
-            <Descriptions.Item label="bars_since_exit">{s.bars_since_exit ?? "—"}</Descriptions.Item>
-            <Descriptions.Item label="last_trip_return">{s.last_trip_return ?? "—"}</Descriptions.Item>
-            <Descriptions.Item label="trip">{s.trip ? JSON.stringify(s.trip) : "—"}</Descriptions.Item>
+            {(["pos","entry_price","bars_held","nav","peak_nav","max_drawdown","turnover",
+               "last_increase_date","max_price_since_entry","min_price_since_entry",
+               "bars_since_exit","last_trip_return","trip"] as const).map((key) => {
+              const value = (() => {
+                switch (key) {
+                  case "pos": return s.pos;
+                  case "entry_price": return s.entry_price?.toFixed(2) ?? "—";
+                  case "bars_held": return s.bars_held;
+                  case "nav": return s.nav.toFixed(6);
+                  case "peak_nav": return s.peak_nav.toFixed(6);
+                  case "max_drawdown": return `${(s.max_drawdown * 100).toFixed(2)}%`;
+                  case "turnover": return s.turnover.toFixed(4);
+                  case "last_increase_date": return s.last_increase_date ?? "—";
+                  case "max_price_since_entry": return s.max_price_since_entry?.toFixed(2) ?? "—";
+                  case "min_price_since_entry": return s.min_price_since_entry?.toFixed(2) ?? "—";
+                  case "bars_since_exit": return s.bars_since_exit ?? "—";
+                  case "last_trip_return": return s.last_trip_return ?? "—";
+                  case "trip": return s.trip ? JSON.stringify(s.trip) : "—";
+                }
+              })();
+              return (
+                <Descriptions.Item
+                  key={key}
+                  label={
+                    <Tooltip title={<span style={{ fontFamily: "monospace" }}>{key}</span>}>
+                      {snapshotFieldZh(key)}
+                    </Tooltip>
+                  }
+                >
+                  {value}
+                </Descriptions.Item>
+              );
+            })}
           </Descriptions>
         </Card>
       )}

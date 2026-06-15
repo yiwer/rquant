@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { TERM } from "../labels";
+import { friendlyError } from "../errors";
 import { Card, Table, Typography } from "antd";
 import * as echarts from "echarts";
 import type { RunSummaryDto } from "@bindings/RunSummaryDto";
@@ -50,7 +52,9 @@ export default function CompareView({ ids }: { ids: [string, string] }) {
     void Promise.all(ids.map((id) => api.runSummary(id))).then((s) => {
       if (!cancelled) setSums(s);
     }).catch((e) => {
-      if (!cancelled) setLoadErr(String(e));
+      const fe = friendlyError(String(e));
+      console.error("[compare load]", fe.detail);
+      if (!cancelled) setLoadErr(fe.title);
     });
     void Promise.all(
       ids.map((id) => api.runEquity(id).catch((): EquityPointDto[] => []))
@@ -70,15 +74,15 @@ export default function CompareView({ ids }: { ids: [string, string] }) {
     { k: "交易数", a: a.n_round_trips ?? "—", b: b.n_round_trips ?? "—" },
     { k: "胜率", a: pct(a.win_rate), b: pct(b.win_rate) },
     { k: "换手", a: a.turnover?.toFixed(1) ?? "—", b: b.turnover?.toFixed(1) ?? "—" },
-    { k: "bh对照", a: pct(a.buy_and_hold), b: pct(b.buy_and_hold) },
+    { k: TERM.benchmark, a: pct(a.buy_and_hold), b: pct(b.buy_and_hold) },
   ];
   return (
     <div>
-      <Card size="small" title="净值曲线叠加(nav 口径,资金无关)" style={{ marginBottom: 12 }}>
+      <Card size="small" title="净值曲线叠加" style={{ marginBottom: 12 }}>
         {curves[0].length || curves[1].length ? (
           <OverlayChart a={curves[0]} b={curves[1]} an={a.meta.name} bn={b.meta.name} />
         ) : (
-          <Typography.Text type="secondary">至少一侧无曲线(打分模式)</Typography.Text>
+          <Typography.Text type="secondary">至少一侧数据缺失（打分模式无资金曲线）</Typography.Text>
         )}
       </Card>
       <Table

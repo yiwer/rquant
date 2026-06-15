@@ -1,5 +1,6 @@
 import { Checkbox, List, Popconfirm, Tag, Typography } from "antd";
 import type { RunMetaDto } from "@bindings/RunMetaDto";
+import { modeZh } from "../labels";
 
 const KIND_TAG: Record<string, string> = {
   sim_hard: "blue", sim_soft: "geekblue", score_hard: "purple", score_soft: "magenta",
@@ -41,7 +42,7 @@ export default function RunHistoryList({
           <List.Item.Meta
             title={
               <>
-                <Tag color={r.ok ? KIND_TAG[r.kind] ?? "default" : "red"}>{r.ok ? r.kind : "失败"}</Tag>
+                <Tag color={r.ok ? KIND_TAG[r.kind] ?? "default" : "red"}>{r.ok ? modeZh(r.kind) : "失败"}</Tag>
                 {r.name}
               </>
             }

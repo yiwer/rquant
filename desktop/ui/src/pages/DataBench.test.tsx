@@ -24,9 +24,13 @@ import DataBench from "./DataBench";
 
 test("data bench lists csvs with freshness and universes", async () => {
   render(<AntApp><DataBench /></AntApp>);
-  await waitFor(() => expect(screen.getByText("paper/p_sh600030.csv")).toBeInTheDocument());
+  // Primary title now extracted from basename: p_sh600030.csv → "sh600030"
+  await waitFor(() => expect(screen.getByText("sh600030")).toBeInTheDocument());
+  // Path still shown as secondary grey text in description
+  expect(screen.getByText("paper/p_sh600030.csv")).toBeInTheDocument();
   expect(screen.getByText(/942 根/)).toBeInTheDocument();
   expect(screen.getByText("解析失败")).toBeInTheDocument();
   expect(screen.getByText("universe_10")).toBeInTheDocument();
-  expect(screen.getByText("deploy 只读")).toBeInTheDocument();
+  // frozen tag changed from "deploy 只读" → "内置"
+  expect(screen.getByText("内置")).toBeInTheDocument();
 });

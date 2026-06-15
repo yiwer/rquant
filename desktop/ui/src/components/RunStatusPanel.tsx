@@ -22,10 +22,10 @@ export default function RunStatusPanel({
       </div>
       <div style={{ marginTop: 8 }}>
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          schtask: {schtask ? `${schtask.status ?? "?"} · 下次 ${schtask.next_run ?? "?"}` : "未检测到 rquant-paper"}
+          计划任务: {schtask ? `${schtask.status ?? "?"} · 下次 ${schtask.next_run ?? "?"}` : "未检测到计划任务（rquant-paper）"}
         </Typography.Text>
       </div>
-      <Typography.Link onClick={onOpenLog}>查看 run.log</Typography.Link>
+      <Typography.Link onClick={onOpenLog}>查看运行日志</Typography.Link>
     </Card>
   );
 }

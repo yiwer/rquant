@@ -1,10 +1,13 @@
-import { Button, Form, InputNumber, Select, Space, Switch, Typography } from "antd";
+import { Alert, Button, Form, InputNumber, Popover, Select, Space, Switch, Tooltip, Typography } from "antd";
 import { App as AntApp } from "antd";
+import { QuestionCircleOutlined } from "@ant-design/icons";
 import { useEffect, useState } from "react";
 import type { TreeInfoDto } from "@bindings/TreeInfoDto";
 import type { CsvInfoDto } from "@bindings/CsvInfoDto";
 import type { BacktestConfigDto } from "@bindings/BacktestConfigDto";
 import { api } from "../api/ipc";
+import { modeZh, MODE_GLOSS, TERM } from "../labels";
+import { friendlyError } from "../errors";
 
 export default function BacktestConfigForm({ onStarted }: { onStarted: (taskId: string) => void }) {
   const { message } = AntApp.useApp();
@@ -13,6 +16,9 @@ export default function BacktestConfigForm({ onStarted }: { onStarted: (taskId: 
   const [useFetch, setUseFetch] = useState(false);
   const [starting, setStarting] = useState(false);
   const [form] = Form.useForm();
+
+  // 加载失败的树列表，用于在表单下方展示详情
+  const failedTrees = trees.filter((t) => !t.name);
 
   useEffect(() => {
     api.treeList().then(setTrees).catch(() => {});
@@ -39,7 +45,9 @@ export default function BacktestConfigForm({ onStarted }: { onStarted: (taskId: 
       message.success(`回测已启动(任务 ${taskId})`);
       onStarted(taskId);
     } catch (e) {
-      message.error(String(e));
+      const fe = friendlyError(String(e));
+      message.error(fe.title);
+      console.error("[backtest start]", fe.detail);
     } finally {
       setStarting(false);
     }
@@ -89,31 +97,55 @@ export default function BacktestConfigForm({ onStarted }: { onStarted: (taskId: 
             showSearch
             options={csvs.map((c) => ({
               value: c.path,
-              label: `${c.path}${c.rows != null ? ` (${c.rows}根,至${c.last_t})` : " (解析失败)"}`,
+              label: `${c.path}${c.rows != null ? ` (共${c.rows}根K线,至${c.last_t})` : " (解析失败)"}`,
               disabled: c.rows == null,
             }))}
           />
         </Form.Item>
       )}
       <Space wrap>
-        <Form.Item name="mode" label="模式">
+        <Form.Item
+          name="mode"
+          label={
+            <Space size={4}>
+              模式
+              <Popover content={MODE_GLOSS} title="模式说明">
+                <QuestionCircleOutlined style={{ color: "#8c8c8c", cursor: "pointer" }} />
+              </Popover>
+            </Space>
+          }
+        >
           <Select
             style={{ width: 130 }}
             options={[
-              { value: "sim_hard", label: "sim·硬" },
-              { value: "sim_soft", label: "sim·软" },
-              { value: "score_hard", label: "打分·硬" },
-              { value: "score_soft", label: "打分·软" },
+              { value: "sim_hard", label: modeZh("sim_hard") },
+              { value: "sim_soft", label: modeZh("sim_soft") },
+              { value: "score_hard", label: modeZh("score_hard") },
+              { value: "score_soft", label: modeZh("score_soft") },
             ]}
           />
         </Form.Item>
-        <Form.Item name="cost_bps" label="成本bps">
+        <Form.Item name="cost_bps" label={`成本(${TERM.bps})`}>
           <InputNumber min={0} />
         </Form.Item>
-        <Form.Item name="warmup" label="warmup">
+        <Form.Item
+          name="warmup"
+          label={
+            <Tooltip title="回测预热根数，非数据拉取参数">
+              {TERM.warmup}
+            </Tooltip>
+          }
+        >
           <InputNumber min={0} />
         </Form.Item>
-        <Form.Item name="window" label="window">
+        <Form.Item
+          name="window"
+          label={
+            <Tooltip title="滚动回溯窗口根数，非数据拉取参数">
+              {TERM.window}
+            </Tooltip>
+          }
+        >
           <InputNumber min={10} />
         </Form.Item>
         <Form.Item name="initial_capital" label="初始资金(元)">
@@ -123,6 +155,24 @@ export default function BacktestConfigForm({ onStarted }: { onStarted: (taskId: 
       <Button type="primary" loading={starting} onClick={() => void submit()}>
         运行回测
       </Button>
+      {failedTrees.length > 0 && (
+        <Alert
+          type="warning"
+          style={{ marginTop: 8 }}
+          message="部分决策树加载失败"
+          description={
+            <ul style={{ margin: 0, paddingLeft: 16 }}>
+              {failedTrees.map((t) => (
+                <li key={t.path}>
+                  <Typography.Text code>{t.path}</Typography.Text>
+                  {" — "}
+                  {t.error ?? "解析失败，请检查 YAML"}
+                </li>
+              ))}
+            </ul>
+          }
+        />
+      )}
     </Form>
   );
 }

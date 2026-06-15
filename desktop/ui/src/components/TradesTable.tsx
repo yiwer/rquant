@@ -23,13 +23,13 @@ export default function TradesTable({ runId }: { runId: string }) {
       rowKey={(r) => `${r.entry_t}-${r.exit_t}`}
       dataSource={rows}
       pagination={{ pageSize: 20 }}
-      locale={{ emptyText: "无交易(打分模式或全程空仓)" }}
+      locale={{ emptyText: "无交易（打分模式或全程无持仓）" }}
       columns={[
         { title: "入场", dataIndex: "entry_t" },
         { title: "出场", dataIndex: "exit_t" },
         { title: "入场价", dataIndex: "entry_px", render: (v: number) => v.toFixed(2) },
         { title: "出场价", dataIndex: "exit_px", render: (v: number) => v.toFixed(2) },
-        { title: "持有bars", dataIndex: "bars_held" },
+        { title: "持仓根数", dataIndex: "bars_held" },
         {
           title: "收益率",
           dataIndex: "trip_return",
@@ -40,7 +40,7 @@ export default function TradesTable({ runId }: { runId: string }) {
           ),
         },
         {
-          title: <Tooltip title="资金×trip_return,单利近似口径">盈亏额*</Tooltip>,
+          title: <Tooltip title="按简单收益率近似（资金×回合收益率）">盈亏额*</Tooltip>,
           dataIndex: "pnl_amount",
           render: (v: number) => v.toLocaleString("zh-CN", { maximumFractionDigits: 0 }),
         },
