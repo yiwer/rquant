@@ -1,6 +1,6 @@
 use crate::data::bar::Bar;
 use crate::{Error, Result};
-use chrono::NaiveDateTime;
+use chrono::{NaiveDate, NaiveDateTime};
 
 /// 腾讯 fqkline 端点（日线复权数据源；2026-06 验证可用）。
 pub const TENCENT_FQKLINE_BASE: &str = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get";
@@ -87,26 +87,24 @@ async fn fetch_once_tencent(http: &reqwest::Client, url: &str) -> Result<String>
         .map_err(|e| Error::Data(format!("tencent read body: {e}")))
 }
 
-/// 拉腾讯日线（带重试，mirror sina）。
-/// end = 本地今日；start = end − ceil(datalen×1.7) 自然日（覆盖节假日空隙）。
-pub async fn fetch_tencent_daily(
+/// 拉单个窗口（显式 end 日期 + count，带重试）。供今日拉取与深拉复用。
+async fn fetch_tencent_window(
     http: &reqwest::Client,
     base_url: &str,
     symbol: &str,
-    datalen: u32,
+    end: NaiveDate,
+    count: u32,
     adjust: &str,
 ) -> Result<Vec<Bar>> {
-    let end = chrono::Local::now().date_naive();
-    let start = end - chrono::Days::new((datalen as f64 * 1.7).ceil() as u64);
+    let start = end - chrono::Days::new((count as f64 * 1.7).ceil() as u64);
     let url = tencent_fqkline_url(
         base_url,
         symbol,
         &start.format("%Y-%m-%d").to_string(),
         &end.format("%Y-%m-%d").to_string(),
-        datalen,
+        count,
         adjust,
     );
-    // 重试循环 mirror sina（3 次；解析失败/网络错误均可重试；全部失败 → Error::Data）
     let max_retries = 2u32;
     let mut last = String::from("no attempt");
     for _ in 0..=max_retries {
@@ -118,7 +116,73 @@ pub async fn fetch_tencent_daily(
             Err(e) => last = e.to_string(),
         }
     }
-    Err(Error::Data(format!("tencent fetch failed after retries: {last}")))
+    Err(Error::Data(format!("tencent window fetch failed after retries: {last}")))
+}
+
+/// 拉腾讯日线（带重试，mirror sina）。
+/// end = 本地今日；行为不变——今日单窗口语义。
+pub async fn fetch_tencent_daily(
+    http: &reqwest::Client,
+    base_url: &str,
+    symbol: &str,
+    datalen: u32,
+    adjust: &str,
+) -> Result<Vec<Bar>> {
+    let end = chrono::Local::now().date_naive();
+    fetch_tencent_window(http, base_url, symbol, end, datalen, adjust).await
+}
+
+/// 规划倒退式窗口 end 序列：从 latest 起按 1.4×bars 自然日步退，
+/// 直到某窗口覆盖起点（end − 1.7×bars 天）<= earliest。步距 < 覆盖 → 必重叠。
+pub fn plan_window_ends(earliest: NaiveDate, latest: NaiveDate, bars_per_window: usize) -> Vec<NaiveDate> {
+    let step = chrono::Days::new((bars_per_window as f64 * 1.4).ceil() as u64);
+    let cover = chrono::Days::new((bars_per_window as f64 * 1.7).ceil() as u64);
+    let mut ends = Vec::new();
+    let mut end = latest;
+    loop {
+        ends.push(end);
+        if end - cover <= earliest {
+            break;
+        }
+        end = end - step;
+    }
+    ends
+}
+
+/// 合并多窗口 bar：按 time 去重（首见为准；同日同数据）、升序。
+pub fn merge_dedup_bars(chunks: Vec<Vec<Bar>>) -> Vec<Bar> {
+    use std::collections::BTreeMap;
+    let mut by_time: BTreeMap<NaiveDateTime, Bar> = BTreeMap::new();
+    for chunk in chunks {
+        for b in chunk {
+            by_time.entry(b.time).or_insert(b);
+        }
+    }
+    by_time.into_values().collect()
+}
+
+/// 深拉日线：多窗口拼接覆盖 [earliest, today]，去重合并、过滤到 earliest 起。
+pub async fn fetch_tencent_daily_deep(
+    http: &reqwest::Client,
+    base_url: &str,
+    symbol: &str,
+    earliest: NaiveDate,
+    adjust: &str,
+) -> Result<Vec<Bar>> {
+    const BARS_PER_WINDOW: usize = 600; // 安全低于 ~640 实测上限
+    let latest = chrono::Local::now().date_naive();
+    let ends = plan_window_ends(earliest, latest, BARS_PER_WINDOW);
+    let mut chunks = Vec::with_capacity(ends.len());
+    for end in ends {
+        chunks.push(
+            fetch_tencent_window(http, base_url, symbol, end, BARS_PER_WINDOW as u32, adjust).await?,
+        );
+    }
+    let merged = merge_dedup_bars(chunks);
+    Ok(merged
+        .into_iter()
+        .filter(|b| b.time.date() >= earliest)
+        .collect())
 }
 
 #[cfg(test)]
@@ -170,5 +234,35 @@ mod tests {
     fn url_shape() {
         let u = tencent_fqkline_url(TENCENT_FQKLINE_BASE, "sh601398", "2024-01-01", "2026-06-11", 500, "qfq");
         assert_eq!(u, "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=sh601398,day,2024-01-01,2026-06-11,500,qfq");
+    }
+
+    #[test]
+    fn plan_windows_cover_span_with_overlap() {
+        use chrono::NaiveDate;
+        let e = NaiveDate::from_ymd_opt(2018, 1, 1).unwrap();
+        let l = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        let ends = plan_window_ends(e, l, 600);
+        assert_eq!(ends[0], l, "首窗 end = latest");
+        // 末窗覆盖起点（end - 1.7*600 天）须 <= earliest
+        let cover_days = (600f64 * 1.7).ceil() as i64;
+        let last_cover_start = *ends.last().unwrap() - chrono::Days::new(cover_days as u64);
+        assert!(last_cover_start <= e, "末窗须覆盖到 earliest");
+        // 相邻 end 步距 = 1.4*600 天（< 覆盖 1.7*600 → 必重叠）
+        let step = (600f64 * 1.4).ceil() as i64;
+        assert_eq!((ends[0] - ends[1]).num_days(), step);
+    }
+
+    #[test]
+    fn merge_dedup_sorts_and_dedups_by_time() {
+        use chrono::NaiveDate;
+        let t = |d: u32| NaiveDate::from_ymd_opt(2024,1,d).unwrap().and_hms_opt(15,0,0).unwrap();
+        let b = |d: u32, c: f64| Bar { time: t(d), open: c, high: c, low: c, close: c, volume: 1.0 };
+        // 两窗口重叠日期 2、3
+        let w1 = vec![b(1,10.0), b(2,10.1), b(3,10.2)];
+        let w2 = vec![b(2,10.1), b(3,10.2), b(4,10.3)];
+        let m = merge_dedup_bars(vec![w2, w1]); // 乱序输入
+        assert_eq!(m.len(), 4);
+        assert_eq!(m[0].time, t(1)); // 升序
+        assert_eq!(m[3].time, t(4));
     }
 }
