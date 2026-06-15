@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Card, Col, Row, Segmented, Spin, Statistic, Typography } from "antd";
+import { Card, Col, Row, Segmented, Spin, Statistic, Tooltip, Typography } from "antd";
 import * as echarts from "echarts";
+import { TERM } from "../labels";
 import type { RunSummaryDto } from "@bindings/RunSummaryDto";
 import type { EquityPointDto } from "@bindings/EquityPointDto";
 import { api } from "../api/ipc";
@@ -70,7 +71,7 @@ export default function RunOverview({ summary }: { summary: RunSummaryDto }) {
     return (
       <Card size="small" title={`打分结果 · ${summary.meta.tree_name}`}>
         <Typography.Paragraph type="secondary">
-          打分模式概览为原样关键字段(完整内容见"原始"标签)。
+          打分模式：见"原始"标签查看完整字段。
         </Typography.Paragraph>
         <pre style={{ fontSize: 12, maxHeight: 360, overflow: "auto" }}>
           {JSON.stringify(summary.raw, null, 2)?.slice(0, 4000)}
@@ -95,10 +96,15 @@ export default function RunOverview({ summary }: { summary: RunSummaryDto }) {
           <Card size="small"><Statistic title="最大回撤" value={pct(summary.max_drawdown)} /></Card>
         </Col>
         <Col span={4}>
-          <Card size="small"><Statistic title="Sharpe" value={summary.sharpe?.toFixed(2) ?? "—"} /></Card>
+          <Card size="small">
+            <Statistic
+              title={<Tooltip title="夏普比率">Sharpe</Tooltip>}
+              value={summary.sharpe?.toFixed(2) ?? "—"}
+            />
+          </Card>
         </Col>
         <Col span={4}>
-          <Card size="small"><Statistic title="bh对照" value={pct(summary.buy_and_hold)} /></Card>
+          <Card size="small"><Statistic title={TERM.benchmark} value={pct(summary.buy_and_hold)} /></Card>
         </Col>
       </Row>
       <Card

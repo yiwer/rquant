@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { RunMetaDto } from "@bindings/RunMetaDto";
 import type { RunSummaryDto } from "@bindings/RunSummaryDto";
 import { api as realApi, type Api } from "../api/ipc";
+import { friendlyError } from "../errors";
 
 interface BacktestState {
   api: Api;
@@ -35,7 +36,9 @@ export const useBacktest = create<BacktestState>((set, get) => ({
     try {
       set({ summary: await get().api.runSummary(id) });
     } catch (e) {
-      set({ summary: null, selectError: String(e) });
+      const fe = friendlyError(String(e));
+      console.error("[run select]", fe.detail);
+      set({ summary: null, selectError: fe.title });
     }
   },
   toggleCompare: (id) =>

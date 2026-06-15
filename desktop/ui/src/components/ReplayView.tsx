@@ -100,7 +100,7 @@ export default function ReplayView({ runId }: { runId: string }) {
               columns={[
                 { title: "因子", dataIndex: "name" },
                 { title: "值", dataIndex: "value",
-                  render: (v: number | null) => (v == null ? <Tag>NaN/弃权</Tag> : v.toFixed(6)) },
+                  render: (v: number | null) => (v == null ? <Tag>缺失</Tag> : v.toFixed(6)) },
               ]}
             />
           </Card>
