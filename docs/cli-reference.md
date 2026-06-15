@@ -125,8 +125,9 @@ rquant fetch [OPTIONS]
 | `--symbol <string>` | string | 必填 | 股票代码，如 `sh600000`（沪）/ `sz000001`（深） |
 | `--scale <u32>` | u32 | 必填 | K 线周期（分钟）：`15`、`60`、`240`（日线别名） |
 | `--out <PATH>` | PathBuf | 必填 | 输出 CSV 路径 |
-| `--datalen <u32>` | u32 | `1023` | 最多拉取的 bar 数，新浪上限 1023 |
+| `--datalen <u32>` | u32 | `1023` | 最多拉取的 bar 数，新浪上限 1023（单窗口模式；`--from` 启用时忽略） |
 | `--adjust <string>` | string | `none` | 复权方式：`none`（raw，不复权）/ `qfq`（前复权，via 腾讯日线） |
+| `--from <YYYY-MM-DD>` | string | 可选 | 深历史起始日；启用多窗口拼接深拉（仅 `--adjust qfq --scale 240`） |
 | `--base-url <string>` | string | `https://quotes.sina.cn/cn/api/json_v2.php` | 新浪 API 端点 base URL |
 
 ### 说明
@@ -137,13 +138,91 @@ rquant fetch [OPTIONS]
 
 **`--adjust qfq` 三源合成原理（分钟线）**：当日复权因子 = 腾讯前复权日线 close ÷ 腾讯 raw 日线 close；该因子乘到新浪分钟 OHLC 各价格上（volume 不动）。日线（scale=240）则直接从腾讯 fqkline 拉取前复权日线，不经合成。
 
+**`--from` 深历史模式（多窗口拼接）**：Tencent fqkline 每次请求实测封顶约 640 根。`--from <date>` 触发多窗口拼接引擎：
+
+1. 从今日起按 1.4×600 自然日为步长倒退，规划覆盖 `[from, today]` 的窗口序列（每窗上限 600，重叠保证无遗漏）。
+2. 对每个窗口独立请求 Tencent，按时间去重合并（BTreeMap 首见为准）。
+3. 过滤保留 `>= from` 的 bar，再经 `trim_incoherent_leading`（阈值 0.5）剔除前导 qfq 伪影（负价 / 巨幅前复权跳空）。
+
+限制：`--from` 仅在 `--adjust qfq --scale 240` 组合下生效；其他复权方式或分钟线走原有单窗口路径。
+
+### 深历史工作流示例
+
+```bat
+REM 拉取中信证券 2018-01-01 至今的日线前复权数据
+rquant fetch --symbol sh600030 --scale 240 --adjust qfq --from 2018-01-01 --out data\sh600030.csv
+
+REM 批量拉取（见 data/fetch_deep.cmd）
+data\fetch_deep.cmd
+
+REM 校验拉取质量
+rquant validate-data --csv data\sh600030.csv --csv data\sh600036.csv ...
+```
+
 ### 数据源表
 
 | 数据源 | 用途 | 说明 |
 |---|---|---|
 | 新浪 `quotes.sina.cn` | 分钟 raw OHLCV（scale < 240） | 不复权原始价格，`--adjust none` 的唯一来源 |
 | 腾讯 `web.ifzq.gtimg.cn` fqkline（`day` 键） | 日线 raw close（因子分母） | 仅在 `--adjust qfq` + 分钟线时拉取 |
-| 腾讯 `web.ifzq.gtimg.cn` fqkline（`qfqday` 键） | 日线前复权 close（因子分子）/ scale=240 直接输出 | `--adjust qfq` 的前复权来源 |
+| 腾讯 `web.ifzq.gtimg.cn` fqkline（`qfqday` 键） | 日线前复权 close（因子分子）/ scale=240 直接输出；`--from` 深拉亦走此键 | `--adjust qfq` 的前复权来源 |
+
+---
+
+## `validate-data` 子命令
+
+```
+rquant validate-data --csv <PATH> [--csv <PATH>...] [--holidays <PATH>] [--jump <f64>]
+```
+
+对拉取的 CSV K 线做数据质量硬闸校验，打印每文件的质量画像，遇到不合格数据以退出码 1 退出。供 CI 或手动管道使用。
+
+### 标志一览
+
+| 标志 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `--csv <PATH>`（可重复，必填）| PathBuf | — | 待校验的 CSV 路径；至少一个，可多次指定 |
+| `--holidays <PATH>` | PathBuf | 可选 | 节假日文件（每行 `YYYY-MM-DD`）；提供时缺口计数扣除市场假日，更精确 |
+| `--jump <f64>` | f64 | `0.21` | 可疑跳空阈值：`|相邻收盘日收益| > jump` 时标记（默认 0.21，即超出沪深主板 ±20% 涨跌停） |
+
+### 输出格式（每文件）
+
+```
+=== data/sh600030.csv ===
+  bars       : 2030
+  coverage   : 2018-01-02 15:00:00 .. 2026-06-12 15:00:00
+  monotonic  : true
+  max |ret|  : 0.1175
+  jumps>thr  : 0
+  gaps       : 174 (incl. market holidays; pass --holidays for accuracy)
+```
+
+- `bars`：序列总长度
+- `coverage`：首末 bar 时刻
+- `monotonic`：时间严格递增（`false` = 有重复或逆序，硬闸触发）
+- `max |ret|`：最大绝对值相邻收盘收益
+- `jumps>thr`：超阈值跳空数（每跳打印时刻与收益率）
+- `gaps`：相对 A 股交易日历的意外缺失日数；未传 `--holidays` 时含市场假日（信息性，非硬闸触发条件）
+
+### 退出码
+
+| 退出码 | 触发条件 |
+|---|---|
+| `0` | 所有文件时间单调且无超阈值跳空 |
+| `1` | 任一文件时间不单调，或任一文件有 `>=1` 个超阈值跳空 |
+
+**缺口不触发硬闸**：缺口数（`gaps`）仅作信息性打印，不影响退出码。原因：未传 `--holidays` 时缺口计数含市场假日（A 股节假日每年约 25-30 天），非真实数据缺失。
+
+### 与深历史工作流的关系
+
+`validate-data` 是 `fetch --from` 后的建议验收步骤：
+
+```
+rquant fetch --from 2018-01-01 ... → data/*.csv
+rquant validate-data --csv data/*.csv  → 确认 monotonic + 无非预期跳空
+```
+
+对已知预期跳空（如高分红股 qfq 除息伪影、新股 IPO 涨停板），`validate-data` 仍会上报（诚实边界）；使用者应逐条排查，确认属数据源特性后可手动豁免（详见 `docs/superpowers/2026-06-14-data-expansion-coverage.md` 异常排查节）。
 
 ---
 
