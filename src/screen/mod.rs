@@ -81,7 +81,7 @@ async fn score_and_leaf(
     if !is_fresh(primary, t) {
         return Ok(None);
     }
-    let ctx = crate::features::context::build_context(primary, context, &[], aux, t, window);
+    let ctx = crate::features::context::build_context(primary, context, &[], aux, None, t, window);
     let tr = crate::engine::traversal::traverse(tree, &ctx, llm).await?;
     let score = tree.leaves.get(&tr.leaf).map_or(0.0, |l| l.weight_at(&ctx) * dir(l.stance));
     Ok(Some((score, tr.leaf.clone())))

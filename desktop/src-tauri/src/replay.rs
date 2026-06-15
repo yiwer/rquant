@@ -104,6 +104,7 @@ pub fn replay_factors(ws: &Workspace, id: &str, t: &str) -> Result<Vec<FactorVal
         &bars,
         &[],
         &Default::default(),
+        None,
         t_parsed,
         config.window as usize,
     );

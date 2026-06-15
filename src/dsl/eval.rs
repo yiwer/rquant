@@ -566,7 +566,7 @@ mod tests {
             })
             .collect();
         let t = bars.last().unwrap().time;
-        Context { t, primary: Window { bars: bars.clone() }, context: Window { bars }, news: None, aux: std::collections::BTreeMap::new(), sim: crate::features::context::SimState::default(), eval_cache: Default::default() }
+        Context { t, primary: Window { bars: bars.clone() }, context: Window { bars }, news: None, aux: std::collections::BTreeMap::new(), sim: crate::features::context::SimState::default(), fundamentals: std::collections::BTreeMap::new(), eval_cache: Default::default() }
     }
 
     #[test]
@@ -927,6 +927,7 @@ mod tests {
             news: None,
             aux: std::collections::BTreeMap::new(),
             sim: crate::features::context::SimState::default(),
+            fundamentals: std::collections::BTreeMap::new(),
             eval_cache: Default::default(),
         }
     }
@@ -954,6 +955,7 @@ mod tests {
             news: None,
             aux: std::collections::BTreeMap::new(),
             sim: crate::features::context::SimState::default(),
+            fundamentals: std::collections::BTreeMap::new(),
             eval_cache: Default::default(),
         }
     }
@@ -986,6 +988,7 @@ mod tests {
             news: None,
             aux: std::collections::BTreeMap::new(),
             sim: crate::features::context::SimState::default(),
+            fundamentals: std::collections::BTreeMap::new(),
             eval_cache: Default::default(),
         }
     }

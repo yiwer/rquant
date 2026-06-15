@@ -955,6 +955,7 @@ leaves:
             news: None,
             aux: std::collections::BTreeMap::new(),
             sim: crate::features::context::SimState::default(),
+            fundamentals: std::collections::BTreeMap::new(),
             eval_cache: Default::default(),
         }
     }
@@ -1215,7 +1216,7 @@ leaves:
             })
             .collect();
         let ctx = crate::features::context::build_context(
-            &bars, &bars, &[], &std::collections::BTreeMap::new(), bars[4].time, 5,
+            &bars, &bars, &[], &std::collections::BTreeMap::new(), None, bars[4].time, 5,
         );
         let v = crate::dsl::eval::eval(&factors[1].1, &ctx).unwrap();
         let last = match v {
@@ -1290,6 +1291,7 @@ leaves:
             news: None,
             aux: std::collections::BTreeMap::new(),
             sim: crate::features::context::SimState::default(),
+            fundamentals: std::collections::BTreeMap::new(),
             eval_cache: Default::default(),
         }
     }

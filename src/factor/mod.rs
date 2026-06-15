@@ -206,6 +206,7 @@ pub(crate) fn collect_periods(
                 ctx_bars,
                 &[],
                 &empty_aux,
+                None,
                 t,
                 cfg.window,
             );

@@ -127,6 +127,7 @@ leaves:
             news: None,
             aux: BTreeMap::new(),
             sim: crate::features::context::SimState::default(),
+            fundamentals: std::collections::BTreeMap::new(),
             eval_cache: Default::default(),
         };
 
