@@ -25,6 +25,6 @@ test("replay shows latest frame path and factors", async () => {
   render(<ReplayView runId="20260612-210000-0a1b-01" />);
   await waitFor(() => expect(screen.getByText(/决策路径 @ 2026-01-05T12:00:00/)).toBeInTheDocument());
   expect(screen.getByText("default")).toBeInTheDocument();
-  expect(screen.getByText("ma")).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByText("ma")).toBeInTheDocument());
   expect(screen.getByText("10.200000")).toBeInTheDocument();
 });
