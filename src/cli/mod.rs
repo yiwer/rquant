@@ -131,6 +131,9 @@ enum Cmd {
         /// Price adjustment: none (raw, default) or qfq (forward-adjusted via Tencent daily)
         #[arg(long, default_value = "none")]
         adjust: String,
+        /// Deep history: fetch from this date (YYYY-MM-DD) via multi-window stitching (daily qfq only).
+        #[arg(long)]
+        from: Option<String>,
     },
     /// Generate today's trading signal (single-symbol paper-sim or portfolio target list)
     Signal {
@@ -340,6 +343,7 @@ pub async fn run_fetch_to_csv(
     base_url: &str,
     adjust: &str,
     out: &std::path::Path,
+    from: Option<chrono::NaiveDate>,
 ) -> anyhow::Result<usize> {
     if adjust != "none" && adjust != "qfq" {
         return Err(anyhow::anyhow!("--adjust must be 'none' or 'qfq'"));
@@ -348,9 +352,17 @@ pub async fn run_fetch_to_csv(
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
     let bars = if adjust == "qfq" {
-        use crate::data::tencent::{fetch_tencent_daily, TENCENT_FQKLINE_BASE};
+        use crate::data::tencent::{fetch_tencent_daily, fetch_tencent_daily_deep, TENCENT_FQKLINE_BASE};
         if scale == 240 {
-            fetch_tencent_daily(&http, TENCENT_FQKLINE_BASE, symbol, datalen, "qfq").await?
+            let raw = match from {
+                Some(earliest) => fetch_tencent_daily_deep(&http, TENCENT_FQKLINE_BASE, symbol, earliest, "qfq").await?,
+                None => fetch_tencent_daily(&http, TENCENT_FQKLINE_BASE, symbol, datalen, "qfq").await?,
+            };
+            let (clean, trimmed) = crate::data::quality::trim_incoherent_leading(&raw, 0.5);
+            if trimmed > 0 {
+                eprintln!("[rquant] trimmed {trimmed} incoherent leading qfq bars for {symbol}");
+            }
+            clean
         } else {
             // 三源合成：因子表天数 = 分钟 bar 覆盖天数 + 30 裕量（240/scale = bars/日）
             let daily_len = (datalen * scale / 240 + 30).min(1023);
@@ -475,8 +487,12 @@ pub async fn main() -> anyhow::Result<()> {
                 println!("wrote factor HTML report to {}", html_path.display());
             }
         }
-        Cmd::Fetch { symbol, scale, out, datalen, base_url, adjust } => {
-            let n = run_fetch_to_csv(&symbol, scale, datalen, &base_url, &adjust, &out).await?;
+        Cmd::Fetch { symbol, scale, out, datalen, base_url, adjust, from } => {
+            let from_date = from
+                .map(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d"))
+                .transpose()
+                .map_err(|e| anyhow::anyhow!("--from: invalid date: {e}"))?;
+            let n = run_fetch_to_csv(&symbol, scale, datalen, &base_url, &adjust, &out, from_date).await?;
             println!("wrote {} bars to {}", n, out.display());
         }
         Cmd::Signal {
@@ -499,7 +515,7 @@ pub async fn main() -> anyhow::Result<()> {
             // ── optional pre-fetch ─────────────────────────────────────────────
             if let Some(ref sym) = fetch {
                 let primary_path = primary.as_ref().unwrap();
-                let n = run_fetch_to_csv(sym, scale, datalen, SINA_BASE_URL, &adjust, primary_path).await?;
+                let n = run_fetch_to_csv(sym, scale, datalen, SINA_BASE_URL, &adjust, primary_path, None).await?;
                 println!("fetched {} bars for {} → {}", n, sym, primary_path.display());
             }
 

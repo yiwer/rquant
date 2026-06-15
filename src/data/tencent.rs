@@ -135,6 +135,7 @@ pub async fn fetch_tencent_daily(
 /// 规划倒退式窗口 end 序列：从 latest 起按 1.4×bars 自然日步退，
 /// 直到某窗口覆盖起点（end − 1.7×bars 天）<= earliest。步距 < 覆盖 → 必重叠。
 pub fn plan_window_ends(earliest: NaiveDate, latest: NaiveDate, bars_per_window: usize) -> Vec<NaiveDate> {
+    debug_assert!(bars_per_window > 0, "bars_per_window must be > 0");
     let step = chrono::Days::new((bars_per_window as f64 * 1.4).ceil() as u64);
     let cover = chrono::Days::new((bars_per_window as f64 * 1.7).ceil() as u64);
     let mut ends = Vec::new();

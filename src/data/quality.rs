@@ -4,6 +4,24 @@ use crate::data::bar::Bar;
 use crate::data::calendar::AShareCalendar;
 use chrono::NaiveDateTime;
 
+/// 剔除前导不相干 bar（qfq 深复权伪影：非正价 或 前向 |日收益|>max_ret）。
+/// 只剔前缀——遇首个相干点即停。返回 (清洗后, 剔除数)。
+pub fn trim_incoherent_leading(bars: &[Bar], max_ret: f64) -> (Vec<Bar>, usize) {
+    let mut k = 0usize;
+    while k + 1 < bars.len() {
+        let a = &bars[k];
+        let b = &bars[k + 1];
+        let bad_price = a.open <= 0.0 || a.high <= 0.0 || a.low <= 0.0 || a.close <= 0.0;
+        let bad_ret = a.close <= 0.0 || (b.close / a.close - 1.0).abs() > max_ret;
+        if bad_price || bad_ret {
+            k += 1;
+        } else {
+            break;
+        }
+    }
+    (bars[k..].to_vec(), k)
+}
+
 /// 一条序列的质量画像。
 #[derive(Debug, Clone)]
 pub struct QualityReport {
@@ -120,5 +138,27 @@ mod tests {
         let bars = vec![bar(day(2024,1,2), 10.0), bar(day(2024,1,4), 10.1)];
         let q = analyze(&bars, &empty_cal(), 0.21);
         assert_eq!(q.calendar_gaps, 1);
+    }
+
+    #[test]
+    fn trim_drops_incoherent_qfq_leading_run() {
+        // 宁德式：负价 + 早期巨幅 qfq 伪影，直到首个相干点（前向 |ret|<=0.5）
+        let bars = vec![
+            bar(day(2018,6,11), -0.671), bar(day(2018,6,12), 1.34),
+            bar(day(2018,6,13), 3.55),  bar(day(2018,6,14), 10.0),
+            bar(day(2018,6,15), 10.1),  bar(day(2018,6,19), 10.2),
+        ];
+        let (clean, n) = trim_incoherent_leading(&bars, 0.5);
+        assert_eq!(n, 3, "剔除负价+两段巨幅，停在 10.0");
+        assert_eq!(clean.len(), 3);
+        assert!((clean[0].close - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn trim_noop_on_clean_series() {
+        let bars = vec![bar(day(2024,1,2), 10.0), bar(day(2024,1,3), 10.5), bar(day(2024,1,4), 10.2)];
+        let (clean, n) = trim_incoherent_leading(&bars, 0.5);
+        assert_eq!(n, 0);
+        assert_eq!(clean.len(), 3);
     }
 }
