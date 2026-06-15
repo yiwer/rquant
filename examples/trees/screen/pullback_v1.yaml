@@ -1,0 +1,38 @@
+# 超跌反弹 v1 — 长趋势在位但短期深跌近支撑（上升趋势中的回调买点）。
+meta:
+  name: "超跌反弹 v1"
+  forward_window: 10
+  stances: [long, flat]
+params:
+  n_ema_long: 120
+  n_rsi: 14
+  n_ema_short: 20
+  rsi_os: 35
+  pb: 0.95
+factors:
+  ema_l: "ema(close, n_ema_long)"
+  rsi_v: "rsi(close, n_rsi)"
+  ema_s: "ema(close, n_ema_short)"
+root: gate_trend
+nodes:
+  gate_trend:
+    type: quant
+    branches:
+      - when: "close > ema_l"
+        goto: gate_pull
+        label: uptrend
+    default: { goto: leaf_flat, label: no_trend }
+  gate_pull:
+    type: quant
+    branches:
+      - when: "rsi_v < rsi_os"
+        goto: leaf_hi
+        label: oversold
+      - when: "close < ema_s * pb"
+        goto: leaf_mid
+        label: below_ma
+    default: { goto: leaf_flat, label: none }
+leaves:
+  leaf_flat: { stance: flat }
+  leaf_hi:   { stance: long, weight: 1.0, horizon: 10 }
+  leaf_mid:  { stance: long, weight: 0.6, horizon: 10 }

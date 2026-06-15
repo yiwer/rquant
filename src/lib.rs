@@ -19,6 +19,7 @@ pub mod factor;
 pub mod optimize;
 pub mod verdict;
 pub mod signal;
+pub mod screen;
 pub mod cli;
 
 pub type Result<T> = std::result::Result<T, Error>;

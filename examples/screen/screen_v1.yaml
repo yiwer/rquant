@@ -1,0 +1,22 @@
+# 选股集成 v1 — 优质树 + 3 形态树（每形态单树种子）。
+# 路径相对仓库根（cwd）。regime 窗口为已知 A 股牛熊（与 RV-5 切片一致，起始值）。
+quality_trees:
+  - examples/trees/screen/quality_v1.yaml
+setup_trees:
+  动量延续:
+    - examples/trees/screen/momentum_v1.yaml
+  突破临界:
+    - examples/trees/screen/breakout_v1.yaml
+  超跌反弹:
+    - examples/trees/screen/pullback_v1.yaml
+merge:
+  theta_fire: 0.5
+  vote_frac: 0.5
+  q_floor: 0.5
+  top: 10
+  quality_layers: 3
+regimes:
+  - { label: "2018熊", from: 2018-01-02, to: 2018-12-28 }
+  - { label: "2019-21牛", from: 2019-01-02, to: 2021-12-31 }
+  - { label: "2022熊", from: 2022-01-04, to: 2022-10-31 }
+  - { label: "2023-24", from: 2023-01-03, to: 2024-12-31 }

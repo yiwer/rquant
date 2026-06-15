@@ -1,0 +1,53 @@
+# 优质·技术稳健 v1 — 横截面选择树（long graded = 优质分；flat = 不合格）
+# 闸：均线多头排列 → 流动性下限 → 按距高点(回撤健康)+趋势噪声比分级。
+meta:
+  name: "优质·技术稳健 v1"
+  forward_window: 60
+  stances: [long, flat]
+params:
+  n_ema_long: 200
+  n_ema_mid: 50
+  n_dd: 120
+  n_std: 20
+  n_slope: 20
+  n_liq: 20
+  liq_floor: 50000000
+  dd_good: 0.90
+  dd_ok: 0.80
+factors:
+  ema_l: "ema(close, n_ema_long)"
+  ema_m: "ema(close, n_ema_mid)"
+  liq:   "sma(close * volume, n_liq)"
+  dd:    "close / highest(close, n_dd)"
+  tns:   "slope(ema(close, n_slope), n_slope) / (std(close, n_std) + 0.000000001)"
+root: gate_trend
+nodes:
+  gate_trend:
+    type: quant
+    branches:
+      - when: "close > ema_l and ema_m > ema_l"
+        goto: gate_liq
+        label: trend_ok
+    default: { goto: leaf_fail, label: no_trend }
+  gate_liq:
+    type: quant
+    branches:
+      - when: "liq >= liq_floor"
+        goto: grade
+        label: liquid
+    default: { goto: leaf_fail, label: illiquid }
+  grade:
+    type: quant
+    branches:
+      - when: "dd >= dd_good and tns > 0"
+        goto: leaf_hi
+        label: excellent
+      - when: "dd >= dd_ok"
+        goto: leaf_mid
+        label: good
+    default: { goto: leaf_lo, label: fair }
+leaves:
+  leaf_fail: { stance: flat }
+  leaf_hi:   { stance: long, weight: 1.0,  horizon: 60 }
+  leaf_mid:  { stance: long, weight: 0.66, horizon: 60 }
+  leaf_lo:   { stance: long, weight: 0.33, horizon: 60 }

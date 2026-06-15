@@ -1,0 +1,32 @@
+# 突破临界 v1 — 距60日前高近 + 量起 + 缩量蓄势（缩量盘整→放量突破前夜）。
+meta:
+  name: "突破临界 v1"
+  forward_window: 10
+  stances: [long, flat]
+params:
+  n_high: 60
+  prox: 0.97
+  n_vol: 20
+  n_std_fast: 10
+  n_std_slow: 40
+factors:
+  prior_high: "highest(ref(high, 1), n_high)"
+  vol_ma:     "sma(volume, n_vol)"
+  std_fast:   "std(close, n_std_fast)"
+  std_slow:   "std(close, n_std_slow)"
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - when: "close >= 0.99 * prior_high and volume > vol_ma and std_fast < std_slow"
+        goto: leaf_hi
+        label: at_breakout
+      - when: "close >= prox * prior_high and volume > vol_ma and std_fast < std_slow"
+        goto: leaf_mid
+        label: near_breakout
+    default: { goto: leaf_flat, label: none }
+leaves:
+  leaf_flat: { stance: flat }
+  leaf_hi:   { stance: long, weight: 1.0, horizon: 10 }
+  leaf_mid:  { stance: long, weight: 0.7, horizon: 10 }
