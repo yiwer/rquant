@@ -749,7 +749,7 @@ rquant screen [OPTIONS] --universe <UNIVERSE>
 | 标志 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `--universe <PATH>` | PathBuf | 必填 | universe CSV（格式同 `portfolio`：`symbol,primary[,context]`）|
-| `--config <PATH>` | PathBuf | `examples/screen_v1.yaml` | 选股集成配置（quality_trees/setup_trees/merge/regimes）|
+| `--config <PATH>` | PathBuf | `examples/screen/screen_v1.yaml` | 选股集成配置（quality_trees/setup_trees/merge/regimes）|
 | `--backtest` | bool | `false` | 历史回测模式；否则 as-of 选股 |
 | `--as-of <YYYY-MM-DD>` | string | 可选 | as-of 日期（选股模式；默认最新 K，取 ≤该日期的最大时间线点）|
 | `--from <YYYY-MM-DD>` | string | 可选 | 回测起始日（回测模式）|
@@ -794,10 +794,10 @@ regimes:                                # 回测 regime 切片窗口（可空）
 
 ```bat
 REM 当日选股清单（最新 K）
-rquant screen --universe data\universe_20.csv --config examples\screen_v1.yaml --out tmps\screen_asof.json
+rquant screen --universe data\universe_20.csv --config examples\screen\screen_v1.yaml --out tmps\screen_asof.json
 
 REM 历史回测验证（跨牛熊，出归因/regime/分层）
-rquant screen --backtest --universe data\universe_20.csv --config examples\screen_v1.yaml --from 2018-06-01 --to 2026-06-01 --rebalance 5 --out tmps\screen_bt.json
+rquant screen --backtest --universe data\universe_20.csv --config examples\screen\screen_v1.yaml --from 2018-06-01 --to 2026-06-01 --rebalance 5 --out tmps\screen_bt.json
 ```
 
 ### 验证口径提醒

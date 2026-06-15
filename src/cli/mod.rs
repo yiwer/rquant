@@ -239,7 +239,7 @@ enum Cmd {
     Screen {
         #[arg(long)]
         universe: PathBuf,
-        #[arg(long, default_value = "examples/screen_v1.yaml")]
+        #[arg(long, default_value = "examples/screen/screen_v1.yaml")]
         config: PathBuf,
         /// 历史回测模式（回放集成、出净值/归因/regime/质量分层）
         #[arg(long, default_value_t = false)]

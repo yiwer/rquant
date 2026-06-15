@@ -27,7 +27,7 @@ pub struct ScreenHolding {
     pub selected: Vec<(String, f64)>,
 }
 
-/// 回测报告（核心字段；归因/regime/质量分层在后续任务补）。
+/// 回测报告：净值/风险 + 标签归因 / regime 切片 / 优质分层。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScreenBacktestReport {
     pub n_rebalances: usize,
@@ -50,7 +50,7 @@ pub struct ScreenBacktestReport {
     pub quality_layers: Vec<QualityLayer>,
 }
 
-/// 标签归因（SCR-6 填充）。
+/// 标签归因：每形态 picks 的前瞻收益与胜率。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TagAttribution {
     pub tag: String,
@@ -59,7 +59,7 @@ pub struct TagAttribution {
     pub mean_fwd_return: f64,
 }
 
-/// regime 切片（SCR-7 填充）。
+/// regime 切片：各 regime 窗口内组合 vs 基准超额。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RegimeSlice {
     pub label: String,
@@ -70,7 +70,7 @@ pub struct RegimeSlice {
     pub excess: f64,
 }
 
-/// 优质分分层（SCR-8 填充）。
+/// 优质分分层：合格股按优质分位的前瞻收益。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct QualityLayer {
     pub layer: usize,
@@ -95,7 +95,7 @@ pub struct ScreenBacktestConfig {
 }
 
 /// 单标的、单调仓点的多树合并结果（内部 helper）。
-/// `quality` 供 SCR-8 质量分层消费，`tags` 已在 SCR-6 归因中消费。
+/// `combined` 驱动选股、`quality` 供质量分层、`tags` 供标签归因。
 struct SymbolEval {
     combined: f64,
     quality: f64,
