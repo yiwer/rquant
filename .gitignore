@@ -22,3 +22,4 @@ test_output.log
 
 # deep-history research data (reproducible via data/fetch_deep.cmd)
 data/*.csv
+!data/universe_20.csv
