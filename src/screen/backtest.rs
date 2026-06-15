@@ -95,12 +95,11 @@ pub struct ScreenBacktestConfig {
 }
 
 /// 单标的、单调仓点的多树合并结果（内部 helper）。
-/// `quality`/`tags` 供 SCR-6/7/8 归因消费，当前主循环仅用 `combined`。
+/// `quality` 供 SCR-8 质量分层消费，`tags` 已在 SCR-6 归因中消费。
 struct SymbolEval {
     combined: f64,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // SCR-8 will consume quality
     quality: f64,
-    #[allow(dead_code)]
     tags: Vec<String>,
 }
 
@@ -204,17 +203,21 @@ pub async fn run_screen_backtest(
     let mut total_members = 0usize;
     let mut holdings: Vec<ScreenHolding> = Vec::new();
     let mut w_old: BTreeMap<String, f64> = BTreeMap::new();
+    // 标签归因累加器：tag -> picks 段收益列表
+    let mut tag_rets: BTreeMap<String, Vec<f64>> = BTreeMap::new();
 
     for (rb_idx, end_idx) in &segments {
         let t_rb = timeline[*rb_idx];
         let t_end = timeline[*end_idx];
 
+        let mut evals: BTreeMap<String, SymbolEval> = BTreeMap::new();
         let mut scores: Vec<(String, f64)> = Vec::new();
         for (i, e) in universe.iter().enumerate() {
             if let Some(ev) = eval_symbol(
                 &primaries[i], &contexts[i], &aux, &quality, &setups, llm, cfg.soft, t_rb, cfg.window, &mp,
             ).await? {
                 scores.push((e.symbol.clone(), ev.combined));
+                evals.insert(e.symbol.clone(), ev);
             }
         }
         let selected = select_top(&scores, top);
@@ -241,6 +244,18 @@ pub async fn run_screen_backtest(
             .filter_map(|(i, e)| last_close_at(&primaries[i], t_end).map(|p| (e.symbol.clone(), p)))
             .collect();
 
+        for (sym, _) in &selected {
+            let seg_ret = match (px_start.get(sym), px_end.get(sym)) {
+                (Some(a), Some(b)) if *a > 0.0 => b / a - 1.0,
+                _ => 0.0,
+            };
+            if let Some(ev) = evals.get(sym) {
+                for tag in &ev.tags {
+                    tag_rets.entry(tag.clone()).or_default().push(seg_ret);
+                }
+            }
+        }
+
         let r = accrue(&w_new, &px_start, &px_end);
         nav *= 1.0 + r;
 
@@ -263,6 +278,18 @@ pub async fn run_screen_backtest(
     let nav_series: Vec<(NaiveDateTime, f64)> = holdings.iter().map(|h| (h.t, h.nav)).collect();
     let risk = crate::report::risk::risk_metrics(&nav_series, max_dd);
 
+    let tag_attribution: Vec<TagAttribution> = tag_rets.iter().map(|(tag, rets)| {
+        let n = rets.len();
+        let hit = rets.iter().filter(|r| **r > 0.0).count();
+        let mean = if n > 0 { rets.iter().sum::<f64>() / n as f64 } else { 0.0 };
+        TagAttribution {
+            tag: tag.clone(),
+            n_picks: n,
+            hit_rate: if n > 0 { hit as f64 / n as f64 } else { 0.0 },
+            mean_fwd_return: mean,
+        }
+    }).collect();
+
     let report = ScreenBacktestReport {
         n_rebalances,
         top,
@@ -275,7 +302,7 @@ pub async fn run_screen_backtest(
         avg_members: if n_rebalances > 0 { total_members as f64 / n_rebalances as f64 } else { 0.0 },
         holdings,
         risk,
-        tag_attribution: Vec::new(),
+        tag_attribution,
         regime_slices: Vec::new(),
         quality_layers: Vec::new(),
     };
@@ -356,6 +383,32 @@ leaves: { l: { stance: long, weight: 1.0 }, f: { stance: flat } }
         }
         f.flush().unwrap();
         f
+    }
+
+    #[tokio::test]
+    async fn backtest_tag_attribution_populated() {
+        let q = wf(".yaml", Q_SIMPLE);
+        let m = wf(".yaml", M_SIMPLE);
+        let cfg_yaml = format!(
+            "quality_trees: [{}]\nsetup_trees:\n  动量延续: [{}]\nmerge: {{ q_floor: 0.5, top: 1 }}\n",
+            q.path().to_str().unwrap().replace('\\', "/"),
+            m.path().to_str().unwrap().replace('\\', "/"),
+        );
+        let cfg_f = wf(".yaml", &cfg_yaml);
+        let up = bars(0.01);
+        let dn = bars(-0.01);
+        let mut univ = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+        writeln!(univ, "symbol,primary\nUP,{}\nDN,{}", up.path().to_str().unwrap(), dn.path().to_str().unwrap()).unwrap();
+        univ.flush().unwrap();
+        let cfg = ScreenBacktestConfig {
+            config_path: cfg_f.path().to_path_buf(), universe_path: univ.path().to_path_buf(),
+            from: None, to: None, rebalance: 4, top: None, warmup: 5, window: 10, cost_bps: 10.0, soft: false, out_path: None,
+        };
+        let r = run_screen_backtest(&cfg, &LlmEvaluator::Disabled).await.unwrap();
+        let mom = r.tag_attribution.iter().find(|a| a.tag == "动量延续").expect("动量延续 attribution present");
+        assert!(mom.n_picks >= 2, "should have picks tagged 动量延续");
+        assert!(mom.mean_fwd_return > 0.0, "rising picks → positive forward return");
+        assert!(mom.hit_rate > 0.5);
     }
 
     #[tokio::test]
