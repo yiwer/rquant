@@ -91,8 +91,8 @@ mod tests {
     #[test]
     fn vote_majority_of_three() {
         // need = ceil(3*0.5) = 2
-        assert_eq!(setup_vote(&[0.6, 0.8, 0.1], 0.5, 0.5).0, true);  // 2 fire
-        assert_eq!(setup_vote(&[0.6, 0.1, 0.1], 0.5, 0.5).0, false); // 1 fires < 2
+        assert!(setup_vote(&[0.6, 0.8, 0.1], 0.5, 0.5).0);  // 2 fire
+        assert!(!setup_vote(&[0.6, 0.1, 0.1], 0.5, 0.5).0); // 1 fires < 2
         let (fired, strength) = setup_vote(&[0.6, 0.8, 0.1], 0.5, 0.5);
         assert!(fired);
         assert!((strength - 0.7).abs() < 1e-12); // mean of firing {0.6,0.8}

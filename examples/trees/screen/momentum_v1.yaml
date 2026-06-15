@@ -1,0 +1,40 @@
+# 动量延续 v1 — 强者恒强：自归一动量分位高 + 趋势在位。
+meta:
+  name: "动量延续 v1"
+  forward_window: 20
+  stances: [long, flat]
+params:
+  n_mom: 20
+  n_rank: 60
+  n_ema: 50
+  n_slope: 10
+  thr_hi: 0.85
+  thr_mid: 0.65
+factors:
+  mom:       "close / ref(close, n_mom) - 1"
+  mom_pct:   "percentrank(mom, n_rank)"
+  ema_t:     "ema(close, n_ema)"
+  ema_slope: "slope(ema(close, n_ema), n_slope)"
+root: gate_trend
+nodes:
+  gate_trend:
+    type: quant
+    branches:
+      - when: "close > ema_t and ema_slope > 0"
+        goto: bands
+        label: trend_ok
+    default: { goto: leaf_flat, label: no_trend }
+  bands:
+    type: quant
+    branches:
+      - when: "mom_pct >= thr_hi"
+        goto: leaf_hi
+        label: strong
+      - when: "mom_pct >= thr_mid"
+        goto: leaf_mid
+        label: moderate
+    default: { goto: leaf_flat, label: weak }
+leaves:
+  leaf_flat: { stance: flat }
+  leaf_hi:   { stance: long, weight: 1.0, horizon: 20 }
+  leaf_mid:  { stance: long, weight: 0.6, horizon: 20 }
