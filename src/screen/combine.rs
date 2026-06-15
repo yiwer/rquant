@@ -4,11 +4,15 @@
 use std::collections::BTreeMap;
 
 /// 合并参数。
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct MergeParams {
     pub theta_fire: f64,
     pub vote_frac: f64,
     pub q_floor: f64,
+    /// 倾斜系数：combined = quality × (1 + lambda × tilt)。
+    pub lambda: f64,
+    /// 参与倾斜的形态标签（其余仅标注）。
+    pub tilt_setups: Vec<String>,
 }
 
 /// 单股合并输出。
@@ -48,7 +52,7 @@ pub fn setup_vote(scores: &[f64], theta_fire: f64, vote_frac: f64) -> (bool, f64
 }
 
 /// 合并：优质分 = 优质树得分均值；形态 = 投票；投机分 = 命中形态最大强度；
-/// 综合分 = 优质×投机，但不合格（无标签 或 优质<q_floor）→ 0。
+/// 综合分 = 优质 × (1 + λ·倾斜)，但不合格（优质<q_floor）→ 0。
 pub fn combine(
     quality: &[f64],
     setups: &BTreeMap<String, Vec<f64>>,
@@ -64,9 +68,17 @@ pub fn combine(
             setup_strength.insert(tag.clone(), strength);
         }
     }
+    // 投机分 = 全部命中形态最大强度（仅信息）
     let spec = setup_strength.values().copied().fold(0.0_f64, f64::max);
-    let eligible = !tags.is_empty() && q >= p.q_floor;
-    let combined = if eligible { q * spec } else { 0.0 };
+    // 倾斜量 = 仅 tilt_setups 中命中形态的最大强度（未命中 → 0）
+    let tilt = p
+        .tilt_setups
+        .iter()
+        .filter_map(|s| setup_strength.get(s).copied())
+        .fold(0.0_f64, f64::max);
+    // 合格门 = 仅优质（去掉 AND tags 要求）；综合分 = 优质 × (1 + λ·倾斜)
+    let eligible = q >= p.q_floor;
+    let combined = if eligible { q * (1.0 + p.lambda * tilt) } else { 0.0 };
     CombineOutput {
         quality_score: q,
         speculative_score: spec,
@@ -80,7 +92,15 @@ pub fn combine(
 mod tests {
     use super::*;
 
-    fn p() -> MergeParams { MergeParams { theta_fire: 0.5, vote_frac: 0.5, q_floor: 0.5 } }
+    fn p() -> MergeParams {
+        MergeParams {
+            theta_fire: 0.5,
+            vote_frac: 0.5,
+            q_floor: 0.5,
+            lambda: 1.0,
+            tilt_setups: vec!["动量延续".to_string()],
+        }
+    }
 
     #[test]
     fn vote_single_tree_fires_when_above_theta() {
@@ -112,22 +132,22 @@ mod tests {
     }
 
     #[test]
-    fn combine_tags_and_combined_score() {
-        let mut setups = BTreeMap::new();
-        setups.insert("动量延续".to_string(), vec![0.8]);
-        setups.insert("超跌反弹".to_string(), vec![0.2]); // below theta → not fired
-        let out = combine(&[0.9], &setups, &p());
-        assert_eq!(out.tags, vec!["动量延续".to_string()]);
-        assert!((out.speculative_score - 0.8).abs() < 1e-12);
-        assert!((out.combined_score - 0.9 * 0.8).abs() < 1e-12);
+    fn combine_pure_quality_is_selectable() {
+        // 无形态命中、但优质≥q_floor → 合格、combined = quality（tilt=0）。根治空仓的核心。
+        let setups = BTreeMap::new();
+        let out = combine(&[0.8], &setups, &p());
+        assert!(out.tags.is_empty());
+        assert!((out.combined_score - 0.8).abs() < 1e-12);
     }
 
     #[test]
-    fn combine_ineligible_when_no_tags() {
-        let setups = BTreeMap::new();
-        let out = combine(&[1.0], &setups, &p());
-        assert!(out.tags.is_empty());
-        assert_eq!(out.combined_score, 0.0);
+    fn combine_momentum_tilts_combined() {
+        let mut setups = BTreeMap::new();
+        setups.insert("动量延续".to_string(), vec![0.8]);
+        let out = combine(&[0.9], &setups, &p());
+        assert_eq!(out.tags, vec!["动量延续".to_string()]);
+        // combined = 0.9 × (1 + 1.0 × 0.8) = 1.62
+        assert!((out.combined_score - 1.62).abs() < 1e-12);
     }
 
     #[test]
@@ -135,17 +155,27 @@ mod tests {
         let mut setups = BTreeMap::new();
         setups.insert("动量延续".to_string(), vec![0.9]);
         let out = combine(&[0.3], &setups, &p()); // quality 0.3 < q_floor 0.5
-        assert_eq!(out.tags, vec!["动量延续".to_string()]); // tag still reported
-        assert_eq!(out.combined_score, 0.0);               // but not eligible
+        assert_eq!(out.combined_score, 0.0);
     }
 
     #[test]
-    fn combine_speculative_is_max_over_setups() {
+    fn combine_tilt_only_from_tilt_setups() {
+        // 突破临界命中但不在 tilt_setups → 不进倾斜；动量延续未命中 → tilt=0。
         let mut setups = BTreeMap::new();
-        setups.insert("动量延续".to_string(), vec![0.6]);
-        setups.insert("突破临界".to_string(), vec![0.9]);
+        setups.insert("突破临界".to_string(), vec![0.9]); // fires, but NOT a tilt setup
         let out = combine(&[1.0], &setups, &p());
-        assert_eq!(out.tags.len(), 2);
-        assert!((out.speculative_score - 0.9).abs() < 1e-12);
+        assert_eq!(out.tags, vec!["突破临界".to_string()]); // still tagged
+        assert!((out.speculative_score - 0.9).abs() < 1e-12); // info reflects it
+        assert!((out.combined_score - 1.0).abs() < 1e-12); // but combined = q×(1+0) = 1.0 (no tilt)
+    }
+
+    #[test]
+    fn combine_lambda_zero_is_pure_quality() {
+        let mut pp = p();
+        pp.lambda = 0.0;
+        let mut setups = BTreeMap::new();
+        setups.insert("动量延续".to_string(), vec![1.0]);
+        let out = combine(&[0.7], &setups, &pp);
+        assert!((out.combined_score - 0.7).abs() < 1e-12); // λ=0 → combined = quality
     }
 }

@@ -163,6 +163,8 @@ pub async fn run_screen_backtest(
         theta_fire: sc.merge.theta_fire,
         vote_frac: sc.merge.vote_frac,
         q_floor: sc.merge.q_floor,
+        lambda: sc.merge.lambda,
+        tilt_setups: sc.merge.tilt_setups.clone(),
     };
     let top = cfg.top.unwrap_or(sc.merge.top);
     let n_layers = sc.merge.quality_layers.max(1);
