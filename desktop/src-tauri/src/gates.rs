@@ -13,13 +13,13 @@ pub fn classify_run_window(now: NaiveDateTime) -> GateDto {
     if weekday && t >= hm(9, 30) && t < hm(15, 0) {
         return GateDto {
             gate: "dry_only".into(),
-            message: Some("盘中:sina 末根为 forming bar,commit 会以未定型价格记账——仅允许 DRY".into()),
+            message: Some("交易时段内（sina 末根为 forming bar）——仅可模拟运行，不写持仓状态".into()),
         };
     }
     if weekday && t >= hm(15, 30) && t < hm(15, 40) {
         return GateDto {
             gate: "warn".into(),
-            message: Some("与 15:35 schtask 窗口重叠:并发 commit 有竞态风险(幂等可兜底),确认后继续".into()),
+            message: Some("与 15:35 schtask 窗口重叠——并发 commit 有竞态风险（幂等可兜底），确认后继续".into()),
         };
     }
     GateDto { gate: "allow".into(), message: None }
