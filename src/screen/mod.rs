@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod combine;
+pub mod backtest;
 
 use crate::data::aux_table::AuxTable;
 use crate::data::bar::Bar;
