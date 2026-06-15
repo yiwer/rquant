@@ -1,4 +1,4 @@
-import { App as AntApp, Button, Checkbox, Modal, Space } from "antd";
+import { App as AntApp, Button, Checkbox, Modal, Space, Tooltip } from "antd";
 import { useState } from "react";
 import { api } from "../api/ipc";
 
@@ -51,9 +51,17 @@ export default function ManualRunButton({ onStarted }: { onStarted: (taskId: str
         <Space direction="vertical">
           <span>账本:b1 + b2 + b3(参数与 deploy/paper_run.cmd 一致)</span>
           {gateMsg && <span style={{ color: dryOnly ? "#cf1322" : "#d48806" }}>{gateMsg}</span>}
-          <Checkbox checked={commit} disabled={dryOnly} onChange={(e) => setCommit(e.target.checked)}>
-            commit(落盘 state;不勾 = DRY RUN)
-          </Checkbox>
+          {dryOnly ? (
+            <Tooltip title="交易时段外或计划任务窗口冲突 → 仅可模拟运行，不写持仓状态">
+              <Checkbox checked={commit} disabled onChange={(e) => setCommit(e.target.checked)}>
+                commit(落盘 state;不勾 = DRY RUN)
+              </Checkbox>
+            </Tooltip>
+          ) : (
+            <Checkbox checked={commit} onChange={(e) => setCommit(e.target.checked)}>
+              commit(落盘 state;不勾 = DRY RUN)
+            </Checkbox>
+          )}
         </Space>
       </Modal>
     </>

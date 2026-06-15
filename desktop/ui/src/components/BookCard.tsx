@@ -24,7 +24,7 @@ export default function BookCard({ card }: { card: BookCardDto }) {
         <>
           <Statistic title="nav" value={card.nav ?? 0} precision={4} />
           <Typography.Text type="secondary">
-            持仓 {card.pos?.toFixed(2) ?? "—"} · 回撤 {((card.max_drawdown ?? 0) * 100).toFixed(2)}% · {card.state_time}
+            持仓 {card.pos?.toFixed(2) ?? "—"} · 最大回撤 {((card.max_drawdown ?? 0) * 100).toFixed(2)}% · {card.state_time}
           </Typography.Text>
         </>
       )}
@@ -33,13 +33,17 @@ export default function BookCard({ card }: { card: BookCardDto }) {
           持仓 {card.holdings?.map(([s, w]) => `${s} ${w.toFixed(2)}`).join(" / ") || "(空)"}
         </Typography.Text>
       )}
-      {card.status !== "ok" && <Typography.Text type="secondary">{card.advice}</Typography.Text>}
+      {card.status !== "ok" && (
+        <Typography.Text type="secondary">
+          {card.advice ?? "账本未初始化——点上方「手动触发 run」建立首个快照"}
+        </Typography.Text>
+      )}
       {card.last_signal && (
         <div style={{ marginTop: 8 }}>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             最新信号 {card.last_signal.t}
             {card.last_signal.leaf ? ` · 叶 ${card.last_signal.leaf}` : ""}
-            {card.last_signal.targets ? ` · 入选 ${card.last_signal.targets.length} 只` : ""}
+            {card.last_signal.targets ? ` · 目标持仓 ${card.last_signal.targets.length} 只` : ""}
             {card.last_signal.bars_replayed != null ? ` · 重放 ${card.last_signal.bars_replayed}` : ""}
           </Typography.Text>
         </div>
