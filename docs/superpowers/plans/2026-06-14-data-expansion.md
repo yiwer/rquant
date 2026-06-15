@@ -375,48 +375,297 @@ git commit -m "chore(data): deep-fetch batch script + gitignore data CSVs"
 
 ---
 
-## Task 4: 深度探测 + 批量拉取 + 校验（执行任务，需网络）
+> **执行期重大修正（DATA-4 探测发现，方案 A）**：Tencent fqkline 每请求实测封顶 ~640 根（end=今日时），`count>2000` 报 param error——原"大 `--datalen` 直拉深历史"机制**被证伪**。改为：把多窗口拼接（历史 end 日期、按日期去重合并）+ 前导伪影清洗**端法入 Rust fetch**（经测试解析、无 BOM、`rquant fetch --from <date>` 可复现），再重拉。原 Task 4 单步执行作废，拆为 4a（深拉代码）/4b（清洗代码）/4c（重拉执行）。
+
+## Task 4a: Rust 多窗口深拉（tencent.rs）
 
 **Files:**
-- 产出（gitignore）：`data/*.csv`、`tmps/probe_*.csv`
-- Modify: `data/fetch_deep.cmd`（回填实测 D 与抓取日期注释）
+- Modify: `src/data/tencent.rs`（抽 window 函数 + plan_window_ends + merge_dedup_bars + fetch_tencent_daily_deep + 单测）
 
-> 本任务是**联网执行**，非 TDD。需可访问 Tencent/Sina（`web.ifzq.gtimg.cn`、`quotes.sina.cn`）。先 `cargo build --release` 确保 `target/release/rquant.exe` 最新（含 Task 1-2 的 validate-data）。
+- [ ] **Step 1: 写失败单测**（纯函数 plan_window_ends / merge_dedup_bars）
 
-- [ ] **Step 1: 深度探测**
+加到 `src/data/tencent.rs` 测试模块：
 
-对老股探 Tencent 实际上限：
+```rust
+    #[test]
+    fn plan_windows_cover_span_with_overlap() {
+        use chrono::NaiveDate;
+        let e = NaiveDate::from_ymd_opt(2018, 1, 1).unwrap();
+        let l = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        let ends = plan_window_ends(e, l, 600);
+        assert_eq!(ends[0], l, "首窗 end = latest");
+        // 末窗覆盖起点（end - 1.7*600 天）须 <= earliest
+        let cover_days = (600f64 * 1.7).ceil() as i64;
+        let last_cover_start = *ends.last().unwrap() - chrono::Days::new(cover_days as u64);
+        assert!(last_cover_start <= e, "末窗须覆盖到 earliest");
+        // 相邻 end 步距 = 1.4*600 天（< 覆盖 1.7*600 → 必重叠）
+        let step = (600f64 * 1.4).ceil() as i64;
+        assert_eq!((ends[0] - ends[1]).num_days(), step);
+    }
 
+    #[test]
+    fn merge_dedup_sorts_and_dedups_by_time() {
+        use chrono::NaiveDate;
+        let t = |d: u32| NaiveDate::from_ymd_opt(2024,1,d).unwrap().and_hms_opt(15,0,0).unwrap();
+        let b = |d: u32, c: f64| Bar { time: t(d), open: c, high: c, low: c, close: c, volume: 1.0 };
+        // 两窗口重叠日期 2、3
+        let w1 = vec![b(1,10.0), b(2,10.1), b(3,10.2)];
+        let w2 = vec![b(2,10.1), b(3,10.2), b(4,10.3)];
+        let m = merge_dedup_bars(vec![w2, w1]); // 乱序输入
+        assert_eq!(m.len(), 4);
+        assert_eq!(m[0].time, t(1)); // 升序
+        assert_eq!(m[3].time, t(4));
+    }
 ```
-target/release/rquant.exe fetch --symbol sh600519 --scale 240 --datalen 5000 --adjust qfq --out tmps/probe_sh600519.csv
+
+- [ ] **Step 2: 运行确认失败**
+
+Run: `cargo test -p rquant data::tencent`
+Expected: 编译失败（`plan_window_ends`/`merge_dedup_bars` 未定义）。
+
+- [ ] **Step 3: 实现**（`src/data/tencent.rs`）
+
+抽出带显式 end 的单窗口函数，重构 `fetch_tencent_daily` 复用之：
+
+```rust
+/// 拉单个窗口（显式 end 日期 + count，带重试）。供今日拉取与深拉复用。
+async fn fetch_tencent_window(
+    http: &reqwest::Client, base_url: &str, symbol: &str,
+    end: chrono::NaiveDate, count: u32, adjust: &str,
+) -> Result<Vec<Bar>> {
+    let start = end - chrono::Days::new((count as f64 * 1.7).ceil() as u64);
+    let url = tencent_fqkline_url(base_url, symbol,
+        &start.format("%Y-%m-%d").to_string(), &end.format("%Y-%m-%d").to_string(), count, adjust);
+    let max_retries = 2u32;
+    let mut last = String::from("no attempt");
+    for _ in 0..=max_retries {
+        match fetch_once_tencent(http, &url).await {
+            Ok(body) => match parse_tencent_klines(&body, symbol, adjust) {
+                Ok(bars) => return Ok(bars),
+                Err(e) => last = e.to_string(),
+            },
+            Err(e) => last = e.to_string(),
+        }
+    }
+    Err(Error::Data(format!("tencent window fetch failed after retries: {last}")))
+}
 ```
 
-记录实际返回 bar 数与最早日期（看 stdout 报告或 `validate-data` 覆盖行）。若返回 < 5000，说明 Tencent 封顶在该值——这就是 D。若 ≈5000，再试 `--datalen 8000` 确认是否更深。**把探测出的 D 写进 `data/fetch_deep.cmd` 的 `set DATALEN=` 与头部注释（连同抓取日期）。**
+把现有 `fetch_tencent_daily` 体改为：`let end = chrono::Local::now().date_naive(); fetch_tencent_window(http, base_url, symbol, end, datalen, adjust).await`（行为不变——今日单窗口）。
 
-- [ ] **Step 2: 批量拉取**
+纯函数 + 深拉编排：
 
+```rust
+use chrono::NaiveDate;
+
+/// 规划倒退式窗口 end 序列：从 latest 起按 1.4×bars 自然日步退，
+/// 直到某窗口覆盖起点（end − 1.7×bars 天）<= earliest。步距 < 覆盖 → 必重叠。
+pub fn plan_window_ends(earliest: NaiveDate, latest: NaiveDate, bars_per_window: usize) -> Vec<NaiveDate> {
+    let step = chrono::Days::new((bars_per_window as f64 * 1.4).ceil() as u64);
+    let cover = chrono::Days::new((bars_per_window as f64 * 1.7).ceil() as u64);
+    let mut ends = Vec::new();
+    let mut end = latest;
+    loop {
+        ends.push(end);
+        if end - cover <= earliest { break; }
+        end = end - step;
+    }
+    ends
+}
+
+/// 合并多窗口 bar：按 time 去重（首见为准；同日同数据）、升序。
+pub fn merge_dedup_bars(chunks: Vec<Vec<Bar>>) -> Vec<Bar> {
+    use std::collections::BTreeMap;
+    let mut by_time: BTreeMap<chrono::NaiveDateTime, Bar> = BTreeMap::new();
+    for chunk in chunks {
+        for b in chunk { by_time.entry(b.time).or_insert(b); }
+    }
+    by_time.into_values().collect()
+}
+
+/// 深拉日线：多窗口拼接覆盖 [earliest, today]，去重合并、过滤到 earliest 起。
+pub async fn fetch_tencent_daily_deep(
+    http: &reqwest::Client, base_url: &str, symbol: &str,
+    earliest: NaiveDate, adjust: &str,
+) -> Result<Vec<Bar>> {
+    const BARS_PER_WINDOW: usize = 600; // 安全低于 ~640 实测上限
+    let latest = chrono::Local::now().date_naive();
+    let ends = plan_window_ends(earliest, latest, BARS_PER_WINDOW);
+    let mut chunks = Vec::with_capacity(ends.len());
+    for end in ends {
+        chunks.push(fetch_tencent_window(http, base_url, symbol, end, BARS_PER_WINDOW as u32, adjust).await?);
+    }
+    let merged = merge_dedup_bars(chunks);
+    Ok(merged.into_iter().filter(|b| b.time.date() >= earliest).collect())
+}
 ```
-data\fetch_deep.cmd
+
+- [ ] **Step 4: 运行确认通过**
+
+Run: `cargo test -p rquant data::tencent`
+Expected: 既有 4 测试 + 新 2 测试全 PASS（含既有 url_shape/parse——重构未改解析）。
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add src/data/tencent.rs
+git commit -m "feat(data): tencent multi-window deep daily fetch (plan_window_ends + merge_dedup)"
 ```
 
-10 个 `data\<symbol>.csv` 落地。逐行确认无 fetch 报错（网络/截断会报错并重试）。
+---
+
+## Task 4b: 前导伪影清洗 + `--from` CLI 接入
+
+**Files:**
+- Modify: `src/data/quality.rs`（加 `trim_incoherent_leading` + 单测）
+- Modify: `src/cli/mod.rs`（`Cmd::Fetch` 加 `--from`；`run_fetch_to_csv` 加 `from` 参数走深拉+清洗）
+
+- [ ] **Step 1: 写失败单测**（`src/data/quality.rs` 测试模块）
+
+```rust
+    #[test]
+    fn trim_drops_incoherent_qfq_leading_run() {
+        // 宁德式：负价 + 早期巨幅 qfq 伪影，直到首个相干点（前向 |ret|<=0.5）
+        let bars = vec![
+            bar(day(2018,6,11), -0.671), bar(day(2018,6,12), 1.34),
+            bar(day(2018,6,13), 3.55),  bar(day(2018,6,14), 10.0),
+            bar(day(2018,6,15), 10.1),  bar(day(2018,6,19), 10.2),
+        ];
+        let (clean, n) = trim_incoherent_leading(&bars, 0.5);
+        assert_eq!(n, 3, "剔除负价+两段巨幅，停在 10.0");
+        assert_eq!(clean.len(), 3);
+        assert!((clean[0].close - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn trim_noop_on_clean_series() {
+        let bars = vec![bar(day(2024,1,2), 10.0), bar(day(2024,1,3), 10.5), bar(day(2024,1,4), 10.2)];
+        let (clean, n) = trim_incoherent_leading(&bars, 0.5);
+        assert_eq!(n, 0);
+        assert_eq!(clean.len(), 3);
+    }
+```
+
+- [ ] **Step 2: 运行确认失败**
+
+Run: `cargo test -p rquant data::quality::tests::trim`
+Expected: 编译失败（`trim_incoherent_leading` 未定义）。
+
+- [ ] **Step 3: 实现 trim**（`src/data/quality.rs`）
+
+```rust
+use crate::data::bar::Bar;
+
+/// 剔除前导不相干 bar（qfq 深复权伪影：非正价 或 前向 |日收益|>max_ret）。
+/// 只剔前缀——遇首个相干点即停。返回 (清洗后, 剔除数)。
+pub fn trim_incoherent_leading(bars: &[Bar], max_ret: f64) -> (Vec<Bar>, usize) {
+    let mut k = 0usize;
+    while k + 1 < bars.len() {
+        let a = &bars[k];
+        let b = &bars[k + 1];
+        let bad_price = a.open <= 0.0 || a.high <= 0.0 || a.low <= 0.0 || a.close <= 0.0;
+        let bad_ret = a.close <= 0.0 || (b.close / a.close - 1.0).abs() > max_ret;
+        if bad_price || bad_ret {
+            k += 1;
+        } else {
+            break;
+        }
+    }
+    (bars[k..].to_vec(), k)
+}
+```
+
+- [ ] **Step 4: CLI `--from` 接入**（`src/cli/mod.rs`）
+
+`Cmd::Fetch` 加旗标：
+
+```rust
+        /// Deep history: fetch from this date (YYYY-MM-DD) via multi-window stitching (daily qfq only).
+        #[arg(long)]
+        from: Option<String>,
+```
+
+`run_fetch_to_csv` 签名加 `from: Option<chrono::NaiveDate>` 末参；qfq + scale==240 + from=Some 时走深拉+清洗，否则原路径：
+
+```rust
+    let bars = if adjust == "qfq" {
+        use crate::data::tencent::{fetch_tencent_daily, fetch_tencent_daily_deep, TENCENT_FQKLINE_BASE};
+        if scale == 240 {
+            let raw = match from {
+                Some(earliest) => fetch_tencent_daily_deep(&http, TENCENT_FQKLINE_BASE, symbol, earliest, "qfq").await?,
+                None => fetch_tencent_daily(&http, TENCENT_FQKLINE_BASE, symbol, datalen, "qfq").await?,
+            };
+            let (clean, trimmed) = crate::data::quality::trim_incoherent_leading(&raw, 0.5);
+            if trimmed > 0 { eprintln!("[rquant] trimmed {trimmed} incoherent leading qfq bars for {symbol}"); }
+            clean
+        } else { /* …原分钟合成分支不变… */ }
+    } else { /* …原 sina 分支不变… */ };
+```
+
+`Cmd::Fetch` 臂解析 `from`（`from.map(|s| NaiveDate::parse_from_str(&s, "%Y-%m-%d")).transpose()?`）并传入；`signal --fetch` 调 `run_fetch_to_csv` 处传 `None`（行为不变）。
+
+- [ ] **Step 5: 运行确认通过**
+
+Run: `cargo test -p rquant data::quality && cargo build -p rquant`
+Expected: trim 两测试 + 既有 quality 5 测试 PASS；编译通过（CLI 接好 from）。`cargo clippy -p rquant` 零警告。
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add src/data/quality.rs src/cli/mod.rs
+git commit -m "feat(data): trim incoherent leading qfq bars + fetch --from deep flag"
+```
+
+---
+
+## Task 4c: 重写脚本（回 Rust CLI）+ 重拉 + 校验（执行，需网络）
+
+**Files:**
+- Modify: `data/fetch_deep.cmd`（PowerShell → Rust CLI `--from`）
+- 产出（gitignore）：`data/*.csv`
+
+> 联网执行。需 `web.ifzq.gtimg.cn`。`cargo build --release` 先确保含 4a/4b。**沙箱挡网络则对联网命令设 dangerouslyDisableSandbox**（拉公开行情、只写 gitignored data/）。
+
+- [ ] **Step 1: 脚本回退 Rust CLI**
+
+把 `data/fetch_deep.cmd` 改回 ASCII 批脚本（删除 PowerShell 直连），用新 `--from`：
+
+```bat
+@echo off
+REM Deep-history daily qfq fetch (2018-01-01..today) via Rust multi-window stitching.
+REM Fetch date: <FILL>   Method: rquant fetch --from (tencent ~640/req window-merged + leading-trim)
+REM Output: data\<symbol>.csv (gitignored). Idempotent.
+setlocal
+set RQ=target\release\rquant.exe
+set FROM=2018-01-01
+for %%S in (sh600030 sh600036 sh600276 sh600519 sh600900 sh601088 sh601318 sz000333 sz000858 sz300750) do (
+  echo [fetch] %%S
+  %RQ% fetch --symbol %%S --scale 240 --adjust qfq --from %FROM% --out data\%%S.csv
+)
+echo [done] deep fetch complete
+endlocal
+```
+
+- [ ] **Step 2: 重拉**
+
+`cargo build --release` 后运行 `data\fetch_deep.cmd`。10 个 `data\<symbol>.csv` 重写（无 BOM——Rust write_bars_csv 写）；逐行确认无报错。回填脚本头 Fetch date。
 
 - [ ] **Step 3: 校验全量**
 
 ```
-target/release/rquant.exe validate-data --csv data/sh600030.csv --csv data/sh600036.csv --csv data/sh600276.csv --csv data/sh600519.csv --csv data/sh600900.csv --csv data/sh601088.csv --csv data/sh601318.csv --csv data/sz000333.csv --csv data/sz000858.csv --csv data/sz300750.csv
+target\release\rquant.exe validate-data --csv data/sh600030.csv --csv data/sh600036.csv --csv data/sh600276.csv --csv data/sh600519.csv --csv data/sh600900.csv --csv data/sh601088.csv --csv data/sh601318.csv --csv data/sz000333.csv --csv data/sz000858.csv --csv data/sz300750.csv
 ```
 
-记录每标的输出（bars/coverage/monotonic/max|ret|/jumps/gaps）。**退出码须为 0**（任一可疑跳空或非单调 → 退 1 → 必须排查：是 Tencent 数据问题还是真实极端行情；记入报告）。
+记录每标的 bars/coverage/monotonic/max|ret|/jumps/gaps + 退出码。宁德负价应已被 trim 清除（max|ret| 回落正常）；神华除息 qfq 伪影若仍触发 jumps，逐条排查记入报告（数据源 qfq 边界效应，非我方 bug）。
 
-- [ ] **Step 4: 提交脚本回填**
+- [ ] **Step 4: 提交脚本**
 
 ```bash
 git add data/fetch_deep.cmd
-git commit -m "chore(data): backfill probed depth D and fetch date in fetch_deep.cmd"
+git commit -m "chore(data): rust-CLI multi-window fetch script + fetch date"
 ```
 
-> 数据 CSV 不提交（gitignore）。本任务交付物 = 落地的 data/*.csv（本地）+ 回填的脚本 + Step 1/3 的实测数字（供 Task 5 写报告）。
+> 数据 CSV 不提交（gitignore）。交付物 = data/*.csv（本地，Rust 抓取、无 BOM）+ 脚本 + 实测数字（供 Task 5）。
 
 ---
 
