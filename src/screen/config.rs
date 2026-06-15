@@ -20,6 +20,12 @@ pub struct MergeConfig {
     /// 优质分分层数（回测质量分层用）。
     #[serde(default = "default_layers")]
     pub quality_layers: usize,
+    /// 倾斜强度系数：combined = quality × (1 + lambda × tilt)。0 = 纯优质驱动。
+    #[serde(default = "default_lambda")]
+    pub lambda: f64,
+    /// 参与选股倾斜的形态标签（其余形态仅标注不倾斜）。
+    #[serde(default = "default_tilt_setups")]
+    pub tilt_setups: Vec<String>,
 }
 
 fn default_theta_fire() -> f64 { 0.5 }
@@ -27,6 +33,8 @@ fn default_vote_frac() -> f64 { 0.5 }
 fn default_q_floor() -> f64 { 0.5 }
 fn default_top() -> usize { 10 }
 fn default_layers() -> usize { 3 }
+fn default_lambda() -> f64 { 1.0 }
+fn default_tilt_setups() -> Vec<String> { vec!["动量延续".to_string()] }
 
 impl Default for MergeConfig {
     fn default() -> Self {
@@ -36,6 +44,8 @@ impl Default for MergeConfig {
             q_floor: default_q_floor(),
             top: default_top(),
             quality_layers: default_layers(),
+            lambda: default_lambda(),
+            tilt_setups: default_tilt_setups(),
         }
     }
 }
@@ -84,6 +94,19 @@ impl ScreenConfig {
         if m.top == 0 {
             return Err(crate::Error::Data("screen config: top must be >= 1".into()));
         }
+        if m.lambda < 0.0 {
+            return Err(crate::Error::Data("screen config: lambda must be >= 0".into()));
+        }
+        if m.tilt_setups.is_empty() {
+            return Err(crate::Error::Data("screen config: tilt_setups must be non-empty".into()));
+        }
+        for s in &m.tilt_setups {
+            if !self.setup_trees.contains_key(s) {
+                return Err(crate::Error::Data(format!(
+                    "screen config: tilt_setup '{s}' not found in setup_trees"
+                )));
+            }
+        }
         Ok(())
     }
 }
@@ -116,6 +139,8 @@ setup_trees:
         assert_eq!(cfg.merge.top, 10);
         assert_eq!(cfg.merge.quality_layers, 3);
         assert!(cfg.regimes.is_empty());
+        assert!((cfg.merge.lambda - 1.0).abs() < 1e-12);
+        assert_eq!(cfg.merge.tilt_setups, vec!["动量延续".to_string()]);
     }
 
     #[test]
@@ -153,5 +178,42 @@ regimes:
         let cfg: ScreenConfig = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(cfg.regimes.len(), 1);
         assert_eq!(cfg.regimes[0].label, "2018熊");
+    }
+
+    #[test]
+    fn validate_rejects_negative_lambda() {
+        let yaml = r#"
+quality_trees: [q.yaml]
+setup_trees:
+  动量延续: [a.yaml]
+merge: { lambda: -0.5 }
+"#;
+        let cfg: ScreenConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_tilt_setup_not_in_setups() {
+        let yaml = r#"
+quality_trees: [q.yaml]
+setup_trees:
+  突破临界: [a.yaml]
+merge: { tilt_setups: ["动量延续"] }
+"#;
+        let cfg: ScreenConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(cfg.validate().is_err(), "tilt_setup not in setup_trees should fail");
+    }
+
+    #[test]
+    fn validate_accepts_tilt_setup_in_setups() {
+        let yaml = r#"
+quality_trees: [q.yaml]
+setup_trees:
+  动量延续: [a.yaml]
+  突破临界: [b.yaml]
+merge: { tilt_setups: ["动量延续"] }
+"#;
+        let cfg: ScreenConfig = serde_yaml::from_str(yaml).unwrap();
+        cfg.validate().unwrap();
     }
 }
