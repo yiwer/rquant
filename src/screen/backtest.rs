@@ -154,6 +154,7 @@ pub async fn run_screen_backtest(
         return Err(crate::Error::Data("rebalance must be >= 1".into()));
     }
     let sc = load_screen_config(&cfg.config_path)?;
+    let regimes = sc.regimes.clone();
     let quality = load_trees(&sc.quality_trees)?;
     let mut setups: BTreeMap<String, Vec<Tree>> = BTreeMap::new();
     for (tag, paths) in &sc.setup_trees {
@@ -290,6 +291,27 @@ pub async fn run_screen_backtest(
         }
     }).collect();
 
+    let regime_slices: Vec<RegimeSlice> = regimes.iter().filter_map(|rw| {
+        let inside: Vec<&ScreenHolding> = holdings.iter()
+            .filter(|h| h.t.date() >= rw.from && h.t.date() <= rw.to)
+            .collect();
+        if inside.len() < 2 {
+            return None; // 不足以算区间收益
+        }
+        let p0 = inside.first().unwrap();
+        let p1 = inside.last().unwrap();
+        let picks = if p0.nav > 0.0 { p1.nav / p0.nav - 1.0 } else { 0.0 };
+        let bench = if p0.benchmark_nav > 0.0 { p1.benchmark_nav / p0.benchmark_nav - 1.0 } else { 0.0 };
+        Some(RegimeSlice {
+            label: rw.label.clone(),
+            from: rw.from.to_string(),
+            to: rw.to.to_string(),
+            picks_return: picks,
+            benchmark_return: bench,
+            excess: picks - bench,
+        })
+    }).collect();
+
     let report = ScreenBacktestReport {
         n_rebalances,
         top,
@@ -303,7 +325,7 @@ pub async fn run_screen_backtest(
         holdings,
         risk,
         tag_attribution,
-        regime_slices: Vec::new(),
+        regime_slices,
         quality_layers: Vec::new(),
     };
 
@@ -409,6 +431,31 @@ leaves: { l: { stance: long, weight: 1.0 }, f: { stance: flat } }
         assert!(mom.n_picks >= 2, "should have picks tagged 动量延续");
         assert!(mom.mean_fwd_return > 0.0, "rising picks → positive forward return");
         assert!(mom.hit_rate > 0.5);
+    }
+
+    #[tokio::test]
+    async fn backtest_regime_slices_populated() {
+        let q = wf(".yaml", Q_SIMPLE);
+        let m = wf(".yaml", M_SIMPLE);
+        let cfg_yaml = format!(
+            "quality_trees: [{}]\nsetup_trees:\n  动量延续: [{}]\nmerge: {{ q_floor: 0.5, top: 1 }}\nregimes:\n  - {{ label: full, from: 2024-01-01, to: 2024-02-01 }}\n",
+            q.path().to_str().unwrap().replace('\\', "/"),
+            m.path().to_str().unwrap().replace('\\', "/"),
+        );
+        let cfg_f = wf(".yaml", &cfg_yaml);
+        let up = bars(0.01);
+        let dn = bars(-0.01);
+        let mut univ = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+        writeln!(univ, "symbol,primary\nUP,{}\nDN,{}", up.path().to_str().unwrap(), dn.path().to_str().unwrap()).unwrap();
+        univ.flush().unwrap();
+        let cfg = ScreenBacktestConfig {
+            config_path: cfg_f.path().to_path_buf(), universe_path: univ.path().to_path_buf(),
+            from: None, to: None, rebalance: 4, top: None, warmup: 5, window: 10, cost_bps: 10.0, soft: false, out_path: None,
+        };
+        let r = run_screen_backtest(&cfg, &LlmEvaluator::Disabled).await.unwrap();
+        let slice = r.regime_slices.iter().find(|s| s.label == "full").expect("regime slice present");
+        assert!((slice.excess - (slice.picks_return - slice.benchmark_return)).abs() < 1e-9);
+        assert!(slice.picks_return > slice.benchmark_return);
     }
 
     #[tokio::test]
