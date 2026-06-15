@@ -34,14 +34,16 @@
 - 趋势健康：`close > ema(close,200) and ema(close,50) > ema(close,200)`（均线多头排列）
 - 受控回撤：`close / highest(close,120)`（距 120 日高点近 ≈ 回撤健康，越接近 1 越优）
 - 趋势/噪声比：`slope(ema(close,20),20) / (std(close,20) + 1e-9)`（单位噪声的趋势量，越高越平滑不鬼刀）
-- 流动性：`percentrank(close * volume, 横截面)`（成交额跨 universe 分位，低流动性出局）
+- 流动性：`sma(close * volume, 20)` 绝对下限（日均成交额 ≥ 阈值，低流动性出局）——**不**用"跨 universe 分位"（精选大中盘本就流动，横截面流动性排名意义小且增复杂度）
 
 **形态树（每形态 ≥1，可多树集成投票）** → 命中则触发标签 + 强度 `∈ [0,1]`：
-- **动量延续**：`percentrank(close/ref(close,20)-1, 横截面)` 高 **且** `close > ema(close,50)` 且 ema50 上行 → 强者恒强（强度树已证方向）。可放"绝对动量树"+"相对强弱树"两棵集成。
+- **动量延续**：`percentrank(close/ref(close,20)-1, 60)` 高 **且** `close > ema(close,50)` 且 ema50 上行 → 强者恒强（强度树已证方向）。可放"绝对动量树"+"相对强弱树"两棵集成。
 - **突破临界**：`close >= 0.97 * highest(ref(high,1),60)`（距 60 日前高 3% 内）**且** `volume > sma(volume,20)`（量起）**且** `std(close,10) < std(close,40)`（缩量盘整蓄势）→ 突破前夜。
 - **超跌反弹**：`close > ema(close,120)`（长趋势在）**且**（`rsi(close,14) < 35` 或 `close < ema(close,20)*0.95`）（短期深跌近支撑）→ 上升趋势中的回调买点。
 
 **并行**：N 棵树每日并行评估全 universe（无效率顾虑 → 可上大集成 + 深历史）。
+
+**横截面语义（实现要点，与引擎对齐）**：引擎的 `percentrank(expr, n)` 是**单标的时间序列自归一**（每只对自己近 n 根历史的分位，强度树正是这么用），使每股得分跨标的可比。**真正的横截面**（跨 universe 排名）发生在**编排器层**——它收集所有标的当日的每棵树标量后做投票/排名/选 top-N（复用 portfolio 已验证的 `select_top`：score>0 降序、并列 symbol 升序）。故树内只做自归一，编排器做真横截面，两层分明。
 
 **深度由验证驱动地长出**：种子树（优质 + 3 形态各 1）是起点假设，非上限；靠 §5 回测/IC 留强汰弱 + 加候选树，沉淀出"已验证因子/树库"。**树多 ≠ 乱堆**——每棵须过验证门，过拟合（样本外/regime 稳健）是真闸，不是算力。
 
@@ -54,7 +56,7 @@
 - **`quality_score`** = 优质树分级输出加权均值（起始等权）。
 - **`speculative_score`** = `max_S(形态 S 强度)`（当前最强形态强度，可交易性）。
 - **`combined_score`** = `quality_score * speculative_score`（起始式，权重/形式经 §5 迭代定）——**排名输出**。
-- **选择**（回测/top）：`combined_score` 降序，限于 `tags 非空 且 quality_score ≥ q_floor`（优质门）的股，取 top-N。
+- **选择**（回测/top）：不合格股（`tags 为空` 或 `quality_score < q_floor` 优质门）的 `combined_score` 置 0，再喂 portfolio `select_top`（自动滤 score≤0、降序、并列 symbol 升序）取 top-N——复用已验证选择逻辑。
 - **`reasons[]`** = 每棵触发树的 `{tree, leaf, 关键值}`，供"为何命中"可解释。
 
 起始参数（经 §5 迭代定参）：`θ_fire=0.5`，`vote_frac=0.5`，优质子分等权，`q_floor=0.5`，`combined = quality*speculative`。
