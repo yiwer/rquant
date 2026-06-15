@@ -298,13 +298,13 @@ rquant portfolio [OPTIONS] --tree <TREE> --universe <UNIVERSE>
 ### universe CSV 格式
 
 ```
-symbol,primary[,context]
+symbol,primary[,context[,fundamentals]]
 sh600000,data/sh600000_60m.csv
 sh600036,data/sh600036_60m.csv,data/sh600036_daily.csv
-sz000001,data/sz000001_60m.csv
+sz000001,data/sz000001_60m.csv,,data/fundamentals/sz000001.csv
 ```
 
-- **首行必须是表头**：至少两列 `symbol,primary`；可选第三列 `context`（大周期 bar，缺省回退为 primary）。
+- **首行必须是表头**：至少两列 `symbol,primary`；可选第三列 `context`（大周期 bar，缺省回退为 primary）；可选第四列 `fundamentals`（逐股基本面 CSV，供 DSL `fund.<col>` 点对点读取，缺省/空 = 无；公告日时点对齐，见 [dsl-reference.md](dsl-reference.md) 「逐股基本面」节）。
 - `symbol` 非空且全局唯一（重复报错）。
 - `primary` / `context` 为相对于当前工作目录的路径（与命令行其他 `--xxx PATH` 一致）。
 - 读入后按 `symbol` 字典序排序（影响并列分数的确定性打破顺序）。
