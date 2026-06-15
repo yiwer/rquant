@@ -98,7 +98,6 @@ pub struct ScreenBacktestConfig {
 /// `quality` 供 SCR-8 质量分层消费，`tags` 已在 SCR-6 归因中消费。
 struct SymbolEval {
     combined: f64,
-    #[allow(dead_code)] // SCR-8 will consume quality
     quality: f64,
     tags: Vec<String>,
 }
@@ -166,6 +165,7 @@ pub async fn run_screen_backtest(
         q_floor: sc.merge.q_floor,
     };
     let top = cfg.top.unwrap_or(sc.merge.top);
+    let n_layers = sc.merge.quality_layers.max(1);
 
     let universe = crate::data::universe::read_universe_csv(&cfg.universe_path)?;
     let mut primaries: Vec<Vec<Bar>> = Vec::with_capacity(universe.len());
@@ -206,6 +206,8 @@ pub async fn run_screen_backtest(
     let mut w_old: BTreeMap<String, f64> = BTreeMap::new();
     // 标签归因累加器：tag -> picks 段收益列表
     let mut tag_rets: BTreeMap<String, Vec<f64>> = BTreeMap::new();
+    // 质量分层累加器：(quality_score, 段前瞻收益) for eligible symbols
+    let mut layer_pairs: Vec<(f64, f64)> = Vec::new();
 
     for (rb_idx, end_idx) in &segments {
         let t_rb = timeline[*rb_idx];
@@ -254,6 +256,16 @@ pub async fn run_screen_backtest(
                 for tag in &ev.tags {
                     tag_rets.entry(tag.clone()).or_default().push(seg_ret);
                 }
+            }
+        }
+
+        for (sym, ev) in &evals {
+            if ev.combined > 0.0 {
+                let seg_ret = match (px_start.get(sym), px_end.get(sym)) {
+                    (Some(a), Some(b)) if *a > 0.0 => b / a - 1.0,
+                    _ => 0.0,
+                };
+                layer_pairs.push((ev.quality, seg_ret));
             }
         }
 
@@ -312,6 +324,26 @@ pub async fn run_screen_backtest(
         })
     }).collect();
 
+    let quality_layers: Vec<QualityLayer> = {
+        let mut pairs = layer_pairs.clone();
+        pairs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        let total = pairs.len();
+        if total == 0 {
+            Vec::new()
+        } else {
+            (0..n_layers).filter_map(|q| {
+                let lo = q * total / n_layers;
+                let hi = (q + 1) * total / n_layers;
+                if hi <= lo { return None; }
+                let slice = &pairs[lo..hi];
+                let n = slice.len();
+                let mean_q = slice.iter().map(|p| p.0).sum::<f64>() / n as f64;
+                let mean_r = slice.iter().map(|p| p.1).sum::<f64>() / n as f64;
+                Some(QualityLayer { layer: q + 1, n, mean_quality: mean_q, mean_fwd_return: mean_r })
+            }).collect()
+        }
+    };
+
     let report = ScreenBacktestReport {
         n_rebalances,
         top,
@@ -326,7 +358,7 @@ pub async fn run_screen_backtest(
         risk,
         tag_attribution,
         regime_slices,
-        quality_layers: Vec::new(),
+        quality_layers,
     };
 
     if let Some(p) = &cfg.out_path {
@@ -489,5 +521,30 @@ leaves: { l: { stance: long, weight: 1.0 }, f: { stance: flat } }
                 assert_eq!(h.selected[0].0, "UP");
             }
         }
+    }
+
+    #[tokio::test]
+    async fn backtest_quality_layers_populated() {
+        let q = wf(".yaml", Q_SIMPLE);
+        let m = wf(".yaml", M_SIMPLE);
+        let cfg_yaml = format!(
+            "quality_trees: [{}]\nsetup_trees:\n  动量延续: [{}]\nmerge: {{ q_floor: 0.0, top: 2, quality_layers: 2 }}\n",
+            q.path().to_str().unwrap().replace('\\', "/"),
+            m.path().to_str().unwrap().replace('\\', "/"),
+        );
+        let cfg_f = wf(".yaml", &cfg_yaml);
+        let up = bars(0.01);
+        let dn = bars(-0.01);
+        let mut univ = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+        writeln!(univ, "symbol,primary\nUP,{}\nDN,{}", up.path().to_str().unwrap(), dn.path().to_str().unwrap()).unwrap();
+        univ.flush().unwrap();
+        let cfg = ScreenBacktestConfig {
+            config_path: cfg_f.path().to_path_buf(), universe_path: univ.path().to_path_buf(),
+            from: None, to: None, rebalance: 4, top: None, warmup: 5, window: 10, cost_bps: 10.0, soft: false, out_path: None,
+        };
+        let r = run_screen_backtest(&cfg, &LlmEvaluator::Disabled).await.unwrap();
+        assert!(!r.quality_layers.is_empty(), "quality layers should be computed");
+        let total_n: usize = r.quality_layers.iter().map(|l| l.n).sum();
+        assert!(total_n > 0);
     }
 }
