@@ -235,6 +235,45 @@ enum Cmd {
         #[arg(long)]
         html: Option<PathBuf>,
     },
+    /// 日线选股器：多树集成 → 优质+投机形态标注（as-of），或历史回测验证（--backtest）。
+    Screen {
+        #[arg(long)]
+        universe: PathBuf,
+        #[arg(long, default_value = "examples/screen_v1.yaml")]
+        config: PathBuf,
+        /// 历史回测模式（回放集成、出净值/归因/regime/质量分层）
+        #[arg(long, default_value_t = false)]
+        backtest: bool,
+        /// as-of 日期（选股模式；默认最新 K）YYYY-MM-DD
+        #[arg(long)]
+        as_of: Option<String>,
+        /// 回测起始日 YYYY-MM-DD
+        #[arg(long)]
+        from: Option<String>,
+        /// 回测结束日 YYYY-MM-DD
+        #[arg(long)]
+        to: Option<String>,
+        #[arg(long)]
+        top: Option<usize>,
+        #[arg(long, default_value_t = 5)]
+        rebalance: usize,
+        #[arg(long, default_value_t = 260)]
+        warmup: usize,
+        #[arg(long, default_value_t = 260)]
+        window: usize,
+        #[arg(long, default_value_t = 10.0)]
+        cost_bps: f64,
+        #[arg(long, default_value_t = false)]
+        soft: bool,
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[arg(long, default_value = "")]
+        llm_model: String,
+        #[arg(long, default_value = "")]
+        llm_base_url: String,
+        #[arg(long, default_value = ".rquant-cache/llm")]
+        llm_cache_dir: PathBuf,
+    },
     /// Walk-forward parameter optimization (grid x anchored-expanding IS -> OS)
     Optimize {
         #[arg(long)]
@@ -623,6 +662,48 @@ pub async fn main() -> anyhow::Result<()> {
             };
             let report = run_portfolio(&pcfg, &llm).await?;
             print_portfolio_summary(&report);
+        }
+        Cmd::Screen {
+            universe, config, backtest, as_of, from, to, top, rebalance,
+            warmup, window, cost_bps, soft, out, llm_model, llm_base_url, llm_cache_dir,
+        } => {
+            let llm = build_llm(llm_model, llm_base_url, llm_cache_dir)?;
+            let parse_date = |o: Option<String>| -> crate::Result<Option<chrono::NaiveDate>> {
+                match o {
+                    None => Ok(None),
+                    Some(s) => chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+                        .map(Some)
+                        .map_err(|e| crate::Error::Data(format!("bad date '{s}': {e}"))),
+                }
+            };
+            if backtest {
+                let bcfg = crate::screen::backtest::ScreenBacktestConfig {
+                    config_path: config,
+                    universe_path: universe,
+                    from: parse_date(from)?,
+                    to: parse_date(to)?,
+                    rebalance,
+                    top,
+                    warmup,
+                    window,
+                    cost_bps,
+                    soft,
+                    out_path: out,
+                };
+                let report = crate::screen::backtest::run_screen_backtest(&bcfg, &llm).await?;
+                crate::screen::backtest::print_screen_backtest(&report);
+            } else {
+                let rcfg = crate::screen::ScreenRunConfig {
+                    config_path: config,
+                    universe_path: universe,
+                    as_of: parse_date(as_of)?,
+                    top,
+                    window,
+                    out_path: out,
+                };
+                let result = crate::screen::run_screen(&rcfg, &llm).await?;
+                crate::screen::print_screen(&result);
+            }
         }
         Cmd::Eval { reports, name, out } => {
             if reports.is_empty() {
