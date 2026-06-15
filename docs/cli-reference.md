@@ -18,6 +18,7 @@ rquant <SUBCOMMAND>
   signal      生成今日交易信号（单标的纸面盘 / 组合清单）
   optimize    锚定扩展 Walk-Forward Optimization 参数网格寻优与泛化评估
   eval        对 N 个标的的 optimize 报告执行 WFO 五门槛策略级自动裁决
+  screen      日线选股器：多树集成出优质+投机形态标注清单（as-of），或历史回测验证（--backtest）
 ```
 
 ---
@@ -727,6 +728,81 @@ rquant eval --reports wfo_sh600030.json wfo_sh600036.json [...] \
 **不含 T4（快速评估）：** 跳过 `--auto-extend`，T4 将因所有标的 `axes` 为空而判 Fail，须在 `note` 中提示重跑 `--auto-extend`。
 
 **机械裁决与 regime 叙事的边界：** `eval` 的裁决是纯机械的、无参数的；「策略无 edge」vs「策略有 edge 但依赖特定 regime」的叙事区分属于主观分析，超出 `eval` 的职能范围，需人工结合 OS 分布和市场背景判断。
+
+---
+
+## `screen` 子命令
+
+```
+rquant screen [OPTIONS] --universe <UNIVERSE>
+```
+
+日线选股器：对 universe 内每只标的并行跑「优质树 + 多形态树」集成，合并为优质分 + 投机形态标签（双输出），按综合分横截面排名取 top-N。两种模式：
+
+- **as-of（默认）**：对最新（或 `--as-of` 指定）K 出当日排名+标注清单（含命中理由）。
+- **历史回测（`--backtest`）**：在 `[--from, --to]` 内回放集成选股，出净值 vs 等权基准 + 按标签归因 + 跨 regime 切片 + 优质分分层（方法学验证用）。
+
+纯量化树（无 LLM）。Phase 1 在深 20 标的 universe（`data/universe_20.csv`，2018-2026）上验证方法学。
+
+### 标志一览
+
+| 标志 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `--universe <PATH>` | PathBuf | 必填 | universe CSV（格式同 `portfolio`：`symbol,primary[,context]`）|
+| `--config <PATH>` | PathBuf | `examples/screen_v1.yaml` | 选股集成配置（quality_trees/setup_trees/merge/regimes）|
+| `--backtest` | bool | `false` | 历史回测模式；否则 as-of 选股 |
+| `--as-of <YYYY-MM-DD>` | string | 可选 | as-of 日期（选股模式；默认最新 K，取 ≤该日期的最大时间线点）|
+| `--from <YYYY-MM-DD>` | string | 可选 | 回测起始日（回测模式）|
+| `--to <YYYY-MM-DD>` | string | 可选 | 回测结束日（回测模式）|
+| `--top <usize>` | usize | 配置 `merge.top` | 入选标的数（覆盖配置）|
+| `--rebalance <usize>` | usize | `5` | 回测调仓间隔（timeline bar 数）|
+| `--warmup <usize>` | usize | `260` | 跳过前 N 根 bar（优质树用 ema200，须 ≥ ~220）|
+| `--window <usize>` | usize | `260` | Context 历史窗口（须 ≥ 树最大窗口 ema200）|
+| `--cost-bps <f64>` | f64 | `10.0` | 回测单次调仓换手成本（基点）|
+| `--soft` | bool | `false` | 软遍历打分（回测）；as-of 用硬模式取确定叶名作理由 |
+| `--out <PATH>` | PathBuf | 可选 | 写 JSON（as-of=`ScreenResult` / 回测=`ScreenBacktestReport`）|
+| `--llm-model` / `--llm-base-url` / `--llm-cache-dir` | — | — | 同其他子命令（种子树纯量化，留作扩展）|
+
+### 集成配置格式（`--config`）
+
+```yaml
+quality_trees:                          # 优质树（≥1），long 分级叶=优质分、flat=不合格
+  - examples/trees/screen/quality_v1.yaml
+setup_trees:                            # 形态标签 -> 树集（每形态可多树投票）
+  动量延续: [examples/trees/screen/momentum_v1.yaml]
+  突破临界: [examples/trees/screen/breakout_v1.yaml]
+  超跌反弹: [examples/trees/screen/pullback_v1.yaml]
+merge:
+  theta_fire: 0.5      # 形态树命中阈值
+  vote_frac: 0.5       # 多树投票占比（ceil(n*vote_frac) 棵命中才打标签）
+  q_floor: 0.5         # 优质门：低于此不入选
+  top: 10              # 入选数
+  quality_layers: 3    # 回测优质分分层数
+regimes:                                # 回测 regime 切片窗口（可空）
+  - { label: "2018熊", from: 2018-01-02, to: 2018-12-28 }
+```
+
+树路径相对 cwd（同 `portfolio` 约定）。
+
+### 双输出口径
+
+- **标注（tags）**：每形态树集投票（`ceil(n*vote_frac)` 棵 ≥ `theta_fire` 才打该标签），形态强度 = 命中树均值。
+- **排名（combined_score）**：`优质分 × 投机分`（投机分 = 命中形态最大强度）；不合格股（无标签 或 优质 < `q_floor`）综合分置 0，再走 `select_top` 取 top-N。
+- **横截面语义**：树内 `percentrank` 是单标的时序自归一；真横截面排名由编排器在收集全标的得分后做（复用 `portfolio::select_top`）。
+
+### 用法示例
+
+```bat
+REM 当日选股清单（最新 K）
+rquant screen --universe data\universe_20.csv --config examples\screen_v1.yaml --out tmps\screen_asof.json
+
+REM 历史回测验证（跨牛熊，出归因/regime/分层）
+rquant screen --backtest --universe data\universe_20.csv --config examples\screen_v1.yaml --from 2018-06-01 --to 2026-06-01 --rebalance 5 --out tmps\screen_bt.json
+```
+
+### 验证口径提醒
+
+回测收益为含成本组合口径（`--cost-bps`）。诚实边界：种子集成是起始假设，须经回测归因（哪个形态有正前瞻收益）+ 跨 regime（是否扛熊）+ 优质分层（优质轴是否单调）实测；信号不达标应诚实剔除/迭代，不调参美化（防过拟合）。
 
 ---
 
