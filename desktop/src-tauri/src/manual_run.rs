@@ -65,7 +65,7 @@ pub fn run_books(ws: &Workspace, ctx: &TaskCtx, book_ids: &[String], commit: boo
             BookKind::Single => {
                 ctx.progress(base + 0.1 / total, "fetch", book.symbol);
                 rt.block_on(rquant::cli::run_fetch_to_csv(
-                    book.symbol, book.scale, 1023, rquant::cli::SINA_BASE_URL, "qfq", &book.primary_csv(ws),
+                    book.symbol, book.scale, 1023, rquant::cli::SINA_BASE_URL, "qfq", &book.primary_csv(ws), None,
                 ))
                 .map_err(|e| e.to_string())?;
                 ctx.progress(base + 0.5 / total, "replay", book.symbol);
@@ -92,6 +92,7 @@ pub fn run_books(ws: &Workspace, ctx: &TaskCtx, book_ids: &[String], commit: boo
                     rt.block_on(rquant::cli::run_fetch_to_csv(
                         s, 240, 1023, rquant::cli::SINA_BASE_URL, "qfq",
                         &ws.paper_dir().join(format!("pd_{}.csv", s)),
+                        None,
                     ))
                     .map_err(|e| e.to_string())?;
                     std::thread::sleep(std::time::Duration::from_millis(500)); // sina 节流

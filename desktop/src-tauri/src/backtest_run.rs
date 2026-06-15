@@ -72,6 +72,7 @@ pub fn execute_backtest(
             rquant::cli::SINA_BASE_URL,
             &f.adjust,
             &out_abs,
+            None,
         ))
         .map_err(|e| e.to_string())?;
         effective.primary_path = out_rel;

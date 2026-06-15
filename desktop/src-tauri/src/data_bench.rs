@@ -214,6 +214,7 @@ pub fn fetch_batch(
             rquant::cli::SINA_BASE_URL,
             adjust,
             &out,
+            None,
         ))
         .map_err(|e| e.to_string())?;
         written.push(rel_of(ws, &out));
