@@ -5,7 +5,7 @@ REM Output: data\<symbol>.csv (gitignored). Idempotent.
 setlocal
 set RQ=target\release\rquant.exe
 set FROM=2018-01-01
-for %%S in (sh600030 sh600036 sh600276 sh600519 sh600900 sh601088 sh601318 sz000333 sz000858 sz300750) do (
+for %%S in (sh600030 sh600036 sh600276 sh600519 sh600900 sh601088 sh601318 sz000333 sz000858 sz300750 sz002415 sz000002 sh600104 sz300059 sh600887 sh600309 sh601899 sz002475 sz002714 sh601012) do (
   echo [fetch] %%S
   %RQ% fetch --symbol %%S --scale 240 --adjust qfq --from %FROM% --out data\%%S.csv
 )
