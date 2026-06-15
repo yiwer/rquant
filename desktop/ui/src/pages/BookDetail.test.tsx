@@ -29,6 +29,14 @@ test("book detail renders snapshot fields", async () => {
     </MemoryRouter>
   );
   await waitFor(() => expect(screen.getByText(/账本1/)).toBeInTheDocument());
-  expect(screen.getByText("bars_held")).toBeInTheDocument();
+  // Chinese label from snapshotFieldZh mapping (bars_held → 持仓根数)
+  expect(screen.getByText("持仓根数")).toBeInTheDocument();
+  // card title demoted: "AccountSnapshot(13 字段,只读)" → "持仓快照"
+  expect(screen.getByText("持仓快照")).toBeInTheDocument();
+  // subtitle "只读 · 13 字段" present
+  expect(screen.getByText("只读 · 13 字段")).toBeInTheDocument();
+  // journal card subtitle demoted to extra
+  expect(screen.getByText("自桌面端启用日积累")).toBeInTheDocument();
+  // field value unchanged
   expect(screen.getByText("1.050000")).toBeInTheDocument();
 });
