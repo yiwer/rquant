@@ -6,11 +6,11 @@ import akshare as ak
 
 def to_symbol(code):
     code = str(code).zfill(6)
-    if code[:2] in ("60", "68") or code[0] == "9":
+    if code[:2] in ("60", "68"):       # 沪市主板 + 科创板
         return "sh" + code
-    if code[:2] in ("00", "30") or code[0] == "2":
+    if code[:2] in ("00", "30"):       # 深市主板 + 创业板
         return "sz" + code
-    return None
+    return None                         # 排除 B股(900/200)、北交所(920/8xxxxx)——illiquid 且 sina 不供日线
 
 def collect_codes():
     syms = set()

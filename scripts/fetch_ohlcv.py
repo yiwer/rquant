@@ -30,9 +30,10 @@ def last_date(path):
         return None
 
 def _no_data(err):
-    """退市/无数据类错误（不该重试）。"""
+    """退市/无数据类错误（不该重试）：JSON 空、或返回缺 date/日期 列（如 sina 不供的标的）。"""
     s = str(err).lower()
-    return "value to decode" in s or "jsondecode" in type(err).__name__.lower()
+    return ("value to decode" in s or "jsondecode" in type(err).__name__.lower()
+            or s in ("'date'", "'日期'"))
 
 def fetch_one(sym, start, end, source):
     """→ DataFrame(time,open,high,low,close,volume[股]) 或 None(无数据)。连接类错误向上抛(重试)。"""
