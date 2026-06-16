@@ -3,6 +3,7 @@ pub mod stats;
 use crate::backtest::costs::CostModel;
 use crate::backtest::forward_return::forward_return;
 use crate::backtest::portfolio::build_timeline;
+use crate::data::fundamentals::{FundamentalSeries, load_fundamentals_csv};
 use crate::data::universe::read_universe_csv;
 use crate::dsl::parser::parse_str;
 use crate::dsl::eval::eval_scalar;
@@ -159,9 +160,17 @@ pub(crate) fn collect_periods(
 
     let mut primaries: Vec<Vec<crate::data::bar::Bar>> = Vec::with_capacity(n_symbols);
     let mut contexts: Vec<Vec<crate::data::bar::Bar>> = Vec::with_capacity(n_symbols);
+    let mut funds: Vec<Option<FundamentalSeries>> = Vec::with_capacity(n_symbols);
     for entry in &universe {
         primaries.push(crate::data::reader::read_bars_csv(&entry.primary)?);
         contexts.push(crate::data::reader::read_bars_csv(&entry.context)?);
+        funds.push(
+            entry
+                .fundamentals
+                .as_ref()
+                .map(|p| load_fundamentals_csv(p))
+                .transpose()?,
+        );
     }
 
     // ── 3. 时间线 + 采样索引 ─────────────────────────────────────────────────
@@ -200,12 +209,13 @@ pub(crate) fn collect_periods(
                 Err(_) => continue, // 该标的在此时刻无 bar
             };
 
-            // 构建 context（news 空、aux 空）
+            // 构建 context（news 空、aux 空；基本面取该标的 as-of-t 快照）
             let ctx = build_context(
                 bars,
                 ctx_bars,
                 &[],
                 &empty_aux,
+                funds[sym_idx].as_ref(),
                 t,
                 cfg.window,
             );

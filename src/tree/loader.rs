@@ -34,7 +34,7 @@ fn check_name(name: &str, env: &HashMap<String, Expr>) -> Result<()> {
     Ok(())
 }
 
-/// 替换后残余 Ident 必须是内置标识符或 ctx. 前缀（把"未定义名"左移到加载错）。
+/// 替换后残余 Ident 必须是内置标识符或 ctx./aux./fund. 前缀（把"未定义名"左移到加载错）。
 fn check_no_unknown_idents(expr: &Expr, where_: &str) -> Result<()> {
     match expr {
         Expr::Ident(name) => {
@@ -45,6 +45,13 @@ fn check_no_unknown_idents(expr: &Expr, where_: &str) -> Result<()> {
                 return match rest.split_once('.') {
                     Some((t, c)) if !t.is_empty() && !c.is_empty() && !c.contains('.') => Ok(()),
                     _ => Err(Error::Tree(format!("{where_}: aux identifier must be aux.<table>.<column>, got '{name}'"))),
+                };
+            }
+            if let Some(col) = name.strip_prefix("fund.") {
+                return if !col.is_empty() && !col.contains('.') {
+                    Ok(())
+                } else {
+                    Err(Error::Tree(format!("{where_}: fund identifier must be fund.<column>, got '{name}'")))
                 };
             }
             Err(Error::Tree(format!(
@@ -632,6 +639,25 @@ leaves:
     }
 
     #[test]
+    fn fund_namespace_passes_load_check() {
+        let src = r#"
+meta: { name: f, forward_window: 1, stances: [long, flat] }
+root: g
+nodes:
+  g:
+    type: quant
+    branches: [ { when: "fund.roe > 15", goto: l, label: hi } ]
+    default: { goto: fl, label: lo }
+leaves:
+  l: { stance: long, weight: 1.0 }
+  fl: { stance: flat }
+"#;
+        assert!(load_tree_str(src).is_ok(), "tree using fund.roe should pass the load-time ident check");
+        // 坏形态：fund.a.b（多点）→ 加载错（fund.<column> 只许一段列名）
+        assert!(load_tree_str(&src.replace("fund.roe", "fund.a.b")).is_err());
+    }
+
+    #[test]
     fn judge_node_with_empty_map_routes_all_to_default() {
         let src = JUDGE_TREE.replace("map: { veto: leaf_f, pass: leaf_l }\n    default: leaf_f", "default: leaf_f");
         let tree = load_tree_str(&src).unwrap();
@@ -955,6 +981,7 @@ leaves:
             news: None,
             aux: std::collections::BTreeMap::new(),
             sim: crate::features::context::SimState::default(),
+            fundamentals: std::collections::BTreeMap::new(),
             eval_cache: Default::default(),
         }
     }
@@ -1215,7 +1242,7 @@ leaves:
             })
             .collect();
         let ctx = crate::features::context::build_context(
-            &bars, &bars, &[], &std::collections::BTreeMap::new(), bars[4].time, 5,
+            &bars, &bars, &[], &std::collections::BTreeMap::new(), None, bars[4].time, 5,
         );
         let v = crate::dsl::eval::eval(&factors[1].1, &ctx).unwrap();
         let last = match v {
@@ -1290,6 +1317,7 @@ leaves:
             news: None,
             aux: std::collections::BTreeMap::new(),
             sim: crate::features::context::SimState::default(),
+            fundamentals: std::collections::BTreeMap::new(),
             eval_cache: Default::default(),
         }
     }

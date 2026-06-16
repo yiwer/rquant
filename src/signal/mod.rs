@@ -288,6 +288,7 @@ pub async fn run_signal_single(
             &context,
             &news,
             &aux_tables,
+            None,
             time_i,
             cfg.window,
         );
@@ -340,6 +341,7 @@ pub async fn run_signal_single(
         &context,
         &news,
         &aux_tables,
+        None,
         time_hang,
         cfg.window,
     );

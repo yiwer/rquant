@@ -63,7 +63,7 @@ async fn eval_point(
     llm: &LlmEvaluator,
 ) -> Result<(Trace, Option<ForwardResult>)> {
     let t = primary[i].time;
-    let ctx = build_context(primary, context, news, aux, t, window);
+    let ctx = build_context(primary, context, news, aux, None, t, window);
     let trace = crate::engine::traversal::traverse(tree, &ctx, llm).await?;
     let fr = match tree.leaves.get(&trace.leaf) {
         Some(l) => {

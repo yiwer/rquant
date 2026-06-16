@@ -369,6 +369,7 @@ leaves:
             news: None,
             aux: std::collections::BTreeMap::new(),
             sim: crate::features::context::SimState::default(),
+            fundamentals: std::collections::BTreeMap::new(),
             eval_cache: Default::default(),
         };
         // SERIES_FNS 全员逐个验证（与 lint 表逐项对应，新增成员必须两边同步）

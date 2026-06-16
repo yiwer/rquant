@@ -93,7 +93,7 @@ pub async fn score_symbol(
     if !is_fresh(primary, t) {
         return Ok(None);
     }
-    let ctx = crate::features::context::build_context(primary, context, &[], aux, t, window);
+    let ctx = crate::features::context::build_context(primary, context, &[], aux, None, t, window);
     let dir = |s: crate::tree::schema::Stance| match s {
         crate::tree::schema::Stance::Long => 1.0,
         crate::tree::schema::Stance::Short => -1.0,

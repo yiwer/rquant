@@ -93,7 +93,7 @@ pub fn eval_factor(
         .iter()
         .map(|b| {
             let ctx =
-                rquant::features::context::build_context(&bars, &bars, &[], &aux, b.time, window);
+                rquant::features::context::build_context(&bars, &bars, &[], &aux, None, b.time, window);
             let v = rquant::dsl::eval::eval(&expr, &ctx).ok().and_then(|val| match val {
                 rquant::dsl::eval::Value::Scalar(x) => Some(x),
                 rquant::dsl::eval::Value::Series(s) => s.last().copied(),

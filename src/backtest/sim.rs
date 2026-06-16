@@ -421,6 +421,7 @@ pub async fn run_sim(cfg: &BacktestConfig, llm: &LlmEvaluator, soft: bool) -> Re
             &context,
             &news,
             &aux_tables,
+            None,
             primary[i].time,
             cfg.window,
         );

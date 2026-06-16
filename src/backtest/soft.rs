@@ -130,7 +130,7 @@ async fn eval_point_soft(
     llm: &LlmEvaluator,
 ) -> Result<(SoftTrace, Option<SoftScore>)> {
     let t = primary[i].time;
-    let ctx = build_context(primary, context, news, aux, t, window);
+    let ctx = build_context(primary, context, news, aux, None, t, window);
     let soft = traverse_soft(tree, &ctx, llm).await?;
     let score = score_soft(&soft, tree, primary, i, costs, &ctx);
     Ok((soft, score))
@@ -239,6 +239,7 @@ mod tests {
             news: None,
             aux: BTreeMap::new(),
             sim: crate::features::context::SimState::default(),
+            fundamentals: std::collections::BTreeMap::new(),
             eval_cache: Default::default(),
         }
     }
@@ -463,6 +464,7 @@ leaves:
             news: None,
             aux: BTreeMap::new(),
             sim: crate::features::context::SimState::default(),
+            fundamentals: std::collections::BTreeMap::new(),
             eval_cache: Default::default(),
         }
     }

@@ -465,3 +465,40 @@ aux table '<name>' not mounted (use --aux <name>=path.csv)
 ### 格式校验（加载期左移）
 
 `aux.<表>.<列>` 必须是三段（恰好两个 `.`），表名与列名均非空且列名不含 `.`——此检查在树加载时（`check_no_unknown_idents`）完成，格式错误不会等到运行时才暴露。
+
+---
+
+## 逐股基本面（`fund.<列>`）
+
+universe 第 4 列 `fundamentals` 挂载的**逐股**财务 CSV（akshare 管线产出，见 `scripts/fetch_fundamentals.py`），DSL 以 `fund.<列名>` 两段格式引用：
+
+```yaml
+when: "fund.roe > 15 and close / fund.eps < 30"   # ROE>15% 且 PE<30（PE 派生）
+```
+
+与 `aux.` 的区别：aux 是**全标的共享**表（指数等横截面数据）；fund 是**逐股**序列（每只股自己的财报）。
+
+### 时点语义（公告日 as-of，防前视）
+
+`fund.<col>` 是 **as-of-t 标量**：决策点 `t` 取该股**公告日 ≤ t 的最近一行**财报值（季频）。CSV 首列 `time` = **公告日（最新公告日期）**，非报告期——这是 point-in-time 命根：Q1 财报约 4 月才披露，引擎在公告日前看不到它。**首份财报公告前 → NaN（弃权，比较恒 false → 走 default）**，绝不前视。与 aux 同一条 time≤t 闸门纪律（见上）。
+
+### 单位（铁律，按 akshare yjbb 原样存）
+
+| 列 | 含义 | 单位 |
+|---|---|---|
+| `fund.roe` | 净资产收益率 | **百分数**（34.1 = 34.1%）|
+| `fund.np_yoy` | 净利润同比增长 | 百分数 |
+| `fund.rev_yoy` | 营收同比增长 | 百分数 |
+| `fund.gross_margin` | 销售毛利率 | 百分数 |
+| `fund.eps` | 每股收益 | 元 |
+| `fund.bps` | 每股净资产 | 元 |
+
+故写 `fund.roe > 15`（15%）**而非** `> 0.15`。估值派生：`close / fund.eps`（PE）、`close / fund.bps`（PB）。
+
+### 缺列/缺表弃权（与 aux 的差异）
+
+缺列或首报前 → `NaN`（弃权，比较恒 false 走 default）。注意：`aux.<表>.<列>` 缺表/缺列会**报错**；`fund.<col>` 缺列**不报错、直接弃权**（财报字段缺失是常态、公告前无数据是 point-in-time 正常状态）。
+
+### 格式校验（加载期左移）
+
+`fund.<列>` 必须是两段（恰好一个 `.`），列名非空且不含 `.`——树加载时 `check_no_unknown_idents` 校验。

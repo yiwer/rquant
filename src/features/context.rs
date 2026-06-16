@@ -52,6 +52,8 @@ pub struct Context {
     pub news: Option<NewsView>,
     pub aux: BTreeMap<String, AuxView>,
     pub sim: SimState,
+    /// as-of-t 基本面快照（公告日≤t 最近一行；空=首报前/无）。DSL fund.<col> 读此。
+    pub fundamentals: BTreeMap<String, f64>,
     /// 因子求值缓存（Expr::Cached 槽位 → 值）；每个决策点随 Context 新建。
     /// 安全性：展开后的因子是 Context 的纯函数，eval 全程同步、借用不跨 await。
     /// INVARIANT：槽位 id 由 tree::loader 全树唯一分配；id 撞车 = 静默值串用。
@@ -72,6 +74,7 @@ pub fn build_context(
     context: &[Bar],
     news: &[NewsRecord],
     aux: &BTreeMap<String, AuxTable>,
+    fundamentals: Option<&crate::data::fundamentals::FundamentalSeries>,
     t: NaiveDateTime,
     window: usize,
 ) -> Context {
@@ -90,6 +93,7 @@ pub fn build_context(
             (name.clone(), AuxView { cols })
         })
         .collect();
+    let fund_snapshot = fundamentals.map(|fs| fs.as_of(t)).unwrap_or_default();
     Context {
         t,
         primary: Window { bars: trailing_visible(primary, t, window) },
@@ -97,6 +101,7 @@ pub fn build_context(
         news: news_view,
         aux: aux_views,
         sim: SimState::default(),
+        fundamentals: fund_snapshot,
         eval_cache: Default::default(),
     }
 }
@@ -121,7 +126,7 @@ mod tests {
     fn window_takes_trailing_visible_bars() {
         let primary = series(10);
         let t = primary[5].time;
-        let ctx = build_context(&primary, &[], &[], &BTreeMap::new(), t, 3);
+        let ctx = build_context(&primary, &[], &[], &BTreeMap::new(), None, t, 3);
         assert_eq!(ctx.primary.bars.len(), 3);
         assert_eq!(ctx.primary.bars.last().unwrap().close, 5.0);
         assert!(ctx.news.is_none());
@@ -132,7 +137,7 @@ mod tests {
         let primary = series(50);
         for i in 0..primary.len() {
             let t = primary[i].time;
-            let ctx = build_context(&primary, &primary, &[], &BTreeMap::new(), t, 100);
+            let ctx = build_context(&primary, &primary, &[], &BTreeMap::new(), None, t, 100);
             for b in &ctx.primary.bars {
                 assert!(b.time <= t, "future primary bar leaked at i={i}");
             }
@@ -150,7 +155,7 @@ mod tests {
         ];
         let primary = series(20);
         let t = primary[3].time;
-        let ctx = build_context(&primary, &[], &news, &BTreeMap::new(), t, 100);
+        let ctx = build_context(&primary, &[], &news, &BTreeMap::new(), None, t, 100);
         let v = ctx.news.unwrap();
         for r in &v.recent {
             assert!(r.time <= t, "future news leaked");
@@ -172,10 +177,23 @@ mod tests {
             cols: BTreeMap::from([("v".to_string(), vec![1.0, 2.0, 3.0])]),
         });
         // t = 第 2 根 bar（base+15）：第三行（base+45）必须被闸门挡住
-        let ctx = build_context(&bars, &bars, &[], &aux, bars[1].time, 100);
+        let ctx = build_context(&bars, &bars, &[], &aux, None, bars[1].time, 100);
         assert_eq!(ctx.aux["idx"].cols["v"], vec![1.0, 2.0]);
         // t 早于首行 → 空
-        let ctx2 = build_context(&bars, &bars, &[], &aux, base - chrono::Duration::minutes(1), 100);
+        let ctx2 = build_context(&bars, &bars, &[], &aux, None, base - chrono::Duration::minutes(1), 100);
         assert!(ctx2.aux["idx"].cols["v"].is_empty());
+    }
+
+    #[test]
+    fn build_context_resolves_fundamentals_as_of_t() {
+        use crate::data::fundamentals::FundamentalSeries;
+        let fs = FundamentalSeries {
+            announce_dates: vec![NaiveDate::from_ymd_opt(2024, 4, 27).unwrap()],
+            cols: std::collections::BTreeMap::from([("roe".to_string(), vec![34.1])]),
+        };
+        let primary = series(10); // 2024-01-02-ish bars, all < 2024-04-27
+        let t = primary[5].time;
+        let ctx = build_context(&primary, &[], &[], &BTreeMap::new(), Some(&fs), t, 3);
+        assert!(ctx.fundamentals.is_empty()); // point-in-time: 公告前空
     }
 }

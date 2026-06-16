@@ -197,6 +197,10 @@ fn resolve_series(name: &str, ctx: &Context) -> Result<Vec<f64>> {
             .cloned()
             .ok_or_else(|| Error::Eval(format!("aux table '{table}' has no column '{column}'")));
     }
+    if let Some(col) = name.strip_prefix("fund.") {
+        // as-of-t 标量（公告日≤t 最近已公告值）；缺/首报前 → NaN（弃权）。1 元序列，标量上下文取末位。
+        return Ok(vec![ctx.fundamentals.get(col).copied().unwrap_or(f64::NAN)]);
+    }
     let (win, field) = match name.strip_prefix("ctx.") {
         Some(f) => (&ctx.context, f),
         None => (&ctx.primary, name),
@@ -566,7 +570,7 @@ mod tests {
             })
             .collect();
         let t = bars.last().unwrap().time;
-        Context { t, primary: Window { bars: bars.clone() }, context: Window { bars }, news: None, aux: std::collections::BTreeMap::new(), sim: crate::features::context::SimState::default(), eval_cache: Default::default() }
+        Context { t, primary: Window { bars: bars.clone() }, context: Window { bars }, news: None, aux: std::collections::BTreeMap::new(), sim: crate::features::context::SimState::default(), fundamentals: std::collections::BTreeMap::new(), eval_cache: Default::default() }
     }
 
     #[test]
@@ -927,6 +931,7 @@ mod tests {
             news: None,
             aux: std::collections::BTreeMap::new(),
             sim: crate::features::context::SimState::default(),
+            fundamentals: std::collections::BTreeMap::new(),
             eval_cache: Default::default(),
         }
     }
@@ -954,6 +959,7 @@ mod tests {
             news: None,
             aux: std::collections::BTreeMap::new(),
             sim: crate::features::context::SimState::default(),
+            fundamentals: std::collections::BTreeMap::new(),
             eval_cache: Default::default(),
         }
     }
@@ -986,6 +992,7 @@ mod tests {
             news: None,
             aux: std::collections::BTreeMap::new(),
             sim: crate::features::context::SimState::default(),
+            fundamentals: std::collections::BTreeMap::new(),
             eval_cache: Default::default(),
         }
     }
@@ -1288,6 +1295,18 @@ mod tests {
         // 参数个数校验
         assert!(eval(&parse_str("percentrank(close)").unwrap(), &ctx).is_err());
         assert!(eval(&parse_str("percentrank(close, 3, 1)").unwrap(), &ctx).is_err());
+    }
+
+    #[test]
+    fn fund_namespace_resolves_and_abstains() {
+        let mut ctx = ctx_from_closes(&[1.0, 2.0, 3.0]);
+        ctx.fundamentals = std::collections::BTreeMap::from([("roe".to_string(), 34.1)]);
+        let f = |src: &str, c: &Context| eval(&parse_str(src).unwrap(), c).unwrap();
+        assert_eq!(f("fund.roe > 15", &ctx), Value::Bool(true));   // 34.1 > 15
+        assert_eq!(f("fund.roe < 15", &ctx), Value::Bool(false));
+        assert_eq!(f("fund.nope > 0", &ctx), Value::Bool(false));  // 缺列 → NaN → false（弃权）
+        ctx.fundamentals.insert("eps".to_string(), 0.5);
+        assert_eq!(f("close / fund.eps > 1", &ctx), Value::Bool(true)); // 3.0/0.5=6 > 1
     }
 
     /// corr eval 测试：ctx.close 与 primary.close 同值 → corr=1；双序列路由；NaN 弃权

@@ -75,7 +75,7 @@ async fn evaluate_score_hard(
 
     for i in range {
         let t = data.primary[i].time;
-        let ctx = build_context(data.primary, data.context, data.news, data.aux, t, data.window);
+        let ctx = build_context(data.primary, data.context, data.news, data.aux, None, t, data.window);
         let trace = crate::engine::traversal::traverse(tree, &ctx, llm).await?;
 
         // Skip flat stances — only "active" points count
@@ -115,7 +115,7 @@ async fn evaluate_score_soft(
 
     for i in range {
         let t = data.primary[i].time;
-        let ctx = build_context(data.primary, data.context, data.news, data.aux, t, data.window);
+        let ctx = build_context(data.primary, data.context, data.news, data.aux, None, t, data.window);
         let soft = crate::engine::soft::traverse_soft(tree, &ctx, llm).await?;
         let score: Option<SoftScore> = score_soft(&soft, tree, data.primary, i, &data.costs, &ctx);
 
@@ -164,6 +164,7 @@ async fn evaluate_sim(
             data.context,
             data.news,
             data.aux,
+            None,
             data.primary[i].time,
             data.window,
         );

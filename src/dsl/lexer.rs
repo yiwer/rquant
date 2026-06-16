@@ -116,4 +116,10 @@ mod tests {
         assert_eq!(toks[1], Token::Gt);
         assert_eq!(toks[2], Token::Number(0.0));
     }
+
+    #[test]
+    fn fund_dotted_ident_is_single_token() {
+        let toks = tokenize("fund.roe > 15").unwrap();
+        assert_eq!(toks[0], Token::Ident("fund.roe".to_string()));
+    }
 }
