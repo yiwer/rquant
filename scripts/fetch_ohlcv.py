@@ -37,6 +37,10 @@ def main():
     ap.add_argument("--refresh-within", type=int, default=5)
     ap.add_argument("--limit", type=int, default=0)
     args = ap.parse_args()
+    # 域内 eastmoney 直连更稳：清除代理环境变量（本地 VPN 隧道高频丢连接 / socks5 缺 PySocks）。
+    for _k in list(os.environ):
+        if "proxy" in _k.lower():
+            os.environ.pop(_k, None)
     os.makedirs(args.data_dir, exist_ok=True)
     syms = list(pd.read_csv(args.universe)["symbol"])
     if args.limit: syms = syms[:args.limit]
