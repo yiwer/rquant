@@ -35,6 +35,8 @@ pub struct FactorConfig {
     pub window: usize,
     pub out_path: PathBuf,
     pub html_path: Option<PathBuf>,
+    /// 可选点时 universe 成员 CSV（date,symbol）；每截面只取该 t 生效成员。None=不过滤（行为冻结）。
+    pub membership_path: Option<PathBuf>,
 }
 
 /// 一个采样期的原始观测：每标的（因子值按因子序、收益按阶梯序对齐）。
@@ -158,6 +160,13 @@ pub(crate) fn collect_periods(
     let universe = read_universe_csv(&cfg.universe_path)?;
     let n_symbols = universe.len();
 
+    // 点时成员（None=不过滤=行为冻结）
+    let membership = cfg
+        .membership_path
+        .as_ref()
+        .map(|p| crate::data::membership::Membership::load_csv(p))
+        .transpose()?;
+
     let mut primaries: Vec<Vec<crate::data::bar::Bar>> = Vec::with_capacity(n_symbols);
     let mut contexts: Vec<Vec<crate::data::bar::Bar>> = Vec::with_capacity(n_symbols);
     let mut funds: Vec<Option<FundamentalSeries>> = Vec::with_capacity(n_symbols);
@@ -197,6 +206,8 @@ pub(crate) fn collect_periods(
 
     for &ti in &sample_indices {
         let t = timeline[ti];
+        // 当期生效成员：None=未配置(不过滤)；Some(None)=配置但 t 早于首期(空截面)；Some(Some(set))=限定
+        let eff = membership.as_ref().map(|m| m.effective_at(t));
         let mut points: Vec<SymbolPoint> = Vec::with_capacity(n_symbols);
 
         for (sym_idx, entry) in universe.iter().enumerate() {
@@ -208,6 +219,13 @@ pub(crate) fn collect_periods(
                 Ok(i) => i,
                 Err(_) => continue, // 该标的在此时刻无 bar
             };
+
+            // membership mask（point-in-time）
+            match eff {
+                None => {}                                              // 未配置 → 保留
+                Some(Some(set)) if set.contains(&entry.symbol) => {}    // 成员 → 保留
+                _ => continue,                                          // 配置但空/非成员 → 跳过
+            }
 
             // 构建 context（news 空、aux 空；基本面取该标的 as-of-t 快照）
             let ctx = build_context(
@@ -751,6 +769,7 @@ mod tests {
             window: 20,
             out_path: out_f.path().to_path_buf(),
             html_path: None,
+            membership_path: None,
         };
 
         let (periods, ladder, n_syms) = collect_periods(&cfg).unwrap();
@@ -812,6 +831,7 @@ mod tests {
             window: 20,
             out_path: out_f.path().to_path_buf(),
             html_path: None,
+            membership_path: None,
         };
         assert!(collect_periods(&cfg).is_err());
     }
@@ -833,6 +853,7 @@ mod tests {
             window: 20,
             out_path: out_f.path().to_path_buf(),
             html_path: None,
+            membership_path: None,
         };
         assert!(collect_periods(&cfg).is_err());
     }
@@ -854,6 +875,7 @@ mod tests {
             window: 20,
             out_path: out_f.path().to_path_buf(),
             html_path: None,
+            membership_path: None,
         };
         let err = collect_periods(&cfg).unwrap_err();
         let msg = err.to_string();
@@ -889,6 +911,7 @@ mod tests {
             window: 20,
             out_path: out_f.path().to_path_buf(),
             html_path: None,
+            membership_path: None,
         };
 
         let report = run_factor(&cfg).unwrap();
@@ -969,6 +992,7 @@ mod tests {
             window: 20,
             out_path: out_f.path().to_path_buf(),
             html_path: None,
+            membership_path: None,
         };
 
         let report = run_factor(&cfg).unwrap();
@@ -1022,6 +1046,7 @@ mod tests {
             window: 20,
             out_path: out_f.path().to_path_buf(),
             html_path: None,
+            membership_path: None,
         };
 
         let report = run_factor(&cfg).unwrap();
@@ -1062,6 +1087,7 @@ mod tests {
             window: 20,
             out_path: out_f.path().to_path_buf(),
             html_path: None,
+            membership_path: None,
         };
 
         let report = run_factor(&cfg).unwrap();
@@ -1072,5 +1098,68 @@ mod tests {
         assert!(fs.rank_ic_mean.is_none(), "rank_ic_mean should be None when all skipped");
         // n_skipped > 0
         assert!(fs.n_skipped > 0, "n_skipped should be > 0");
+    }
+
+    #[test]
+    fn membership_mask_excludes_nonmembers() {
+        use crate::data::bar::Bar;
+        use chrono::NaiveDate;
+        let dir = tempfile::tempdir().unwrap();
+        let mk = |base: f64| -> Vec<Bar> {
+            (1..=8).map(|d| {
+                let t = NaiveDate::from_ymd_opt(2018,1,d).unwrap().and_hms_opt(15,0,0).unwrap();
+                Bar { time: t, open: base, high: base+1.0, low: base-1.0, close: base + d as f64, volume: 100.0 }
+            }).collect()
+        };
+        let pa = dir.path().join("A.csv");
+        let pb = dir.path().join("B.csv");
+        crate::data::reader::write_bars_csv(&mk(10.0), &pa).unwrap();
+        crate::data::reader::write_bars_csv(&mk(20.0), &pb).unwrap();
+        let uni = dir.path().join("uni.csv");
+        std::fs::write(&uni, format!("symbol,primary\nA,{}\nB,{}\n", pa.display(), pb.display())).unwrap();
+        let mem = dir.path().join("mem.csv");
+        std::fs::write(&mem, "date,symbol\n2018-01-01,A\n").unwrap();
+
+        let cfg = FactorConfig {
+            universe_path: uni.clone(),
+            factors: vec![FactorSpecItem { name: "px".into(), expr: "close".into() }],
+            sample: 1, horizon: 2, layers: 2, warmup: 2, window: 3,
+            out_path: dir.path().join("out.json"), html_path: None,
+            membership_path: Some(mem),
+        };
+        let (periods, _ladder, _n) = collect_periods(&cfg).unwrap();
+        for p in &periods {
+            assert!(p.points.iter().all(|sp| sp.symbol == "A"),
+                "period {:?} leaked a non-member", p.t);
+        }
+        assert!(periods.iter().any(|p| !p.points.is_empty()), "no periods produced");
+    }
+
+    #[test]
+    fn no_membership_is_frozen_both_symbols() {
+        use crate::data::bar::Bar;
+        use chrono::NaiveDate;
+        let dir = tempfile::tempdir().unwrap();
+        let mk = |base: f64| -> Vec<Bar> {
+            (1..=8).map(|d| {
+                let t = NaiveDate::from_ymd_opt(2018,1,d).unwrap().and_hms_opt(15,0,0).unwrap();
+                Bar { time: t, open: base, high: base+1.0, low: base-1.0, close: base + d as f64, volume: 100.0 }
+            }).collect()
+        };
+        let pa = dir.path().join("A.csv");
+        let pb = dir.path().join("B.csv");
+        crate::data::reader::write_bars_csv(&mk(10.0), &pa).unwrap();
+        crate::data::reader::write_bars_csv(&mk(20.0), &pb).unwrap();
+        let uni = dir.path().join("uni.csv");
+        std::fs::write(&uni, format!("symbol,primary\nA,{}\nB,{}\n", pa.display(), pb.display())).unwrap();
+        let cfg = FactorConfig {
+            universe_path: uni, factors: vec![FactorSpecItem { name: "px".into(), expr: "close".into() }],
+            sample: 1, horizon: 2, layers: 2, warmup: 2, window: 3,
+            out_path: dir.path().join("out.json"), html_path: None,
+            membership_path: None,
+        };
+        let (periods, _l, _n) = collect_periods(&cfg).unwrap();
+        let any_b = periods.iter().any(|p| p.points.iter().any(|sp| sp.symbol == "B"));
+        assert!(any_b, "frozen mode must keep B");
     }
 }

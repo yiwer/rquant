@@ -517,6 +517,7 @@ pub async fn main() -> anyhow::Result<()> {
                 window,
                 out_path: out,
                 html_path: html.clone(),
+                membership_path: None,
             };
             let report = run_factor(&cfg)?;
             print_factor_summary(&report);
