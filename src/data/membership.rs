@@ -40,8 +40,6 @@ impl Membership {
         if i == 0 { None } else { Some(&self.snapshots[i - 1].1) }
     }
 
-    // 保留给消费方探查 / kept for consumers
-    #[allow(dead_code)]
     /// 无任何快照。
     pub fn is_empty(&self) -> bool { self.snapshots.is_empty() }
 }
