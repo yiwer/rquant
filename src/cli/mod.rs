@@ -234,6 +234,9 @@ enum Cmd {
         out: PathBuf,
         #[arg(long)]
         html: Option<PathBuf>,
+        /// Point-in-time universe membership CSV (date,symbol); restrict each cross-section to that date's members
+        #[arg(long)]
+        membership: Option<PathBuf>,
     },
     /// 日线选股器：多树集成 → 优质+投机形态标注（as-of），或历史回测验证（--backtest）。
     Screen {
@@ -485,7 +488,7 @@ pub async fn main() -> anyhow::Result<()> {
             let report = run_optimize(&ocfg, &llm).await?;
             print_optimize_summary(&report);
         }
-        Cmd::Factor { universe, factor, sample, horizon, layers, warmup, window, out, html } => {
+        Cmd::Factor { universe, factor, sample, horizon, layers, warmup, window, out, html, membership } => {
             if factor.is_empty() {
                 return Err(anyhow::anyhow!("--factor: at least one factor expression is required (use --factor 'name=expr')"));
             }
@@ -517,6 +520,7 @@ pub async fn main() -> anyhow::Result<()> {
                 window,
                 out_path: out,
                 html_path: html.clone(),
+                membership_path: membership,
             };
             let report = run_factor(&cfg)?;
             print_factor_summary(&report);

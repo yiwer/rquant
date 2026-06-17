@@ -1272,6 +1272,7 @@ fn factor_full_chain() {
         window: 20,
         out_path: out_f.path().to_path_buf(),
         html_path: Some(html_f.path().to_path_buf()),
+        membership_path: None,
     };
 
     let report = run_factor(&cfg).expect("factor_full_chain: run_factor should succeed");

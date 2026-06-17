@@ -357,6 +357,7 @@ rquant factor [OPTIONS] --universe <UNIVERSE>
 | `--window <usize>` | usize | `100` | Context 历史窗口大小（每时点最多取最近 N 根 bar） |
 | `--out <PATH>` | PathBuf | `factor_report.json` | 输出 `FactorReport` JSON 路径 |
 | `--html <PATH>` | PathBuf | 可选 | 若给出则写自包含 HTML 报告（衰减折线/分层条形/spread 净值/相关矩阵） |
+| `--membership <PATH>` | PathBuf | 可选 | 点时 universe 成员 CSV（`date,symbol` long 格式，每月末一组）。指定后每个横截面只纳入该 t 生效（最近 ≤t 再平衡日）的成员——survivorship-free 宽截面验证用。缺省=不过滤（用全 universe）。配套文件：`data/universe_full.csv`（全市场 roster，`symbol,primary,context,fundamentals`，context 空=回退 primary）、`data/membership_top2000.csv`（成员表）、`data/universe_membership.csv`（成员并集 roster，factor 加载用以控内存）。由 `scripts/build_roster.py` / `scripts/fetch_ohlcv.py` / `scripts/build_membership.py` 生成。 |
 
 ### 输出字段表（FactorReport JSON）
 

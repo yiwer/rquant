@@ -11,3 +11,4 @@ pub mod tencent;
 pub mod adjust;
 pub mod quality;
 pub mod fundamentals;
+pub mod membership;
