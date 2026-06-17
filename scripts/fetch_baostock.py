@@ -57,7 +57,7 @@ def _write(path, rows, cols, has_time):
     df = pd.DataFrame(out, columns=cols)
     for c in cols[1:]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
-    df = df.dropna(subset=["open", "high", "low", "close"])
+    df = df.dropna(subset=["open", "high", "low", "close", "volume"])  # 含 volume：剔停牌空量行(否则引擎 reader 拒)
     df.to_csv(path, index=False)
     return len(df)
 
