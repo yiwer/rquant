@@ -326,15 +326,48 @@ leaves:
 
     #[test]
     fn all_example_trees_lint_clean() {
-        // 防误报总闸：仓库全部示例树零告警
-        let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        let examples_dir = std::path::Path::new(manifest_dir).join("examples");
-        for p in std::fs::read_dir(&examples_dir).unwrap() {
-            let p = p.unwrap().path();
-            if p.extension().and_then(|e| e.to_str()) != Some("yaml") {
-                continue;
+        use std::path::{Path, PathBuf};
+        // 防误报总闸：仓库全部示例树零告警。
+        // 递归扫描 examples/ 下所有 *.yaml 树（含 examples/trees/** 子目录树——此前 read_dir 非递归
+        // 只扫顶层，子目录树的解析/lint 干净性从未被本测试覆盖）。排除 examples/screen/**：那是 screen
+        // 集成配置（quality_trees/setup_trees/merge…），非树、不走 load_tree_file。注意区分
+        // examples/trees/screen/（树）与 examples/screen/（配置），故按"相对 examples 根的首段是否为
+        // screen"精确排除，而非子串匹配。
+        fn collect_trees(dir: &Path, root: &Path, out: &mut Vec<PathBuf>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    // 仅排除顶层 examples/screen/；examples/trees/screen/ 等其余子目录照常递归。
+                    if path.strip_prefix(root).unwrap() == Path::new("screen") {
+                        continue;
+                    }
+                    collect_trees(&path, root, out);
+                } else if path.extension().and_then(|e| e.to_str()) == Some("yaml") {
+                    out.push(path);
+                }
             }
-            let t = crate::tree::loader::load_tree_file(&p).unwrap();
+        }
+
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let examples_dir = Path::new(manifest_dir).join("examples");
+        let mut trees = Vec::new();
+        collect_trees(&examples_dir, &examples_dir, &mut trees);
+        trees.sort(); // 顺序稳定，失败定位可复现
+
+        // 自检：必须同时发现顶层树与 examples/trees/** 子目录树，证明递归确实下探到此前盲区
+        //（否则遍历悄悄退化成只扫顶层、却仍绿）。
+        assert!(
+            trees.iter().any(|p| p.parent() == Some(examples_dir.as_path())),
+            "no top-level example trees discovered under {}",
+            examples_dir.display()
+        );
+        assert!(
+            trees.iter().any(|p| p.starts_with(examples_dir.join("trees"))),
+            "recursion did not descend into examples/trees/** — coverage regressed"
+        );
+
+        for p in &trees {
+            let t = crate::tree::loader::load_tree_file(p).unwrap();
             let w = lint_tree(&t);
             assert!(w.is_empty(), "{}: {w:?}", p.display());
         }
