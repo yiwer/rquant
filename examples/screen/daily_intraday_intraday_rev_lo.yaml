@@ -1,0 +1,8 @@
+# 日频日内选股：日内反转 低(选最低)，每日尾盘选 fund.intraday_rev 最低 top-50，持有1日。
+quality_trees: [examples/trees/screen/intraday_intraday_rev_lo.yaml]
+setup_trees:
+  日内: [examples/trees/screen/intraday_intraday_rev_lo.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["日内"], quality_layers: 5 }
+regimes:
+  - { label: "前半", from: 2025-12-10, to: 2026-03-15 }
+  - { label: "后半_OOS", from: 2026-03-16, to: 2026-06-16 }

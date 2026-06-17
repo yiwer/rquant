@@ -1,0 +1,13 @@
+# 日内因子 量能后移 高(选最高)：信号作 quality，select_top 直选（lambda=0）。fund.vol_tilt=NaN→弃权。
+meta: { name: intraday_vol_tilt_hi, forward_window: 1, stances: [long, flat] }
+params: { scale: 1.0 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "close > 0", goto: pick, label: ok }
+    default: { goto: flat, label: flat }
+leaves:
+  pick: { stance: long, weight: "sigmoid(scale * fund.vol_tilt)" }
+  flat: { stance: flat }

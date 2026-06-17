@@ -25,23 +25,26 @@ try:
 except Exception:
     pass
 
-WT = "E:/rust-app/rquant/.claude/worktrees/worktree-treeloop2"
-BIN = "E:/rust-app/rquant/target/release/rquant.exe"
-UNIV = "E:/rust-app/rquant/data/universe_membership.csv"
-MEMB = "E:/rust-app/rquant/data/membership_top2000.csv"
-RUNS = os.path.join(WT, ".daily_runs")
+# 路径从脚本位置派生（scripts/ 的上级 = 仓库根）→ 合并/换 worktree 后仍有效。
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BIN = os.path.join(REPO_ROOT, "target", "release", "rquant.exe")
+DEFAULT_UNIV = os.path.join(REPO_ROOT, "data", "universe_membership.csv")
+DEFAULT_MEMB = os.path.join(REPO_ROOT, "data", "membership_top2000.csv")
+RUNS = os.path.join(REPO_ROOT, ".daily_runs")
 TRADING_DAYS = 242  # A股年化交易日近似
 
 
-def run_once(cfg, cost, frm, to, warmup, window, top, out):
-    cmd = [BIN, "screen", "--backtest", "--universe", UNIV, "--config", cfg,
-           "--membership", MEMB, "--rebalance", "1", "--warmup", str(warmup),
+def run_once(cfg, cost, frm, to, warmup, window, top, out, universe, membership):
+    cmd = [BIN, "screen", "--backtest", "--universe", universe, "--config", cfg,
+           "--rebalance", "1", "--warmup", str(warmup),
            "--window", str(window), "--cost-bps", str(cost),
            "--from", frm, "--to", to, "--out", out]
+    if membership and membership.lower() != "none":
+        cmd += ["--membership", membership]   # 日内试点 universe 本身即范围 → 传 none 关闭
     if top is not None:
         cmd += ["--top", str(top)]
     # 不捕获 binary 的 stdout（其中文摘要在 Windows 会触发 GBK 解码崩溃）；只需 JSON 文件。
-    r = subprocess.run(cmd, cwd=WT, stdout=subprocess.DEVNULL,
+    r = subprocess.run(cmd, cwd=REPO_ROOT, stdout=subprocess.DEVNULL,
                        stderr=subprocess.PIPE, encoding="utf-8", errors="replace")
     if not os.path.exists(out):
         sys.stderr.write((r.stderr or "") + "\n")
@@ -65,6 +68,8 @@ def main():
     ap.add_argument("--top", type=int, default=None)
     ap.add_argument("--label", default=None)
     ap.add_argument("--oos-label", default="2023-25_OOS")
+    ap.add_argument("--universe", default=DEFAULT_UNIV)
+    ap.add_argument("--membership", default=DEFAULT_MEMB, help="membership CSV，或 'none' 关闭（日内试点用 none）")
     a = ap.parse_args()
 
     label = a.label or os.path.splitext(os.path.basename(a.config))[0]
@@ -72,8 +77,8 @@ def main():
     g_out = os.path.join(RUNS, f"{label}_gross.json")
     n_out = os.path.join(RUNS, f"{label}_net{int(a.cost)}.json")
 
-    g = run_once(a.config, 0.0, a.frm, a.to, a.warmup, a.window, a.top, g_out)
-    n = run_once(a.config, a.cost, a.frm, a.to, a.warmup, a.window, a.top, n_out)
+    g = run_once(a.config, 0.0, a.frm, a.to, a.warmup, a.window, a.top, g_out, a.universe, a.membership)
+    n = run_once(a.config, a.cost, a.frm, a.to, a.warmup, a.window, a.top, n_out, a.universe, a.membership)
 
     nreb = g["n_rebalances"]
     tov = g["turnover"]                       # Σ|Δw| 累计；与成本无关（两次相同）

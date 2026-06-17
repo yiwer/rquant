@@ -1,0 +1,13 @@
+# 日内因子 尾盘动量 高(选最高)：信号作 quality，select_top 直选（lambda=0）。fund.last_leg=NaN→弃权。
+meta: { name: intraday_last_leg_hi, forward_window: 1, stances: [long, flat] }
+params: { scale: 1.0 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "close > 0", goto: pick, label: ok }
+    default: { goto: flat, label: flat }
+leaves:
+  pick: { stance: long, weight: "sigmoid(scale * fund.last_leg)" }
+  flat: { stance: flat }
