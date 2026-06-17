@@ -114,11 +114,12 @@ async fn eval_symbol(
     t: NaiveDateTime,
     window: usize,
     mp: &MergeParams,
+    funds: Option<&crate::data::fundamentals::FundamentalSeries>,
 ) -> Result<Option<SymbolEval>> {
     let mut q_scores: Vec<f64> = Vec::new();
     let mut any = false;
     for tree in quality {
-        if let Some(s) = score_symbol(primary, context, aux, tree, llm, soft, t, window).await? {
+        if let Some(s) = score_symbol(primary, context, aux, tree, llm, soft, t, window, funds).await? {
             q_scores.push(s);
             any = true;
         }
@@ -130,7 +131,7 @@ async fn eval_symbol(
     for (tag, trees) in setups {
         let mut v = Vec::new();
         for tree in trees {
-            if let Some(s) = score_symbol(primary, context, aux, tree, llm, soft, t, window).await? {
+            if let Some(s) = score_symbol(primary, context, aux, tree, llm, soft, t, window, funds).await? {
                 v.push(s);
             }
         }
@@ -176,6 +177,10 @@ pub async fn run_screen_backtest(
         primaries.push(crate::data::reader::read_bars_csv(&e.primary)?);
         contexts.push(crate::data::reader::read_bars_csv(&e.context)?);
     }
+    let mut funds: Vec<Option<crate::data::fundamentals::FundamentalSeries>> = Vec::with_capacity(universe.len());
+    for e in &universe {
+        funds.push(e.fundamentals.as_ref().map(|p| crate::data::fundamentals::load_fundamentals_csv(p)).transpose()?);
+    }
     let aux: BTreeMap<String, AuxTable> = BTreeMap::new();
 
     let full = build_timeline(&primaries);
@@ -219,7 +224,7 @@ pub async fn run_screen_backtest(
         let mut scores: Vec<(String, f64)> = Vec::new();
         for (i, e) in universe.iter().enumerate() {
             if let Some(ev) = eval_symbol(
-                &primaries[i], &contexts[i], &aux, &quality, &setups, llm, cfg.soft, t_rb, cfg.window, &mp,
+                &primaries[i], &contexts[i], &aux, &quality, &setups, llm, cfg.soft, t_rb, cfg.window, &mp, funds[i].as_ref(),
             ).await? {
                 scores.push((e.symbol.clone(), ev.combined));
                 evals.insert(e.symbol.clone(), ev);
@@ -548,5 +553,37 @@ leaves: { l: { stance: long, weight: 1.0 }, f: { stance: flat } }
         assert!(!r.quality_layers.is_empty(), "quality layers should be computed");
         let total_n: usize = r.quality_layers.iter().map(|l| l.n).sum();
         assert!(total_n > 0);
+    }
+
+    #[tokio::test]
+    async fn backtest_reads_fundamentals_for_value_tree() {
+        // 价值树用 fund.bps；若 fundamentals 没穿进来，fund.bps=NaN → 全弃权 → 无选中。
+        let vtree = wf(".yaml", r#"
+meta: { name: v, forward_window: 1, stances: [long, flat] }
+root: g
+nodes:
+  g: { type: quant, branches: [ { when: "fund.bps > 0", goto: l, label: cheap } ], default: { goto: f, label: flat } }
+leaves: { l: { stance: long, weight: "1 / (1 + close/fund.bps)" }, f: { stance: flat } }
+"#);
+        let m = wf(".yaml", M_SIMPLE);
+        let cfg_yaml = format!(
+            "quality_trees: [{}]\nsetup_trees:\n  动量延续: [{}]\nmerge: {{ q_floor: 0.0, top: 1 }}\n",
+            vtree.path().to_str().unwrap().replace('\\', "/"),
+            m.path().to_str().unwrap().replace('\\', "/"),
+        );
+        let cfg_f = wf(".yaml", &cfg_yaml);
+        let up = bars(0.01);
+        let fund = wf(".csv", "time,roe,np_yoy,rev_yoy,gross_margin,eps,bps\n2023-12-01,10,5,5,30,1.0,5.0\n");
+        let mut univ = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+        writeln!(univ, "symbol,primary,context,fundamentals\nUP,{p},,{f}",
+            p = up.path().to_str().unwrap().replace('\\', "/"),
+            f = fund.path().to_str().unwrap().replace('\\', "/")).unwrap();
+        univ.flush().unwrap();
+        let cfg = ScreenBacktestConfig {
+            config_path: cfg_f.path().to_path_buf(), universe_path: univ.path().to_path_buf(),
+            from: None, to: None, rebalance: 4, top: None, warmup: 5, window: 10, cost_bps: 0.0, soft: false, out_path: None,
+        };
+        let r = run_screen_backtest(&cfg, &LlmEvaluator::Disabled).await.unwrap();
+        assert!(r.avg_members > 0.0, "value tree using fund.bps must score (fundamentals threaded)");
     }
 }
