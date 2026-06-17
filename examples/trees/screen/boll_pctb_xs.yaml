@@ -1,0 +1,12 @@
+meta: { name: boll_pctb_xs, forward_window: 20, stances: [long, flat] }
+params: { n: 20, scale: 3 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "std(close, n) > 0", goto: lo, label: ok }
+    default: { goto: flat, label: flat }
+leaves:
+  lo: { stance: long, weight: "sigmoid(-(close - sma(close, n)) / (2 * std(close, n)) * scale)" }
+  flat: { stance: flat }

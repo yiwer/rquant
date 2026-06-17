@@ -1,0 +1,12 @@
+meta: { name: value_trendregime, forward_window: 20, stances: [long, flat] }
+params: { ma: 60, atrn: 14 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.bps > 0 and (close - sma(close, ma)) / atr(atrn) > 1", goto: cheap, label: cheap_trending }
+    default: { goto: flat, label: flat }
+leaves:
+  cheap: { stance: long, weight: "1 / (1 + close/fund.bps)" }
+  flat: { stance: flat }

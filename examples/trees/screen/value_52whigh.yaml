@@ -1,0 +1,12 @@
+meta: { name: value_52whigh, forward_window: 20, stances: [long, flat] }
+params: { n: 250, frac: 0.85 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.bps > 0 and close > highest(high, n) * frac", goto: cheap, label: cheap_nearhigh }
+    default: { goto: flat, label: flat }
+leaves:
+  cheap: { stance: long, weight: "1 / (1 + close/fund.bps)" }
+  flat: { stance: flat }
