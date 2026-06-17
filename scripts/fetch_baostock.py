@@ -6,7 +6,8 @@ baostock 多年日内（实测 5yr 15m ~26s/股，顺序；并发不可行）。
 time 统一 "YYYY-MM-DD HH:MM:SS"（日线 15:00:00）。resume 跳过已存在非空；每股退避重试；login 复用+失效重连。
 仅在收盘后/数据稳定时联网跑。
 """
-import argparse, os, sys, time
+import argparse, os, socket, sys, time
+socket.setdefaulttimeout(90)  # baostock 查询无超时 → 单股网络挂死会冻结整体；90s 超时使其变可重试异常
 import baostock as bs
 import pandas as pd
 
