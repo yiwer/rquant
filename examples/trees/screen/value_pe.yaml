@@ -1,0 +1,11 @@
+meta: { name: value_pe, forward_window: 20, stances: [long, flat] }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.eps > 0", goto: cheap, label: has_eps }
+    default: { goto: flat, label: flat }
+leaves:
+  cheap: { stance: long, weight: "1 / (1 + close/fund.eps)" }
+  flat: { stance: flat }

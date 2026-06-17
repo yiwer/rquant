@@ -1,0 +1,11 @@
+meta: { name: value_pb_roe, forward_window: 20, stances: [long, flat] }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.bps > 0 and fund.roe > 0", goto: cheap, label: cheap_profitable }
+    default: { goto: flat, label: flat }
+leaves:
+  cheap: { stance: long, weight: "1 / (1 + close/fund.bps)" }
+  flat: { stance: flat }
