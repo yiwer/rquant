@@ -1,0 +1,12 @@
+meta: { name: low_vol_xs, forward_window: 20, stances: [long, flat] }
+params: { vol_n: 20, vol_scale: 20 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "std(close, vol_n) > 0", goto: lo, label: has_vol }
+    default: { goto: flat, label: flat }
+leaves:
+  lo: { stance: long, weight: "1 / (1 + std(close, vol_n) * vol_scale / close)" }
+  flat: { stance: flat }

@@ -1,0 +1,12 @@
+meta: { name: reversal_xs, forward_window: 20, stances: [long, flat] }
+params: { rev_n: 5, rev_scale: 5 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "close > 0", goto: r, label: ok }
+    default: { goto: flat, label: flat }
+leaves:
+  r: { stance: long, weight: "sigmoid((ref(close, rev_n) / close - 1) * rev_scale)" }
+  flat: { stance: flat }
