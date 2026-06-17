@@ -1,0 +1,11 @@
+# 日频中度反转选股器：每日尾盘选 5日跌幅"温和"(峰~8%)的 top-50，剔除暴跌落刀尾。
+# 检验基线反转分层暗示的"中间分位弱反转"——避开毒性极端尾后是否还原出可用 alpha。
+quality_trees: [examples/trees/screen/moderate_reversal_xs.yaml]
+setup_trees:
+  中反: [examples/trees/screen/moderate_reversal_xs.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["中反"], quality_layers: 5 }
+regimes:
+  - { label: "2018熊", from: 2018-01-02, to: 2018-12-28 }
+  - { label: "2019-21牛", from: 2019-01-02, to: 2021-12-31 }
+  - { label: "2022回调", from: 2022-01-04, to: 2022-12-30 }
+  - { label: "2023-25_OOS", from: 2023-01-03, to: 2026-06-12 }

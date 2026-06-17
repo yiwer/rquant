@@ -1,0 +1,13 @@
+# 日频"价值池内反转"选股器：最便宜 30% PB 池内、选 5日跌幅最大 top-50（价值闸 + 反转倾斜）。
+# 动机：价值提供质量地板(避开垃圾股暴跌)，反转提供入场时机。基线纯反转灾难=接落刀；
+# 限定在便宜池内是否能滤掉毒性？这是 value+reversal 的日频、含成本精确版。基本面起 2019-05。
+quality_trees: [examples/trees/screen/value_pb.yaml]
+setup_trees:
+  反转: [examples/trees/screen/reversal_xs.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 1.0, tilt_setups: ["反转"], quality_layers: 5 }
+value_frac: 0.3
+regimes:
+  - { label: "2018熊", from: 2018-01-02, to: 2018-12-28 }
+  - { label: "2019-21牛", from: 2019-01-02, to: 2021-12-31 }
+  - { label: "2022回调", from: 2022-01-04, to: 2022-12-30 }
+  - { label: "2023-25_OOS", from: 2023-01-03, to: 2026-06-12 }

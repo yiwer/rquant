@@ -1,0 +1,13 @@
+# 日频双防御选股器：最便宜 30% PB 池内、选 20日波动最低 top-50（价值闸 + 低波倾斜）。
+# value_frac 两段：先按 value_pb 取最便宜 30%，再在廉价池内按 low_vol tilt 取 top-50。
+# 检验"价值低换手 + 低波防御"叠加能否在控成本下进一步压回撤。基本面起 2019-05。
+quality_trees: [examples/trees/screen/value_pb.yaml]
+setup_trees:
+  低波: [examples/trees/screen/low_vol_xs.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 1.0, tilt_setups: ["低波"], quality_layers: 5 }
+value_frac: 0.3
+regimes:
+  - { label: "2018熊", from: 2018-01-02, to: 2018-12-28 }
+  - { label: "2019-21牛", from: 2019-01-02, to: 2021-12-31 }
+  - { label: "2022回调", from: 2022-01-04, to: 2022-12-30 }
+  - { label: "2023-25_OOS", from: 2023-01-03, to: 2026-06-12 }
