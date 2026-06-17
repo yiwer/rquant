@@ -1,0 +1,12 @@
+meta: { name: dow_trend_xs, forward_window: 20, stances: [long, flat] }
+params: { n: 20, m: 60, scale: 5 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "lowest(low, n) > lowest(low, m) and highest(high, n) > highest(high, m) * 0.98", goto: up, label: dow_up }
+    default: { goto: flat, label: flat }
+leaves:
+  up: { stance: long, weight: "sigmoid((close / ref(close, m) - 1) * scale)" }
+  flat: { stance: flat }

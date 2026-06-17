@@ -1,0 +1,12 @@
+meta: { name: price_action_xs, forward_window: 20, stances: [long, flat] }
+params: { brk: 20, scale: 10 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "close > highest(ref(high, 1), brk)", goto: bo, label: breakout }
+    default: { goto: flat, label: flat }
+leaves:
+  bo: { stance: long, weight: "sigmoid((close / sma(close, brk) - 1) * scale)" }
+  flat: { stance: flat }

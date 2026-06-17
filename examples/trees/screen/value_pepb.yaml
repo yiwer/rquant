@@ -1,0 +1,11 @@
+meta: { name: value_pepb, forward_window: 20, stances: [long, flat] }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.bps > 0 and fund.eps > 0", goto: cheap, label: ok }
+    default: { goto: flat, label: flat }
+leaves:
+  cheap: { stance: long, weight: "(1/(1 + close/fund.bps) + 1/(1 + close/fund.eps)) / 2" }
+  flat: { stance: flat }
