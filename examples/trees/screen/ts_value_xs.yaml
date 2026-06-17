@@ -1,0 +1,12 @@
+meta: { name: ts_value_xs, forward_window: 20, stances: [long, flat] }
+params: { n: 250, scale: 5 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "close < sma(close, n)", goto: cheap, label: below_ma }
+    default: { goto: flat, label: flat }
+leaves:
+  cheap: { stance: long, weight: "sigmoid((sma(close, n) / close - 1) * scale)" }
+  flat: { stance: flat }

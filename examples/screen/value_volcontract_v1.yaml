@@ -1,0 +1,9 @@
+quality_trees: [examples/trees/screen/value_volcontract.yaml]
+setup_trees:
+  动量延续: [examples/trees/screen/momentum_xs.yaml]
+merge: { q_floor: 0.0, top: 100, lambda: 0.0, tilt_setups: ["动量延续"], quality_layers: 5 }
+regimes:
+  - { label: "2018", from: 2018-01-02, to: 2018-12-28 }
+  - { label: "2019-21", from: 2019-01-02, to: 2021-12-31 }
+  - { label: "2022", from: 2022-01-04, to: 2022-12-30 }
+  - { label: "2023-25", from: 2023-01-03, to: 2026-06-12 }
