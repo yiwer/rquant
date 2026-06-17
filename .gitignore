@@ -25,3 +25,6 @@ data/*.csv
 !data/universe_20.csv
 # per-stock fundamental CSVs (reproducible via scripts/fetch_fundamentals.py)
 data/fundamentals/
+
+# daily-selection eval run outputs (reproducible via scripts/daily_eval.py)
+.daily_runs/
