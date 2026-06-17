@@ -570,6 +570,7 @@ pub async fn run_signal_portfolio(
             cfg.soft,
             t_last,
             cfg.window,
+            None,
         )
         .await?
         {
