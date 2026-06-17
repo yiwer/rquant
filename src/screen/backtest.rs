@@ -92,6 +92,9 @@ pub struct ScreenBacktestConfig {
     pub cost_bps: f64,
     pub soft: bool,
     pub out_path: Option<PathBuf>,
+    /// Point-in-time membership CSV (date,symbol); when set, each rebalance restricts candidates
+    /// to symbols effective at that date (survivorship-free top-2000 mask). None → no restriction.
+    pub membership_path: Option<PathBuf>,
 }
 
 /// 单标的、单调仓点的多树合并结果（内部 helper）。
@@ -181,6 +184,8 @@ pub async fn run_screen_backtest(
     for e in &universe {
         funds.push(e.fundamentals.as_ref().map(|p| crate::data::fundamentals::load_fundamentals_csv(p)).transpose()?);
     }
+    let membership = cfg.membership_path.as_ref()
+        .map(|p| crate::data::membership::Membership::load_csv(p)).transpose()?;
     let aux: BTreeMap<String, AuxTable> = BTreeMap::new();
 
     let full = build_timeline(&primaries);
@@ -223,6 +228,12 @@ pub async fn run_screen_backtest(
         let mut evals: BTreeMap<String, SymbolEval> = BTreeMap::new();
         let mut scores: Vec<(String, f64)> = Vec::new();
         for (i, e) in universe.iter().enumerate() {
+            if let Some(m) = &membership {
+                match m.effective_at(t_rb) {
+                    Some(set) if set.contains(&e.symbol) => {}
+                    _ => continue, // 非当期成员（或早于首期）→ 跳过
+                }
+            }
             if let Some(ev) = eval_symbol(
                 &primaries[i], &contexts[i], &aux, &quality, &setups, llm, cfg.soft, t_rb, cfg.window, &mp, funds[i].as_ref(),
             ).await? {
@@ -464,6 +475,7 @@ leaves: { l: { stance: long, weight: 1.0 }, f: { stance: flat } }
         let cfg = ScreenBacktestConfig {
             config_path: cfg_f.path().to_path_buf(), universe_path: univ.path().to_path_buf(),
             from: None, to: None, rebalance: 4, top: None, warmup: 5, window: 10, cost_bps: 10.0, soft: false, out_path: None,
+            membership_path: None,
         };
         let r = run_screen_backtest(&cfg, &LlmEvaluator::Disabled).await.unwrap();
         let mom = r.tag_attribution.iter().find(|a| a.tag == "动量延续").expect("动量延续 attribution present");
@@ -490,6 +502,7 @@ leaves: { l: { stance: long, weight: 1.0 }, f: { stance: flat } }
         let cfg = ScreenBacktestConfig {
             config_path: cfg_f.path().to_path_buf(), universe_path: univ.path().to_path_buf(),
             from: None, to: None, rebalance: 4, top: None, warmup: 5, window: 10, cost_bps: 10.0, soft: false, out_path: None,
+            membership_path: None,
         };
         let r = run_screen_backtest(&cfg, &LlmEvaluator::Disabled).await.unwrap();
         let slice = r.regime_slices.iter().find(|s| s.label == "full").expect("regime slice present");
@@ -519,6 +532,7 @@ leaves: { l: { stance: long, weight: 1.0 }, f: { stance: flat } }
             from: None, to: None,
             rebalance: 4, top: None, warmup: 5, window: 10, cost_bps: 10.0, soft: false,
             out_path: None,
+            membership_path: None,
         };
         let r = run_screen_backtest(&cfg, &LlmEvaluator::Disabled).await.unwrap();
         assert!(r.n_rebalances >= 2);
@@ -548,6 +562,7 @@ leaves: { l: { stance: long, weight: 1.0 }, f: { stance: flat } }
         let cfg = ScreenBacktestConfig {
             config_path: cfg_f.path().to_path_buf(), universe_path: univ.path().to_path_buf(),
             from: None, to: None, rebalance: 4, top: None, warmup: 5, window: 10, cost_bps: 10.0, soft: false, out_path: None,
+            membership_path: None,
         };
         let r = run_screen_backtest(&cfg, &LlmEvaluator::Disabled).await.unwrap();
         assert!(!r.quality_layers.is_empty(), "quality layers should be computed");
@@ -582,8 +597,36 @@ leaves: { l: { stance: long, weight: "1 / (1 + close/fund.bps)" }, f: { stance: 
         let cfg = ScreenBacktestConfig {
             config_path: cfg_f.path().to_path_buf(), universe_path: univ.path().to_path_buf(),
             from: None, to: None, rebalance: 4, top: None, warmup: 5, window: 10, cost_bps: 0.0, soft: false, out_path: None,
+            membership_path: None,
         };
         let r = run_screen_backtest(&cfg, &LlmEvaluator::Disabled).await.unwrap();
         assert!(r.avg_members > 0.0, "value tree using fund.bps must score (fundamentals threaded)");
+    }
+
+    #[tokio::test]
+    async fn backtest_membership_restricts_candidates() {
+        let q = wf(".yaml", Q_SIMPLE);
+        let m = wf(".yaml", M_SIMPLE);
+        let cfg_yaml = format!(
+            "quality_trees: [{}]\nsetup_trees:\n  动量延续: [{}]\nmerge: {{ q_floor: 0.0, top: 5 }}\n",
+            q.path().to_str().unwrap().replace('\\', "/"),
+            m.path().to_str().unwrap().replace('\\', "/"),
+        );
+        let cfg_f = wf(".yaml", &cfg_yaml);
+        let up = bars(0.01);
+        let up2 = bars(0.012);
+        let mut univ = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+        writeln!(univ, "symbol,primary\nUP,{}\nUP2,{}", up.path().to_str().unwrap().replace('\\',"/"), up2.path().to_str().unwrap().replace('\\',"/")).unwrap();
+        univ.flush().unwrap();
+        let mem = wf(".csv", "date,symbol\n2024-01-01,UP\n");
+        let cfg = ScreenBacktestConfig {
+            config_path: cfg_f.path().to_path_buf(), universe_path: univ.path().to_path_buf(),
+            from: None, to: None, rebalance: 4, top: None, warmup: 5, window: 10, cost_bps: 0.0, soft: false, out_path: None,
+            membership_path: Some(mem.path().to_path_buf()),
+        };
+        let r = run_screen_backtest(&cfg, &LlmEvaluator::Disabled).await.unwrap();
+        for h in &r.holdings {
+            for (s, _) in &h.selected { assert_eq!(s, "UP", "UP2 must be masked out by membership"); }
+        }
     }
 }

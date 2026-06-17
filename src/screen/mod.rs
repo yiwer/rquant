@@ -57,6 +57,9 @@ pub struct ScreenRunConfig {
     pub top: Option<usize>,
     pub window: usize,
     pub out_path: Option<PathBuf>,
+    /// Point-in-time membership CSV (date,symbol); when set, restricts candidates to members
+    /// effective at the as-of time. None → no restriction.
+    pub membership_path: Option<PathBuf>,
 }
 
 fn dir(s: Stance) -> f64 {
@@ -137,6 +140,8 @@ pub async fn run_screen(cfg: &ScreenRunConfig, llm: &LlmEvaluator) -> Result<Scr
 
     let timeline = build_timeline(&primaries);
     let t = pick_as_of(&timeline, cfg.as_of)?;
+    let membership = cfg.membership_path.as_ref()
+        .map(|p| crate::data::membership::Membership::load_csv(p)).transpose()?;
     let aux: BTreeMap<String, AuxTable> = BTreeMap::new();
     let mp = MergeParams {
         theta_fire: sc.merge.theta_fire,
@@ -151,6 +156,12 @@ pub async fn run_screen(cfg: &ScreenRunConfig, llm: &LlmEvaluator) -> Result<Scr
     for (i, e) in universe.iter().enumerate() {
         if !is_fresh(&primaries[i], t) {
             continue;
+        }
+        if let Some(m) = &membership {
+            match m.effective_at(t) {
+                Some(set) if set.contains(&e.symbol) => {}
+                _ => continue, // 非当期成员（或早于首期）→ 跳过
+            }
         }
         let mut reasons: Vec<ScreenReason> = Vec::new();
         let mut q_scores: Vec<f64> = Vec::new();
@@ -313,6 +324,7 @@ leaves:
             top: None,
             window: 10,
             out_path: None,
+            membership_path: None,
         };
         let res = run_screen(&run, &LlmEvaluator::Disabled).await.unwrap();
         assert_eq!(res.n_universe, 2);
