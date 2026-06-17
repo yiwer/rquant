@@ -35,3 +35,7 @@ data/intraday_15m/
 data/intraday_factors/
 data/universe_intraday.csv
 data/universe_intraday_symbols.txt
+
+# baostock 5yr backtest dataset (daily/15m bars + indicator features + sectors;
+# reproducible via scripts/{build_universe_union,fetch_baostock,build_indicators,build_sectors}.py)
+data/baostock/
