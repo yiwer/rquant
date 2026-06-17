@@ -1,0 +1,11 @@
+# 日频纯低波选股器（防御性，无需基本面 → 2018 也有数据）：每日尾盘选 20 日波动最低 top-50。
+# low_vol_xs 仅用价格，全样本可测；检验"低波防御"在日频选股下能否跑赢强 EW 基准。信号作 quality，lambda=0。
+quality_trees: [examples/trees/screen/low_vol_xs.yaml]
+setup_trees:
+  低波: [examples/trees/screen/low_vol_xs.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["低波"], quality_layers: 5 }
+regimes:
+  - { label: "2018熊", from: 2018-01-02, to: 2018-12-28 }
+  - { label: "2019-21牛", from: 2019-01-02, to: 2021-12-31 }
+  - { label: "2022回调", from: 2022-01-04, to: 2022-12-30 }
+  - { label: "2023-25_OOS", from: 2023-01-03, to: 2026-06-12 }

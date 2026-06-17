@@ -1,0 +1,12 @@
+meta: { name: small_xs, forward_window: 20, stances: [long, flat] }
+params: { scale: 100000000 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "close * volume > 0", goto: s, label: ok }
+    default: { goto: flat, label: flat }
+leaves:
+  s: { stance: long, weight: "1 / (1 + close * volume / scale)" }
+  flat: { stance: flat }

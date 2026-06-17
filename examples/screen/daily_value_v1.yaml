@@ -1,0 +1,12 @@
+# 日频纯价值选股器（低换手基线对照）：每日尾盘选 PB 最低 top-50，等权，持有 1 日。
+# value_pb 是季频慢信号；日调下选股几乎不变 → 换手应很低 → 验证"慢信号日调=多付成本无收益"。
+# 信号作 quality 驱动选股；lambda=0 → combined = quality。setup「价值」仅满足校验+标签归因。
+quality_trees: [examples/trees/screen/value_pb.yaml]
+setup_trees:
+  价值: [examples/trees/screen/value_pb.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["价值"], quality_layers: 5 }
+regimes:
+  - { label: "2018熊", from: 2018-01-02, to: 2018-12-28 }
+  - { label: "2019-21牛", from: 2019-01-02, to: 2021-12-31 }
+  - { label: "2022回调", from: 2022-01-04, to: 2022-12-30 }
+  - { label: "2023-25_OOS", from: 2023-01-03, to: 2026-06-12 }

@@ -1,0 +1,12 @@
+meta: { name: rsi_os_xs, forward_window: 20, stances: [long, flat] }
+params: { n: 14, scale: 15 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "close > 0", goto: os, label: ok }
+    default: { goto: flat, label: flat }
+leaves:
+  os: { stance: long, weight: "sigmoid((50 - rsi(close, n)) / scale)" }
+  flat: { stance: flat }

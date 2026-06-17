@@ -1,0 +1,13 @@
+# 日频纯短期反转选股器：每日尾盘选 5 日跌幅最大的 top-50，等权，持有 1 日。
+# 信号作 quality 驱动选股；lambda=0 → combined = quality（tilt 被乘 0），select_top 按反转强度选。
+# 同一棵树登记为 setup「反转」仅为满足校验（setup/tilt_setups 非空）并提供标签归因，不影响选股。
+# 用于 --rebalance 1 日频回测；gross/net 双跑量化换手成本墙。
+quality_trees: [examples/trees/screen/reversal_xs.yaml]
+setup_trees:
+  反转: [examples/trees/screen/reversal_xs.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["反转"], quality_layers: 5 }
+regimes:
+  - { label: "2018熊", from: 2018-01-02, to: 2018-12-28 }
+  - { label: "2019-21牛", from: 2019-01-02, to: 2021-12-31 }
+  - { label: "2022回调", from: 2022-01-04, to: 2022-12-30 }
+  - { label: "2023-25_OOS", from: 2023-01-03, to: 2026-06-12 }

@@ -1,0 +1,18 @@
+# 中度反转选股信号：买"温和下跌"者、剔除暴跌落刀尾部。
+# 动机：基线 reversal 的分层显示中间分位有微弱真反转(Q5最跌+0.0005/日)，
+# 但选中的最极端 top-50 暴跌者次日续跌(灾难)。本树用高斯"帐篷"权重在
+# 5日跌幅 ~center 处取峰、向两端(含暴跌)衰减 → select_top 选"温和跌者"避开落刀尾。
+meta: { name: moderate_reversal_xs, forward_window: 20, stances: [long, flat] }
+params: { rev_n: 5, center: 0.08, width: 0.05 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "ref(close, rev_n) > close", goto: r, label: fell }
+    default: { goto: flat, label: flat }
+leaves:
+  # decline = ref(close,rev_n)/close - 1 (>0 表已跌)；权重 = exp(-((decline-center)/width)^2) ∈ (0,1]
+  # 峰在 decline=center(8%)，暴跌(decline≫center)→指数衰减≈0→被 select_top 淘汰
+  r: { stance: long, weight: "exp(0 - pow((ref(close, rev_n) / close - 1 - center) / width, 2))" }
+  flat: { stance: flat }
