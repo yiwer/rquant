@@ -21,6 +21,8 @@ pub struct CombineOutput {
     pub quality_score: f64,
     pub speculative_score: f64,
     pub combined_score: f64,
+    /// 倾斜量（仅 tilt_setups 中命中形态的最大强度；未命中 → 0）。供值门二阶段用。
+    pub tilt: f64,
     /// 命中（投票通过）的形态标签，按标签名升序（BTreeMap 保序）。
     pub tags: Vec<String>,
     /// 命中形态 -> 强度（用于回测归因）。
@@ -83,6 +85,7 @@ pub fn combine(
         quality_score: q,
         speculative_score: spec,
         combined_score: combined,
+        tilt,
         tags,
         setup_strength,
     }

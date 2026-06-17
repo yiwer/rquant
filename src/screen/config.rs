@@ -68,6 +68,10 @@ pub struct ScreenConfig {
     pub merge: MergeConfig,
     #[serde(default)]
     pub regimes: Vec<RegimeWindow>,
+    /// 横截面价值闸：Some(f) → 每次调仓先按优质分（价值分）保留最便宜的 ceil(f×n) 只，
+    /// 再在廉价池内按动量倾斜选 top-N。None → 原有 combined 排名直接选（不变）。
+    #[serde(default)]
+    pub value_frac: Option<f64>,
 }
 
 impl ScreenConfig {
@@ -106,6 +110,11 @@ impl ScreenConfig {
                     "screen config: tilt_setup '{s}' not found in setup_trees"
                 )));
             }
+        }
+        if let Some(f) = self.value_frac
+            && !(f > 0.0 && f <= 1.0)
+        {
+            return Err(crate::Error::Data("screen config: value_frac must be in (0,1]".into()));
         }
         Ok(())
     }
@@ -215,5 +224,13 @@ merge: { tilt_setups: ["动量延续"] }
 "#;
         let cfg: ScreenConfig = serde_yaml::from_str(yaml).unwrap();
         cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn parses_value_frac() {
+        let yaml = "quality_trees: [q.yaml]\nsetup_trees:\n  动量延续: [a.yaml]\nvalue_frac: 0.3\n";
+        let cfg: ScreenConfig = serde_yaml::from_str(yaml).unwrap();
+        cfg.validate().unwrap();
+        assert_eq!(cfg.value_frac, Some(0.3));
     }
 }

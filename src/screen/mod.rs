@@ -57,6 +57,9 @@ pub struct ScreenRunConfig {
     pub top: Option<usize>,
     pub window: usize,
     pub out_path: Option<PathBuf>,
+    /// Point-in-time membership CSV (date,symbol); when set, restricts candidates to members
+    /// effective at the as-of time. None → no restriction.
+    pub membership_path: Option<PathBuf>,
 }
 
 fn dir(s: Stance) -> f64 {
@@ -77,11 +80,12 @@ async fn score_and_leaf(
     llm: &LlmEvaluator,
     t: NaiveDateTime,
     window: usize,
+    fundamentals: Option<&crate::data::fundamentals::FundamentalSeries>,
 ) -> Result<Option<(f64, String)>> {
     if !is_fresh(primary, t) {
         return Ok(None);
     }
-    let ctx = crate::features::context::build_context(primary, context, &[], aux, None, t, window);
+    let ctx = crate::features::context::build_context(primary, context, &[], aux, fundamentals, t, window);
     let tr = crate::engine::traversal::traverse(tree, &ctx, llm).await?;
     let score = tree.leaves.get(&tr.leaf).map_or(0.0, |l| l.weight_at(&ctx) * dir(l.stance));
     Ok(Some((score, tr.leaf.clone())))
@@ -129,9 +133,15 @@ pub async fn run_screen(cfg: &ScreenRunConfig, llm: &LlmEvaluator) -> Result<Scr
         primaries.push(crate::data::reader::read_bars_csv(&e.primary)?);
         contexts.push(crate::data::reader::read_bars_csv(&e.context)?);
     }
+    let mut funds: Vec<Option<crate::data::fundamentals::FundamentalSeries>> = Vec::with_capacity(universe.len());
+    for e in &universe {
+        funds.push(e.fundamentals.as_ref().map(|p| crate::data::fundamentals::load_fundamentals_csv(p)).transpose()?);
+    }
 
     let timeline = build_timeline(&primaries);
     let t = pick_as_of(&timeline, cfg.as_of)?;
+    let membership = cfg.membership_path.as_ref()
+        .map(|p| crate::data::membership::Membership::load_csv(p)).transpose()?;
     let aux: BTreeMap<String, AuxTable> = BTreeMap::new();
     let mp = MergeParams {
         theta_fire: sc.merge.theta_fire,
@@ -147,10 +157,16 @@ pub async fn run_screen(cfg: &ScreenRunConfig, llm: &LlmEvaluator) -> Result<Scr
         if !is_fresh(&primaries[i], t) {
             continue;
         }
+        if let Some(m) = &membership {
+            match m.effective_at(t) {
+                Some(set) if set.contains(&e.symbol) => {}
+                _ => continue, // 非当期成员（或早于首期）→ 跳过
+            }
+        }
         let mut reasons: Vec<ScreenReason> = Vec::new();
         let mut q_scores: Vec<f64> = Vec::new();
         for (name, tree) in &quality {
-            if let Some((s, leaf)) = score_and_leaf(&primaries[i], &contexts[i], &aux, tree, llm, t, cfg.window).await? {
+            if let Some((s, leaf)) = score_and_leaf(&primaries[i], &contexts[i], &aux, tree, llm, t, cfg.window, funds[i].as_ref()).await? {
                 q_scores.push(s);
                 reasons.push(ScreenReason { tree: name.clone(), leaf, score: s });
             }
@@ -160,7 +176,7 @@ pub async fn run_screen(cfg: &ScreenRunConfig, llm: &LlmEvaluator) -> Result<Scr
         for (tag, trees) in &setups {
             let mut v = Vec::new();
             for (name, tree) in trees {
-                if let Some((s, leaf)) = score_and_leaf(&primaries[i], &contexts[i], &aux, tree, llm, t, cfg.window).await? {
+                if let Some((s, leaf)) = score_and_leaf(&primaries[i], &contexts[i], &aux, tree, llm, t, cfg.window, funds[i].as_ref()).await? {
                     v.push(s);
                     if s >= mp.theta_fire {
                         fired_reasons.push(ScreenReason { tree: name.clone(), leaf, score: s });
@@ -308,6 +324,7 @@ leaves:
             top: None,
             window: 10,
             out_path: None,
+            membership_path: None,
         };
         let res = run_screen(&run, &LlmEvaluator::Disabled).await.unwrap();
         assert_eq!(res.n_universe, 2);

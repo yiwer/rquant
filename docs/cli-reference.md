@@ -762,6 +762,7 @@ rquant screen [OPTIONS] --universe <UNIVERSE>
 | `--cost-bps <f64>` | f64 | `10.0` | 回测单次调仓换手成本（基点）|
 | `--soft` | bool | `false` | 软遍历打分（回测）；as-of 用硬模式取确定叶名作理由 |
 | `--out <PATH>` | PathBuf | 可选 | 写 JSON（as-of=`ScreenResult` / 回测=`ScreenBacktestReport`）|
+| `--membership <PATH>` | PathBuf | 可选 | 点时 universe 成员 CSV（`date,symbol` long 格式，每月末一组）。指定后每次调仓只纳入该 t 生效（最近 ≤t 再平衡日）的成员——survivorship-free 宽截面验证用。缺省=不过滤（用全 universe）。 |
 | `--llm-model` / `--llm-base-url` / `--llm-cache-dir` | — | — | 同其他子命令（种子树纯量化，留作扩展）|
 
 ### 集成配置格式（`--config`）
@@ -779,6 +780,11 @@ merge:
   q_floor: 0.5         # 优质门：低于此不入选
   top: 10              # 入选数
   quality_layers: 3    # 回测优质分分层数
+  lambda: 1.0          # 动量倾斜强度系数（0=纯价值驱动，>0=价值×动量）
+  tilt_setups: [动量延续]  # 参与倾斜的形态标签（必须是 setup_trees 的键）
+value_frac: 0.3        # 可选：横截面价值闸——每次调仓先按优质分（PB cheapness）
+                       # 保留最便宜的 ceil(0.3×n_universe) 只，再在廉价池内按动量
+                       # 倾斜选 top-N。None/省略=不启用价值闸，直接 combined 排名。
 regimes:                                # 回测 regime 切片窗口（可空）
   - { label: "2018熊", from: 2018-01-02, to: 2018-12-28 }
 ```

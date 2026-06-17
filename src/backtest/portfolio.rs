@@ -89,11 +89,12 @@ pub async fn score_symbol(
     soft: bool,
     t: NaiveDateTime,
     window: usize,
+    fundamentals: Option<&crate::data::fundamentals::FundamentalSeries>,
 ) -> crate::Result<Option<f64>> {
     if !is_fresh(primary, t) {
         return Ok(None);
     }
-    let ctx = crate::features::context::build_context(primary, context, &[], aux, None, t, window);
+    let ctx = crate::features::context::build_context(primary, context, &[], aux, fundamentals, t, window);
     let dir = |s: crate::tree::schema::Stance| match s {
         crate::tree::schema::Stance::Long => 1.0,
         crate::tree::schema::Stance::Short => -1.0,
@@ -251,6 +252,7 @@ pub async fn run_portfolio(cfg: &PortfolioConfig, llm: &LlmEvaluator) -> Result<
                 cfg.soft,
                 t_rb,
                 cfg.window,
+                None,
             ).await? {
                 scores.push((entry.symbol.clone(), s));
             }
@@ -603,7 +605,7 @@ leaves:
         let llm = LlmEvaluator::Disabled;
         let t = dt(2, 10, 0);
         let primary = vec![bar_at(dt(2, 9, 30), 1.0), bar_at(t, 2.0)];
-        let result = score_symbol(&primary, &primary, &BTreeMap::new(), &tree, &llm, false, t, 10)
+        let result = score_symbol(&primary, &primary, &BTreeMap::new(), &tree, &llm, false, t, 10, None)
             .await.unwrap();
         assert!(result.is_some());
         let score = result.unwrap();
@@ -619,7 +621,7 @@ leaves:
         let llm = LlmEvaluator::Disabled;
         let t = dt(2, 10, 0);
         let primary = vec![bar_at(dt(2, 9, 30), 1.0), bar_at(dt(2, 9, 45), 2.0)];
-        let result = score_symbol(&primary, &primary, &BTreeMap::new(), &tree, &llm, false, t, 10)
+        let result = score_symbol(&primary, &primary, &BTreeMap::new(), &tree, &llm, false, t, 10, None)
             .await.unwrap();
         assert!(result.is_none());
     }

@@ -502,3 +502,15 @@ when: "fund.roe > 15 and close / fund.eps < 30"   # ROE>15% 且 PE<30（PE 派�
 ### 格式校验（加载期左移）
 
 `fund.<列>` 必须是两段（恰好一个 `.`），列名非空且不含 `.`——树加载时 `check_no_unknown_idents` 校验。
+
+### screen 树中的 `fund.*`
+
+**screen 树（`rquant screen` 子命令的 quality_trees / setup_trees）可以直接使用 `fund.*`**，与 `factor`/`portfolio`/`backtest` 子命令的同一 point-in-time 基本面通道完全一致——前提是 universe CSV 第 4 列 `fundamentals` 已挂载逐股财务 CSV。PB 价值树的典型写法：
+
+```yaml
+# examples/trees/screen/value_pb.yaml
+when: "fund.bps > 0"           # 闸：有正净资产才进 cheapness 评分
+weight: "1 / (1 + close / fund.bps)"   # PB 越低 → weight 越高 → 单调无饱和 ∈(0,1)
+```
+
+`fund.bps` 首份财报公告前为 NaN → 分支自动弃权走 default（flat），不产生错误信号。

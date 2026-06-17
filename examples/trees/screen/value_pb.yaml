@@ -1,0 +1,11 @@
+meta: { name: value_pb, forward_window: 20, stances: [long, flat] }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.bps > 0", goto: cheap, label: has_book }
+    default: { goto: flat, label: no_book }
+leaves:
+  cheap: { stance: long, weight: "1 / (1 + close / fund.bps)" }
+  flat: { stance: flat }

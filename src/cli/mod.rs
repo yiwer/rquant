@@ -276,6 +276,9 @@ enum Cmd {
         llm_base_url: String,
         #[arg(long, default_value = ".rquant-cache/llm")]
         llm_cache_dir: PathBuf,
+        /// Point-in-time universe membership CSV (date,symbol); restrict each rebalance/as-of to that date's members
+        #[arg(long)]
+        membership: Option<PathBuf>,
     },
     /// Walk-forward parameter optimization (grid x anchored-expanding IS -> OS)
     Optimize {
@@ -669,7 +672,7 @@ pub async fn main() -> anyhow::Result<()> {
         }
         Cmd::Screen {
             universe, config, backtest, as_of, from, to, top, rebalance,
-            warmup, window, cost_bps, soft, out, llm_model, llm_base_url, llm_cache_dir,
+            warmup, window, cost_bps, soft, out, llm_model, llm_base_url, llm_cache_dir, membership,
         } => {
             let llm = build_llm(llm_model, llm_base_url, llm_cache_dir)?;
             let parse_date = |o: Option<String>| -> crate::Result<Option<chrono::NaiveDate>> {
@@ -693,6 +696,7 @@ pub async fn main() -> anyhow::Result<()> {
                     cost_bps,
                     soft,
                     out_path: out,
+                    membership_path: membership.clone(),
                 };
                 let report = crate::screen::backtest::run_screen_backtest(&bcfg, &llm).await?;
                 crate::screen::backtest::print_screen_backtest(&report);
@@ -704,6 +708,7 @@ pub async fn main() -> anyhow::Result<()> {
                     top,
                     window,
                     out_path: out,
+                    membership_path: membership,
                 };
                 let result = crate::screen::run_screen(&rcfg, &llm).await?;
                 crate::screen::print_screen(&result);
