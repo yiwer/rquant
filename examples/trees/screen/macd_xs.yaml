@@ -1,0 +1,12 @@
+meta: { name: macd_xs, forward_window: 20, stances: [long, flat] }
+params: { fast: 12, slow: 26, sig: 9, scale: 50 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "macd_hist(close, fast, slow, sig) > 0", goto: up, label: bull }
+    default: { goto: flat, label: flat }
+leaves:
+  up: { stance: long, weight: "sigmoid(macd_hist(close, fast, slow, sig) / close * scale)" }
+  flat: { stance: flat }
