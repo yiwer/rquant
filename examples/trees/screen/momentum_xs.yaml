@@ -1,0 +1,12 @@
+meta: { name: momentum_xs, forward_window: 20, stances: [long, flat] }
+params: { mom_n: 20, mom_scale: 5 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "close > ref(close, mom_n)", goto: up, label: up }
+    default: { goto: flat, label: flat }
+leaves:
+  up: { stance: long, weight: "sigmoid((close / ref(close, mom_n) - 1) * mom_scale)" }
+  flat: { stance: flat }
