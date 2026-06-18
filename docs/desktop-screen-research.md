@@ -27,6 +27,7 @@
 - 基准指数:`data/baostock/index/{csi300,csi500,csi1000}.csv`(缺则跑 `scripts/fetch_index.py`)
 - ledger:`.iter/ledger.jsonl`(+ `docs/superpowers/iteration-ledger.md` 队列段)
 - 跑轮需机器装好 Python 与 harness 依赖。
+- **口径与 harness 一致**:GUI 选股 as-of/回测用 `universe_baostock_day.csv` 且**不加** point-in-time membership 掩码 —— 与 `iterate.py` 的实际口径(显式 `membership="none"`,见 iterate.py)完全相同,故 GUI 数值可与轮次台账直接对照。(daily_eval 的默认 membership 仅用于其独立调用,iterate.py 已覆写为 none。)
 
 ## 交互冒烟(GUI,需图形界面)
 
