@@ -8,6 +8,7 @@ pub mod data_bench;
 pub mod dto;
 pub mod error;
 pub mod gates;
+pub mod index_relative;
 pub mod journal;
 pub mod manual_run;
 pub mod paths;
