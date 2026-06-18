@@ -50,6 +50,29 @@ impl Workspace {
     pub fn run_log_path(&self) -> PathBuf {
         self.paper_dir().join("run.log")
     }
+    pub fn screen_iter_dir(&self) -> PathBuf {
+        self.root.join("examples").join("screen").join("iter")
+    }
+    pub fn iter_dir(&self) -> PathBuf {
+        self.root.join(".iter")
+    }
+    pub fn ledger_jsonl(&self) -> PathBuf {
+        self.iter_dir().join("ledger.jsonl")
+    }
+    pub fn ledger_md(&self) -> PathBuf {
+        self.root.join("docs").join("superpowers").join("iteration-ledger.md")
+    }
+    pub fn index_dir(&self) -> PathBuf {
+        self.root.join("data").join("baostock").join("index")
+    }
+    pub fn screen_runs_dir(&self) -> PathBuf {
+        self.desktop_data_dir().join("screen_runs")
+    }
+}
+
+/// 解析 Python 可执行:优先 env RQUANT_PYTHON,否则 "python"(Windows venv 已在 PATH)。
+pub fn python_exe() -> String {
+    std::env::var("RQUANT_PYTHON").unwrap_or_else(|_| "python".to_string())
 }
 
 /// A股代码白名单:sh/sz/bj + 6 位数字。写路径由此防注入(.. 或分隔符)。
@@ -81,5 +104,13 @@ mod tests {
         let here = std::env::current_dir().unwrap();
         let ws = Workspace::detect(&here).expect("repo root should be detectable from src-tauri cwd");
         assert!(ws.root().join("deploy").join("paper_run.cmd").exists());
+    }
+
+    #[test]
+    fn screen_paths_resolve_under_root() {
+        let ws = Workspace::detect(&std::env::current_dir().unwrap()).unwrap();
+        assert!(ws.ledger_jsonl().ends_with("ledger.jsonl"));
+        assert!(ws.index_dir().ends_with("index"));
+        assert!(ws.screen_iter_dir().ends_with("iter"));
     }
 }
