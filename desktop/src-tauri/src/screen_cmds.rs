@@ -14,11 +14,23 @@ pub fn screen_configs_list(state: tauri::State<AppState>) -> Vec<ScreenConfigDto
             if !is_yaml { continue }
             let rel = p.strip_prefix(state.ws.root()).unwrap_or(&p).to_string_lossy().replace('\\', "/");
             // 选股配置合法性:用引擎自身的 load_screen_config(非 serde_yaml,桌面 crate 未依赖)。
-            let (name, error) = match rquant::screen::config::load_screen_config(&p) {
-                Ok(_) => (p.file_stem().and_then(|s| s.to_str()).map(String::from), None),
-                Err(e) => (None, Some(format!("配置解析失败: {e}"))),
-            };
-            out.push(ScreenConfigDto { path: rel, name, frozen, error });
+            // deploy/ 混有树/其他冻结 yaml(非选股配置)——解析失败者静默跳过,不当错误列出;
+            // examples/screen/iter/ 下解析失败才作为坏选股配置呈现。
+            match rquant::screen::config::load_screen_config(&p) {
+                Ok(_) => out.push(ScreenConfigDto {
+                    path: rel,
+                    name: p.file_stem().and_then(|s| s.to_str()).map(String::from),
+                    frozen,
+                    error: None,
+                }),
+                Err(e) if !frozen => out.push(ScreenConfigDto {
+                    path: rel,
+                    name: None,
+                    frozen,
+                    error: Some(format!("配置解析失败: {e}")),
+                }),
+                Err(_) => {} // deploy 非选股 yaml,跳过
+            }
         }
     }
     out.sort_by(|a, b| a.path.cmp(&b.path));
