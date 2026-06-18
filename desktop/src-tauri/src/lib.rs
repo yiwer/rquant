@@ -21,6 +21,7 @@ pub mod results;
 pub mod runlog;
 pub mod runs;
 pub mod schtask;
+pub mod screen_runs;
 pub mod tasks;
 
 use std::sync::Arc;
