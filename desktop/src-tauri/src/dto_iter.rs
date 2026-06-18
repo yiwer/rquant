@@ -5,11 +5,11 @@ use ts_rs::TS;
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct LedgerRoundDto {
-    pub round: i64, pub label: String,
+    pub round: i32, pub label: String,
     #[serde(default)] pub axis: String,
     #[serde(default)] pub note: String,
     #[serde(default)] pub benchmark: String,
-    #[serde(default = "one")] pub rebalance: i64,
+    #[serde(default = "one")] pub rebalance: i32,
     pub verdict: String,
     #[serde(default)] pub flags: Vec<String>,
     #[serde(default)] pub gross_ex: Option<f64>,
@@ -19,21 +19,21 @@ pub struct LedgerRoundDto {
     #[serde(default)] pub net_sharpe: Option<f64>,
     #[serde(default)] pub break_even: Option<f64>,
 }
-fn one() -> i64 { 1 }
+fn one() -> i32 { 1 }
 
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]
-pub struct GateDto { pub name: String, pub pass: bool, pub value: Option<f64>, pub threshold: Option<f64>, pub note: String }
+pub struct RoundGateDto { pub name: String, pub pass: bool, pub value: Option<f64>, pub threshold: Option<f64>, pub note: String }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
-pub struct Tier2CellDto { pub top: i64, pub rebalance: i64, pub net_excess: f64 }
+pub struct Tier2CellDto { pub top: i32, pub rebalance: i32, pub net_excess: f64 }
 
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]
 pub struct RoundCardDto {
-    pub round: i64, pub label: String, pub benchmark: String, pub rebalance: i64,
-    pub verdict: String, pub gates: Vec<GateDto>, pub tier2: Vec<Tier2CellDto>,
+    pub round: i32, pub label: String, pub benchmark: String, pub rebalance: i32,
+    pub verdict: String, pub gates: Vec<RoundGateDto>, pub tier2: Vec<Tier2CellDto>,
     pub flags: Vec<String>, pub config_path: String,
 }
 

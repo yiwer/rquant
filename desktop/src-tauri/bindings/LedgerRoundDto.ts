@@ -3,4 +3,4 @@
 /**
  * 镜像 .iter/ledger.jsonl 的一行;数值键缺省为 None(老轮次可能缺)。
  */
-export type LedgerRoundDto = { round: bigint, label: string, axis: string, note: string, benchmark: string, rebalance: bigint, verdict: string, flags: Array<string>, gross_ex: number | null, net_ex: number | null, net_oos_ex: number | null, net_train_ex: number | null, net_sharpe: number | null, break_even: number | null, };
+export type LedgerRoundDto = { round: number, label: string, axis: string, note: string, benchmark: string, rebalance: number, verdict: string, flags: Array<string>, gross_ex: number | null, net_ex: number | null, net_oos_ex: number | null, net_train_ex: number | null, net_sharpe: number | null, break_even: number | null, };
