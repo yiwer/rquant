@@ -1,0 +1,14 @@
+# 成长因子：净利润同比增速 np_yoy（百分数，如 38.9=38.9%）经 sigmoid 映射。高增速分高。
+# gate 仅排除 NaN（缺财务）；负增速→低分。供成长因子测试 + 多因子打分。
+meta: { name: growth_npyoy, forward_window: 20, stances: [long, flat] }
+params: { g_scale: 30 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.np_yoy > -100000", goto: g, label: has_growth }
+    default: { goto: flat, label: flat }
+leaves:
+  g: { stance: long, weight: "sigmoid(fund.np_yoy / g_scale)" }
+  flat: { stance: flat }

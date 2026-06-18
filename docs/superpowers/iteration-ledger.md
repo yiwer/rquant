@@ -94,3 +94,6 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 | 5 | value_pb_deploy_m | deploy-hardened value (roe>0 + liq>=50M floor) monthly vs index [bench:csi300] [reb20] | +2.795 | 0.512 | 1.13 | daily | — | PASS |
 | 6 | value_pb_sn_m | sector-neutral value (top-3 per industry) vs index [bench:csi300] [reb20] [sector-neutral] | +2.585 | 0.806 | 0.89 | daily | — | PASS |
 | 7 | quality_roe_m | quality (high ROE) standalone vs tradeable index — does quality beat index like value? [bench:csi300] [reb20] | +2.883 | 0.832 | 0.72 | daily | — | PASS |
+| 8 | pe_value_m | pure PE value (cheap by earnings) vs index [bench:csi300] [reb20] | +3.244 | 0.226 | 1.21 | daily | — | PASS |
+| 9 | growth_npyoy_m | pure growth (np_yoy) vs index — does growth beat index? [bench:csi300] [reb20] | +3.496 | 1.571 | 0.73 | daily | — | PASS |
+| 10 | multi_factor_vqg_m | multi-factor composite (value PB + quality ROE + growth np_yoy mean) vs index [bench:csi300] [reb20] | +2.851 | 0.466 | 0.86 | daily | — | PASS |

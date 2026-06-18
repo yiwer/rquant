@@ -1,0 +1,13 @@
+# round 10: 多因子打分（价值 PB + 质量 ROE + 成长 np_yoy，三树均值=综合分）vs 可交易指数。
+# combine 对多 quality_trees 取均值 → 综合分∈(0,1)；缺某因子(NaN/不达 gate)该树记 0 → 隐含多因子共识。
+# 看综合分组合能否兼得收益与稳健（vs 单价值的低回撤 / 单成长高回撤）。
+quality_trees:
+  - examples/trees/screen/value_pb.yaml
+  - examples/trees/screen/roe_xs.yaml
+  - examples/trees/screen/growth_npyoy.yaml
+setup_trees:
+  inert: [examples/trees/screen/momentum_xs.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["inert"], quality_layers: 5 }
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }
