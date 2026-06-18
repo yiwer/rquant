@@ -1,0 +1,7 @@
+# 冻结部署配置（纸面盘第4账本：价值选股）。源 = examples/screen/iter/value_pb_deploy.yaml
+# top-50 纯价值信号(λ=0)，月频(reb=20)。对标可交易宽基指数(CSI300/500)，非等权全集。
+# 验证：round 4/5 PASS + 逐年6/8胜 + 行业归因50/50 + T+1拖累可忽略 + 容量~2.5亿。
+quality_trees: [deploy/value_pb_deploy_tree_frozen.yaml]
+setup_trees:
+  inert: [deploy/momentum_xs_frozen.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["inert"], quality_layers: 5 }

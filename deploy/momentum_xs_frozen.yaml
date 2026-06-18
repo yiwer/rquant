@@ -1,0 +1,13 @@
+# 冻结部署副本：惰性 setup（λ=0 被乘 0，仅满足 screen 校验 setup_trees/tilt_setups 非空）。源 = examples/trees/screen/momentum_xs.yaml
+meta: { name: momentum_xs_frozen, forward_window: 20, stances: [long, flat] }
+params: { mom_n: 20, mom_scale: 5 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "close > ref(close, mom_n)", goto: up, label: up }
+    default: { goto: flat, label: flat }
+leaves:
+  up: { stance: long, weight: "sigmoid((close / ref(close, mom_n) - 1) * mom_scale)" }
+  flat: { stance: flat }

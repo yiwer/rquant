@@ -1,0 +1,14 @@
+# 冻结部署副本（勿改；examples/ 同名树继续迭代不影响此处）。源 = examples/trees/screen/value_pb_deploy.yaml
+# 最便宜 PB + 盈利地板(roe>0) + 流动性地板(20日均成交额≥5000万)。验证见 docs/superpowers/2026-06-18-value-vs-tradeable-benchmark-finding.md
+meta: { name: value_pb_deploy_frozen, forward_window: 20, stances: [long, flat] }
+params: { liq_n: 20, liq_floor: 50000000 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.bps > 0 and fund.roe > 0 and sma(close * volume, liq_n) >= liq_floor", goto: cheap, label: cheap_profitable_liquid }
+    default: { goto: flat, label: excluded }
+leaves:
+  cheap: { stance: long, weight: "1 / (1 + close / fund.bps)" }
+  flat: { stance: flat }
