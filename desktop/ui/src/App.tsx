@@ -4,12 +4,16 @@ import Cockpit from "./pages/Cockpit";
 import BookDetail from "./pages/BookDetail";
 import Backtest from "./pages/Backtest";
 import DataBench from "./pages/DataBench";
+import Screen from "./pages/Screen";
+import Research from "./pages/Research";
 import TaskDrawer from "./components/TaskDrawer";
 
 export const MODULES = [
   { key: "cockpit", label: "驾驶舱" },
   { key: "backtest", label: "回测中心" },
   { key: "data", label: "数据工作台" },
+  { key: "screen", label: "选股" },
+  { key: "research", label: "研究" },
   { key: "tree", label: "策略树" },
   { key: "factor", label: "因子工作台" },
   { key: "wfo", label: "调参/WFO" },
@@ -44,7 +48,9 @@ function Shell() {
           <Route path="/cockpit/:book" element={<BookDetail />} />
           <Route path="/backtest" element={<Backtest />} />
           <Route path="/data" element={<DataBench />} />
-          {MODULES.filter((m) => m.key !== "cockpit" && m.key !== "backtest" && m.key !== "data").map((m) => (
+          <Route path="/screen" element={<Screen />} />
+          <Route path="/research" element={<Research />} />
+          {MODULES.filter((m) => m.key !== "cockpit" && m.key !== "backtest" && m.key !== "data" && m.key !== "screen" && m.key !== "research").map((m) => (
             <Route key={m.key} path={`/${m.key}`} element={<Placeholder name={m.label} />} />
           ))}
           <Route path="*" element={<Navigate to="/cockpit" replace />} />

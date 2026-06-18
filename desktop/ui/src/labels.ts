@@ -27,3 +27,9 @@ export const TERM = {
 
 // 模式选择器一次性解释（popover）
 export const MODE_GLOSS = "模拟=资金曲线 / 打分=相对排名；硬=取最优 / 软=概率加权";
+
+export const VERDICT_ZH: Record<string, string> = { PASS: "通过", FALSIFIED: "证伪" };
+export const SCREEN_TERM = {
+  combined: "综合分", quality: "质量分", speculative: "投机分", excess: "超额",
+  oos: "OOS 超额", breakEven: "盈亏平衡", indexRel: "指数相对", ewRef: "等权 · 不可投·参考",
+} as const;

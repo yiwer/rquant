@@ -43,5 +43,20 @@ export const api = {
   universeWrite: (name: string, entries: UniverseEntryDto[]) => invoke<void>("universe_write", { name, entries }),
   fetchBatch: (symbols: string[], scale: number, datalen: number, adjust: string) =>
     invoke<string>("fetch_batch", { symbols, scale, datalen, adjust }),
+  // 选股
+  screenConfigsList: () => invoke<import("@bindings/ScreenConfigDto").ScreenConfigDto[]>("screen_configs_list"),
+  indexList: () => invoke<string[]>("index_list"),
+  screenAsof: (config: string, asOf: string, top: number) => invoke<string>("screen_asof", { config, asOf, top }),
+  screenBacktestRun: (config: string, from: string, to: string, top: number, rebalance: number, costBps: number) =>
+    invoke<string>("screen_backtest_run", { config, from, to, top, rebalance, costBps }),
+  screenRunsList: () => invoke<import("@bindings/ScreenRunMetaDto").ScreenRunMetaDto[]>("screen_runs_list"),
+  screenRunReport: (id: string) => invoke<import("@bindings/ScreenBacktestReportDto").ScreenBacktestReportDto>("screen_run_report", { id }),
+  screenIndexRelative: (id: string, benchmark: string) => invoke<import("@bindings/IndexRelativeDto").IndexRelativeDto>("screen_index_relative", { id, benchmark }),
+  // 迭代
+  iterLedger: () => invoke<import("@bindings/LedgerRoundDto").LedgerRoundDto[]>("iter_ledger"),
+  iterQueue: () => invoke<import("@bindings/IterQueueDto").IterQueueDto>("iter_queue"),
+  iterRoundCard: (round: number) => invoke<import("@bindings/RoundCardDto").RoundCardDto>("iter_round_card", { round }),
+  iterRunRound: (config: string, note: string, axis: string, top: number, benchmark: string, rebalance: number) =>
+    invoke<string>("iter_run_round", { config, note, axis, top, benchmark, rebalance }),
 };
 export type Api = typeof api;
