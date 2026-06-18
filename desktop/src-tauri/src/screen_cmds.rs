@@ -102,7 +102,7 @@ pub fn screen_backtest_run(state: tauri::State<AppState>, config: String, from: 
         let net = rt.block_on(rquant::screen::backtest::run_screen_backtest(&mk(cost_bps), &llm)).map_err(|e| e.to_string())?;
         let created = chrono::Local::now().naive_local().format("%Y-%m-%dT%H:%M:%S").to_string();
         let meta = ScreenRunMetaDto { id: id.clone(), config: config.clone(), from: from.clone(), to: to.clone(),
-            top, rebalance, created, ok: true, error: None };
+            top, rebalance, cost_bps, created, ok: true, error: None };
         crate::screen_runs::write_meta(&ws, &meta)?;
         crate::screen_runs::write_report(&ws, &id, "gross", &serde_json::to_string(&gross).map_err(|e| e.to_string())?)?;
         crate::screen_runs::write_report(&ws, &id, "net", &serde_json::to_string(&net).map_err(|e| e.to_string())?)?;
@@ -122,7 +122,7 @@ pub fn screen_run_report(state: tauri::State<AppState>, id: String) -> Result<Sc
     let f = |v: &serde_json::Value, k: &str| v.get(k).and_then(|x| x.as_f64());
     let net_total = f(&net, "total_return").unwrap_or(0.0);
     let gross_total = f(&gross, "total_return").unwrap_or(0.0);
-    let cost = 20.0;
+    let cost = meta.cost_bps;
     let break_even = if gross_total > 0.0 && gross_total > net_total {
         Some(cost * gross_total / (gross_total - net_total)) } else { None };
     let nav = net.get("holdings").and_then(|h| h.as_array()).map(|a| a.iter().map(|h| NavPointDto {

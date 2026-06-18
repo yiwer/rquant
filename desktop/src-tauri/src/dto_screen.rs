@@ -28,8 +28,12 @@ pub struct ScreenResultDto {
 #[ts(export)]
 pub struct ScreenRunMetaDto {
     pub id: String, pub config: String, pub from: String, pub to: String,
-    pub top: u32, pub rebalance: u32, pub created: String, pub ok: bool, pub error: Option<String>,
+    pub top: u32, pub rebalance: u32,
+    #[serde(default = "default_cost_bps")]
+    pub cost_bps: f64,
+    pub created: String, pub ok: bool, pub error: Option<String>,
 }
+fn default_cost_bps() -> f64 { 20.0 }
 
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]

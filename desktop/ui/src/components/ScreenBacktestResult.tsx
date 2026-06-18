@@ -314,7 +314,7 @@ export default function ScreenBacktestResult() {
                   columns={[
                     { title: "层", dataIndex: "layer" },
                     {
-                      title: "年化",
+                      title: "区间收益",
                       dataIndex: "mean_fwd_return",
                       render: (v: number) => pct(v),
                     },

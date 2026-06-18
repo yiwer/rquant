@@ -1,8 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
-import { test, expect, afterEach, vi } from "vitest";
+import { test, expect, afterEach } from "vitest";
 import { App as AntApp } from "antd";
-vi.mock("./NavChart", () => ({ default: () => null }));
 import ScreenBacktestResult from "./ScreenBacktestResult";
 import { useScreen } from "../stores/screen";
 

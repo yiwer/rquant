@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { App as AntApp, Button, Input, Select } from "antd";
+import { listen } from "@tauri-apps/api/event";
 import { useScreen } from "../stores/screen";
 import { useResearch } from "../stores/research";
 
@@ -12,8 +13,14 @@ export default function RunRoundForm() {
   const [bench, setBench] = useState("csi300");
   async function run() {
     if (!config) { message.warning("请选择配置"); return; }
-    try { await rs.api.iterRunRound(config, note, "daily", 50, bench, 1); message.success("已开始跑轮(后台)"); }
-    catch (e) { message.error(String(e)); }
+    try {
+      const taskId = await rs.api.iterRunRound(config, note, "daily", 50, bench, 1);
+      message.success("已开始跑轮(后台)");
+      const un = await listen<{ id: string; status: string }>("task://progress", (e) => {
+        if (e.payload.id !== taskId) return;
+        if (e.payload.status === "done" || e.payload.status === "failed") { void rs.load(); void un(); }
+      });
+    } catch (e) { message.error(String(e)); }
   }
   return <div>
     <Select style={{ width: "100%" }} placeholder="配置" value={config || undefined} onChange={setConfig}
