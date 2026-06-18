@@ -74,3 +74,4 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 
 | round | label | 假设 | net超额 | net-OOS超额 | netSharpe | axis | flags | 裁决 |
 |---|---|---|---|---|---|---|---|---|
+| 1 | value_pb_base | baseline: pure-PB value defensive (smoke) | -1.184 | -0.659 | 1.13 | daily | gross-excess<=0,net-OOS<=0,in-sample-only,break-even<40bps | FALSIFIED |

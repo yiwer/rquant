@@ -1,0 +1,13 @@
+# 迭代 harness e2e smoke 基线：纯 PB 价值防御选股。
+# quality=value_pb（cheapness = 1/(1+close/bps)），λ=0 → combined=quality（动量 setup 被乘 0，仅占位满足校验）。
+# select_top 直接按便宜度选 top-50。已知结论(见 iteration-ledger 已证伪角度)：纯价值仅"防御"
+# （低换手/低回撤/净 Sharpe 微正），在等权强基准下无超额 → 预期 FALSIFIED(net-OOS<=0)。
+# 用途：验证 iterate.py 端到端（gross/net + train/OOS regime 切片 + 轮卡 + 账本追加）。
+# 基本面有效窗 2019-05 起（首份财报 2019-04-30）；2018 价值股全弃权属无数据期。
+quality_trees: [examples/trees/screen/value_pb.yaml]
+setup_trees:
+  动量延续: [examples/trees/screen/momentum_xs.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["动量延续"], quality_layers: 5 }
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }
