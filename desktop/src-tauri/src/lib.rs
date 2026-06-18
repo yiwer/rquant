@@ -21,6 +21,7 @@ pub mod results;
 pub mod runlog;
 pub mod runs;
 pub mod schtask;
+pub mod screen_cmds;
 pub mod screen_runs;
 pub mod tasks;
 
@@ -70,6 +71,13 @@ pub fn run() {
             commands::universe_list,
             commands::universe_write,
             commands::fetch_batch,
+            screen_cmds::screen_configs_list,
+            screen_cmds::index_list,
+            screen_cmds::screen_asof,
+            screen_cmds::screen_backtest_run,
+            screen_cmds::screen_runs_list,
+            screen_cmds::screen_run_report,
+            screen_cmds::screen_index_relative,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
