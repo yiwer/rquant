@@ -57,4 +57,17 @@ python scripts/build_dataset_manifest.py               # → universe_* + manife
 
 ## 状态
 
-抓取后台进行中（30min 监控+异常自恢复）。脚本 + 单测 + 板块 + manifest 均已建并验证；features/manifest 待抓取完成后全量重跑。完成后更新本文档的最终覆盖数。
+**核心版已定稿（2026-06-18，覆盖最流动 ~1070 只）**——一份完整、可直接回测的流动核心数据集：
+- `kday/` ~1073 只（2018-2026，8.5年日线 qfq+turn/pctChg），`k15m/` 1072 只 / **20.8M 行**（2021-2026，5年15m qfq），manifest **n_quality_flags=0**（单调/无重复/无空量；20% 涨跌停限制内）。
+- `features_day/` 1066 只、`features_15m/` 1034 只（扩展 TA 指标，因果无前视，单测钉死）。
+- `sector/` 83 行业等权日线序列 + `sector_membership.csv`（5207 股）+ `sector_daily_panel.csv`（169968 行）。
+- `universe_baostock_{day,15m}.csv` + `dataset_manifest.json`。
+> 覆盖是**流动性降序的前 ~1070 只**（survivorship-free 并集 5115 的最流动核心），覆盖 A 股可交易主体。
+
+**survivorship-free 长尾（~1070→5115）后台继续抓取中**（看门狗监督，无进展自动重启）。全量抓完后会最终重算全量 features + manifest 并更新本节最终覆盖数。受 baostock 持续抓取限流，长尾速度 erratic，预计还需 ~1-2 天。
+
+### 抓取工程教训（baostock 持续负载）
+- 空成交量行（停牌日）→ 引擎 reader 拒读：dropna 含 volume。
+- 查询无超时会挂死整体 → `socket.setdefaulttimeout(60)`。
+- 持续负载下会挂死/爬行停滞 → `fetch_watchdog.py` 每 360s 窗 <4 新增即 kill+resume 自愈。
+- 并发 fetch 不可行（4 并发不返回）→ 顺序 ~30-40s/股；并集 churn 巨大(5yr top-2000 并集≈全市场 5115)。

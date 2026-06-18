@@ -101,12 +101,15 @@ def compute_indicators(df):
 
 def _process(bars_path, out_dir):
     sym = os.path.splitext(os.path.basename(bars_path))[0]
-    df = pd.read_csv(bars_path)
-    if len(df) < 2:
-        return sym, "empty"
-    feat = compute_indicators(df)
-    feat.to_csv(os.path.join(out_dir, f"{sym}.csv"), index=False)
-    return sym, f"{len(feat)}r×{len(feat.columns)-1}c"
+    try:  # 并发安全：fetch 可能正在写某文件 → 读到半截则跳过(终稿重算)，不崩整批
+        df = pd.read_csv(bars_path)
+        if len(df) < 2:
+            return sym, "empty"
+        feat = compute_indicators(df)
+        feat.to_csv(os.path.join(out_dir, f"{sym}.csv"), index=False)
+        return sym, f"{len(feat)}r×{len(feat.columns)-1}c"
+    except Exception as e:
+        return sym, f"err:{str(e)[:40]}"
 
 
 def main():
