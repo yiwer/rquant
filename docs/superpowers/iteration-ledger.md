@@ -89,3 +89,4 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 | 2 | corr_pv_hi | corr_pv hi: select top-50 by price-volume correlation (volume confirms price) | -5.035 | -1.599 | -0.36 | daily | gross-excess<=0,net-OOS<=0,net-sharpe<=0,break-even<40bps | FALSIFIED |
 | 3 | value_quality_and | value AND quality (Greenblatt): cheapest 30% PB, then top-50 by ROE | -2.394 | -1.134 | 0.72 | daily | gross-excess<=0,net-OOS<=0,break-even<40bps | FALSIFIED |
 | 4 | value_pb_csi300 | pure-PB value vs tradeable index (reframe) [bench:csi300] | +2.957 | 0.636 | 1.13 | daily | — | PASS |
+| 5 | value_pb_deploy_m | deploy-hardened value (roe>0 + liq>=50M floor) monthly vs index [bench:csi300] [reb20] | +2.795 | 0.512 | 1.13 | daily | — | PASS |

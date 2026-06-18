@@ -151,15 +151,19 @@ def _prior_best_oos():
     return best
 
 
-def run(cfg, axis, top, label):
-    """Tier-1：gross(0) + net(COST)，rebalance 1（复用 daily_eval.run_once）。"""
+def run(cfg, axis, top, label, reb=1):
+    """Tier-1：gross(0) + net(COST)。reb=1 复用 daily_eval.run_once；reb≠1 走 _screen（部署节奏）。"""
     a = AXES[axis]
     uni = os.path.join(de.REPO_ROOT, a["universe"])
     os.makedirs(de.RUNS, exist_ok=True)
     g_out = os.path.join(de.RUNS, f"iter_{label}_gross.json")
     n_out = os.path.join(de.RUNS, f"iter_{label}_net.json")
-    g = de.run_once(cfg, 0.0, a["frm"], a["to"], a["warmup"], a["window"], top, g_out, uni, "none")
-    n = de.run_once(cfg, COST, a["frm"], a["to"], a["warmup"], a["window"], top, n_out, uni, "none")
+    if reb == 1:
+        g = de.run_once(cfg, 0.0, a["frm"], a["to"], a["warmup"], a["window"], top, g_out, uni, "none")
+        n = de.run_once(cfg, COST, a["frm"], a["to"], a["warmup"], a["window"], top, n_out, uni, "none")
+    else:
+        g = _screen(cfg, 0.0, a, top, reb, g_out, uni)
+        n = _screen(cfg, COST, a, top, reb, n_out, uni)
     return g, n, a
 
 
@@ -194,7 +198,7 @@ def tier2_sweep(cfg, axis, label, bench=None):
     return out
 
 
-def card(rnd, label, axis, note, top, g, n, a, verdict, flags, m, sweep, prior, bench=None, ew=None):
+def card(rnd, label, axis, note, top, g, n, a, verdict, flags, m, sweep, prior, bench=None, ew=None, reb=1):
     def f(x):
         return "—" if x is None else f"{x:+.4f}"
 
@@ -208,7 +212,7 @@ def card(rnd, label, axis, note, top, g, n, a, verdict, flags, m, sweep, prior, 
     bench_lbl = f"index:{bench}" if bench else "universe-EW"
     L = [f"=== ITER round {rnd} · {label} (axis={axis}) ===",
          f"hypothesis : {note}",
-         f"universe   : {os.path.basename(a['universe'])}   {a['regimes_hint']}   top {top}   cost {int(COST)}bps",
+         f"universe   : {os.path.basename(a['universe'])}   {a['regimes_hint']}   top {top}  reb {reb}  cost {int(COST)}bps",
          f"benchmark  : {bench_lbl}" + (f"   (excess below is vs {bench}; turnover/maxDD/sharpe are strategy-absolute)" if bench else ""),
          f"{'':10}{'gross':>11}{'net':>11}",
          f"{'total':10}{g['total_return']:>+11.4f}{n['total_return']:>+11.4f}",
@@ -228,10 +232,10 @@ def card(rnd, label, axis, note, top, g, n, a, verdict, flags, m, sweep, prior, 
     return "\n".join(L)
 
 
-def append_ledger(rnd, label, note, axis, verdict, flags, m, bench=None):
+def append_ledger(rnd, label, note, axis, verdict, flags, m, bench=None, reb=1):
     os.makedirs(os.path.dirname(LEDGER_JSONL), exist_ok=True)
     rec = {"round": rnd, "label": label, "axis": axis, "note": note,
-           "benchmark": bench or "EW", "verdict": verdict, "flags": flags, **m}
+           "benchmark": bench or "EW", "rebalance": reb, "verdict": verdict, "flags": flags, **m}
     with open(LEDGER_JSONL, "a", encoding="utf-8") as fp:
         fp.write(json.dumps(rec, ensure_ascii=False) + "\n")
     oos = m["net_oos_ex"]
@@ -253,11 +257,12 @@ def main():
     ap.add_argument("--top", type=int, default=50)
     ap.add_argument("--benchmark", default=None, choices=["csi300", "csi500", "csi1000"],
                     help="换框架：对可交易宽基指数算超额(剥离等权小盘 beta)；缺省=universe 等权")
+    ap.add_argument("--rebalance", type=int, default=1, help="调仓间隔(bar)；1=日频(默认)，5≈周，20≈月(部署节奏)")
     a = ap.parse_args()
     label = a.label or os.path.splitext(os.path.basename(a.config))[0]
     rnd = _next_round()
     prior = _prior_best_oos()
-    g, n, ax = run(a.config, a.axis, a.top, label)
+    g, n, ax = run(a.config, a.axis, a.top, label, a.rebalance)
     bench = a.benchmark
     ew = None
     if bench:                                           # 换框架：超额改 vs 指数
@@ -274,9 +279,9 @@ def main():
         v, flags, _ = judge(g, n, sweep)
     else:
         v, flags = v0, flags0
-    note_led = a.note + (f" [bench:{bench}]" if bench else "")
-    print(card(rnd, label, a.axis, a.note, a.top, g, n, ax, v, flags, m, sweep, prior, bench, ew))
-    append_ledger(rnd, label, note_led, a.axis, v, flags, m, bench)
+    note_led = a.note + (f" [bench:{bench}]" if bench else "") + (f" [reb{a.rebalance}]" if a.rebalance != 1 else "")
+    print(card(rnd, label, a.axis, a.note, a.top, g, n, ax, v, flags, m, sweep, prior, bench, ew, a.rebalance))
+    append_ledger(rnd, label, note_led, a.axis, v, flags, m, bench, a.rebalance)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,16 @@
+# 部署加固版价值选股：最便宜 PB + 质量地板(盈利) + 流动性地板(可投资)。
+# 在纯 value_pb 之上加两道闸，滤掉亏损/距损价值陷阱 + 不可投资的低流动票：
+#   fund.bps>0 (有账面价值) AND fund.roe>0 (盈利,非距损) AND sma(close*volume,20)>=liq_floor (日均成交额可投资)
+# 权重=便宜度 1/(1+close/bps)。baostock volume=股、close=价 → close*volume=成交额(RMB)≈amount。
+meta: { name: value_pb_deploy, forward_window: 20, stances: [long, flat] }
+params: { liq_n: 20, liq_floor: 50000000 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.bps > 0 and fund.roe > 0 and sma(close * volume, liq_n) >= liq_floor", goto: cheap, label: cheap_profitable_liquid }
+    default: { goto: flat, label: excluded }
+leaves:
+  cheap: { stance: long, weight: "1 / (1 + close / fund.bps)" }
+  flat: { stance: flat }

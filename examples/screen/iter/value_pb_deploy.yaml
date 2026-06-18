@@ -1,0 +1,9 @@
+# 部署加固配置：value_pb_deploy（便宜PB + 盈利地板 + 流动性地板），top-50，纯价值信号(λ=0)。
+# 配合 iterate.py --benchmark csi300 --rebalance 20(月频部署节奏) 验证加地板+慢调仓后仍稳健跑赢可交易指数。
+quality_trees: [examples/trees/screen/value_pb_deploy.yaml]
+setup_trees:
+  动量延续: [examples/trees/screen/momentum_xs.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["动量延续"], quality_layers: 5 }
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }
