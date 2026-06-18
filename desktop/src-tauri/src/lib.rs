@@ -6,6 +6,7 @@ pub mod books;
 pub mod commands;
 pub mod data_bench;
 pub mod dto;
+pub mod dto_screen;
 pub mod error;
 pub mod gates;
 pub mod index_relative;
