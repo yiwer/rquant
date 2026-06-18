@@ -55,9 +55,18 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 - **6 因子 × 正反两向 = 12 全证伪**：last_leg 尾盘动量 / intraday_rev 日内反转 / close_vs_vwap 收盘强度 / intraday_range 日内波幅 / vol_tilt 量能后移 / overnight 隔夜跳空。唯二净微正者前后半翻号(非稳健) + break-even<2×成本。
 - ⚠️ 本轮最大价值=**抓住一个 survivorship 陷阱**（按窗口末成交额选 universe → 前视选中赢家 → 假 Sharpe 18）。任何"惊艳"结果先做合理性检查。
 
-## 唯一观察到的稳健边
+## 稳健边（里程碑：换框架后确认）
 
-**价值-防御(慢调仓)**：纯价值低换手、低回撤、净 Sharpe 微正，但在等权强基准下**无超额**。它是"防御"而非"alpha"。任何新角度要超越它，需在控成本下跑出**正净 OOS 超额**。
+**最便宜 PB 价值 = 对可交易基准的稳健跑赢者**（round 4，[完整发现](2026-06-18-value-vs-tradeable-benchmark-finding.md)）。
+此前 ~30 轮"价值证伪"是**基准选错**：vs 不可投资的 EW 全集(+442%)价值落后；但 vs **可交易宽基指数**
+(CSI300/500/1000，2018-26 仅 +21~36%)，`value_pb`(top-50,net20bps) **净总 +324%、绝对 Sharpe 1.13、回撤 0.19、换手 2.4%/日**：
+
+- 超额 vs CSI300/500/1000 = **+2.96/+2.85/+2.97**，**三规模桶全胜（含小盘 → 非规模 beta）**；
+- **洁净窗**(去 2018 无基本面空仓)：clean-train(2019-05..2023-12) 超额 **+1.53**（CSI300 当期 −7%）、**OOS(2024-26) +0.64**——train+OOS 皆正且数据洁净；
+- Tier-2 敏感性 `[2.1..4.01]` 全正无符号翻转；break-even 164bps。
+- **PASS**（毛>0 且 净OOS>0 且 净Sharpe>0 且 be≥40bps 且无翻转，全满足）。
+
+**诚实边界**：①结论取决于基准=可交易指数（合法，EW 不可投资高估机会成本）；②2019-26 是 A股价值/红利友好周期，OOS 为单一宏观期；③long-only 价值/beta 溢价非对冲 alpha（回撤真实）；④最便宜 PB 含价值陷阱→部署需质量+流动性地板（`value∩quality` 也过基准但更薄：超额 +1.71/OOS +0.16/Sharpe 0.72）。详见发现文档。
 
 ## 待试角度（候选队列，新 baostock 数据集解锁；Claude 维护）
 
@@ -79,3 +88,4 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 | 1 | value_pb_base | baseline: pure-PB value defensive (smoke) | -1.184 | -0.659 | 1.13 | daily | gross-excess<=0,net-OOS<=0,in-sample-only,break-even<40bps | FALSIFIED |
 | 2 | corr_pv_hi | corr_pv hi: select top-50 by price-volume correlation (volume confirms price) | -5.035 | -1.599 | -0.36 | daily | gross-excess<=0,net-OOS<=0,net-sharpe<=0,break-even<40bps | FALSIFIED |
 | 3 | value_quality_and | value AND quality (Greenblatt): cheapest 30% PB, then top-50 by ROE | -2.394 | -1.134 | 0.72 | daily | gross-excess<=0,net-OOS<=0,break-even<40bps | FALSIFIED |
+| 4 | value_pb_csi300 | pure-PB value vs tradeable index (reframe) [bench:csi300] | +2.957 | 0.636 | 1.13 | daily | — | PASS |
