@@ -29,6 +29,9 @@ data/fundamentals/
 # daily-selection eval run outputs (reproducible via scripts/daily_eval.py)
 .daily_runs/
 
+# iteration-harness machine ledger (reproducible; md ledger is the human source of truth)
+.iter/
+
 # intraday 15m bars + derived daily factors + pilot universe (reproducible via
 # scripts/fetch_intraday.py + build_intraday_factors.py + build_intraday_universe.py)
 data/intraday_15m/
