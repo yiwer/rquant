@@ -65,8 +65,10 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 - **洁净窗**(去 2018 无基本面空仓)：clean-train(2019-05..2023-12) 超额 **+1.53**（CSI300 当期 −7%）、**OOS(2024-26) +0.64**——train+OOS 皆正且数据洁净；
 - Tier-2 敏感性 `[2.1..4.01]` 全正无符号翻转；break-even 164bps。
 - **PASS**（毛>0 且 净OOS>0 且 净Sharpe>0 且 be≥40bps 且无翻转，全满足）。
+- **部署加固**（round 5，月频+质量/流动性地板）：回撤腰斩 0.10、break-even 514bps、换手 1/3.5；T+1 执行拖累可忽略；容量 ~2.5亿(10%ADV)。逐年：2021-26 连赢 6 年(含全 OOS)、成长年 2019-20 输 → 真价值因子。
+- **行业中性**（round 6，引擎 group-select 已建）：每行业 top-3，**OOS 超额 +0.81 > 全局 +0.51、train/OOS 趋平衡 → 更少 regime 依赖**（坐实"半 sector 押注半选股"中选股是稳健半）；代价 回撤 0.10→0.21、Sharpe 1.13→0.89。
 
-**诚实边界**：①结论取决于基准=可交易指数（合法，EW 不可投资高估机会成本）；②2019-26 是 A股价值/红利友好周期，OOS 为单一宏观期；③long-only 价值/beta 溢价非对冲 alpha（回撤真实）；④最便宜 PB 含价值陷阱→部署需质量+流动性地板（`value∩quality` 也过基准但更薄：超额 +1.71/OOS +0.16/Sharpe 0.72）。详见发现文档。
+**诚实边界**：①结论取决于基准=可交易指数（合法，EW 不可投资高估机会成本）；②2019-26 是 A股价值/红利友好周期，OOS 为单一宏观期（行业中性版缓解但未消除）；③long-only 价值/beta 溢价非对冲 alpha（回撤真实）；④最便宜 PB 含价值陷阱→部署需质量+流动性地板（`value∩quality` 也过基准但更薄：超额 +1.71/OOS +0.16/Sharpe 0.72）。详见[发现文档](2026-06-18-value-vs-tradeable-benchmark-finding.md)。
 
 ## 待试角度（候选队列，新 baostock 数据集解锁；Claude 维护）
 
@@ -90,3 +92,4 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 | 3 | value_quality_and | value AND quality (Greenblatt): cheapest 30% PB, then top-50 by ROE | -2.394 | -1.134 | 0.72 | daily | gross-excess<=0,net-OOS<=0,break-even<40bps | FALSIFIED |
 | 4 | value_pb_csi300 | pure-PB value vs tradeable index (reframe) [bench:csi300] | +2.957 | 0.636 | 1.13 | daily | — | PASS |
 | 5 | value_pb_deploy_m | deploy-hardened value (roe>0 + liq>=50M floor) monthly vs index [bench:csi300] [reb20] | +2.795 | 0.512 | 1.13 | daily | — | PASS |
+| 6 | value_pb_sn_m | sector-neutral value (top-3 per industry) vs index [bench:csi300] [reb20] [sector-neutral] | +2.585 | 0.806 | 0.89 | daily | — | PASS |
