@@ -5,7 +5,7 @@
 分层回测(Tier-1 gross/net + train/OOS；过门才 Tier-2 敏感性) + 过拟合自动旗标 + 裁决
 + 账本追加 + 轮卡打印。脚本只执行+记录+护栏，不改树/不调参凑数(§5.3)。
 """
-import argparse, json, os, sys, time
+import argparse, bisect, csv, json, os, sys, time
 try:
     sys.stdout.reconfigure(encoding="utf-8")
 except Exception:
@@ -64,6 +64,52 @@ def judge(g, n, sweep):
     metrics = {"gross_ex": gx, "net_ex": nx, "net_oos_ex": oos, "net_train_ex": tr,
                "net_sharpe": nsh, "break_even": be}
     return ("PASS" if passed else "FALSIFIED"), flags, metrics
+
+
+# ---------------------------------------------------------------------------
+# 换框架：对可交易宽基指数重算超额（vs-EW → vs-index），剥离等权小盘 beta
+# ---------------------------------------------------------------------------
+INDEX_DIR = os.path.join(de.REPO_ROOT, "data", "baostock", "index")
+
+
+def load_index(name):
+    """读 data/baostock/index/<name>.csv（time,close）→ ({date: close}, sorted_dates)。"""
+    m = {}
+    with open(os.path.join(INDEX_DIR, f"{name}.csv"), encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            m[row["time"][:10]] = float(row["close"])
+    return m, sorted(m)
+
+
+def _idx_at(m, dates, d):
+    """指数在日期 d 的收盘（取 ≤d 最近交易日）。"""
+    i = bisect.bisect_right(dates, d) - 1
+    return m[dates[i]] if i >= 0 else None
+
+
+def to_index_relative(report, m, dates):
+    """从 screen 报告的 nav 曲线(holdings) + 指数序列重算超额(vs index)。
+    返回 report-like dict（excess_return/risk/regime_slices/total_return…）供 judge 复用。
+    risk(绝对 Sharpe) 原样透传；超额改 vs 指数。regime 窗口取自报告 regime_slices 的 from/to。"""
+    nav = [(h["t"][:10], h["nav"]) for h in report.get("holdings", []) if h.get("nav", 0) > 0]
+    if len(nav) < 2:
+        return None
+    strat_total = nav[-1][1] / nav[0][1] - 1.0
+    i0, iN = _idx_at(m, dates, nav[0][0]), _idx_at(m, dates, nav[-1][0])
+    idx_total = (iN / i0 - 1.0) if (i0 and iN) else None
+    excess = (strat_total - idx_total) if idx_total is not None else None
+    slices = []
+    for s in report.get("regime_slices", []):
+        fr, to = s.get("from"), s.get("to")
+        sub = [(d, v) for d, v in nav if fr <= d <= to]
+        if len(sub) >= 2:
+            sr = sub[-1][1] / sub[0][1] - 1.0
+            x0, x1 = _idx_at(m, dates, sub[0][0]), _idx_at(m, dates, sub[-1][0])
+            ex = (sr - (x1 / x0 - 1.0)) if (x0 and x1) else None
+            slices.append({"label": s["label"], "excess": ex})
+    return {"excess_return": excess, "risk": report.get("risk"), "regime_slices": slices,
+            "total_return": strat_total, "max_drawdown": report["max_drawdown"],
+            "turnover": report["turnover"], "n_rebalances": report["n_rebalances"]}
 
 
 # ---------------------------------------------------------------------------
@@ -129,19 +175,26 @@ def _screen(cfg, cost, a, top, reb, out, uni):
         return json.load(f)
 
 
-def tier2_sweep(cfg, axis, label):
-    """敏感性：top∈{30,50,100} × reb∈{1,5} 各跑 net，收集净超额（检符号翻转）。"""
+def tier2_sweep(cfg, axis, label, bench=None):
+    """敏感性：top∈{30,50,100} × reb∈{1,5} 各跑 net，收集净超额（检符号翻转）。
+    bench 给定时超额改 vs 指数（与主裁决同口径）。"""
     a = AXES[axis]
     uni = os.path.join(de.REPO_ROOT, a["universe"])
+    idx = load_index(bench) if bench else None
     out = []
     for top in (30, 50, 100):
         for reb in (1, 5):
             o = os.path.join(de.RUNS, f"iter_{label}_s{top}_{reb}.json")
-            out.append(_screen(cfg, COST, a, top, reb, o, uni)["excess_return"])
+            rep = _screen(cfg, COST, a, top, reb, o, uni)
+            if idx:
+                ir = to_index_relative(rep, *idx)
+                out.append(ir["excess_return"] if ir else None)
+            else:
+                out.append(rep["excess_return"])
     return out
 
 
-def card(rnd, label, axis, note, top, g, n, a, verdict, flags, m, sweep, prior):
+def card(rnd, label, axis, note, top, g, n, a, verdict, flags, m, sweep, prior, bench=None, ew=None):
     def f(x):
         return "—" if x is None else f"{x:+.4f}"
 
@@ -152,9 +205,11 @@ def card(rnd, label, axis, note, top, g, n, a, verdict, flags, m, sweep, prior):
     gsh = (g.get("risk") or {}).get("sharpe")
     nreb = max(n.get("n_rebalances", 0), 1)
     one_side = n.get("turnover", 0.0) / nreb / 2.0
+    bench_lbl = f"index:{bench}" if bench else "universe-EW"
     L = [f"=== ITER round {rnd} · {label} (axis={axis}) ===",
          f"hypothesis : {note}",
          f"universe   : {os.path.basename(a['universe'])}   {a['regimes_hint']}   top {top}   cost {int(COST)}bps",
+         f"benchmark  : {bench_lbl}" + (f"   (excess below is vs {bench}; turnover/maxDD/sharpe are strategy-absolute)" if bench else ""),
          f"{'':10}{'gross':>11}{'net':>11}",
          f"{'total':10}{g['total_return']:>+11.4f}{n['total_return']:>+11.4f}",
          f"{'excess':10}{g['excess_return']:>+11.4f}{n['excess_return']:>+11.4f}",
@@ -162,6 +217,8 @@ def card(rnd, label, axis, note, top, g, n, a, verdict, flags, m, sweep, prior):
          f"{'maxDD':10}{g['max_drawdown']:>11.4f}{n['max_drawdown']:>11.4f}",
          f"turnover/d {one_side*100:.1f}%   break-even {('%.0fbps' % m['break_even']) if m['break_even'] else 'N/A(gross<=0)'}",
          f"regime net excess : train {f(m['net_train_ex'])} | OOS {f(m['net_oos_ex'])}"]
+    if ew is not None:
+        L.append(f"(ref) vs-EW excess : gross {f(ew[0])} | net {f(ew[1])}")
     if sweep is not None:
         L.append(f"tier2 net-excess (top30/50/100 x reb1/5): {[round(x, 3) for x in sweep]}  sign-flip={detect_sign_flip(sweep)}")
     L += [f"flags   : {flags or ['none']}",
@@ -171,10 +228,10 @@ def card(rnd, label, axis, note, top, g, n, a, verdict, flags, m, sweep, prior):
     return "\n".join(L)
 
 
-def append_ledger(rnd, label, note, axis, verdict, flags, m):
+def append_ledger(rnd, label, note, axis, verdict, flags, m, bench=None):
     os.makedirs(os.path.dirname(LEDGER_JSONL), exist_ok=True)
     rec = {"round": rnd, "label": label, "axis": axis, "note": note,
-           "verdict": verdict, "flags": flags, **m}
+           "benchmark": bench or "EW", "verdict": verdict, "flags": flags, **m}
     with open(LEDGER_JSONL, "a", encoding="utf-8") as fp:
         fp.write(json.dumps(rec, ensure_ascii=False) + "\n")
     oos = m["net_oos_ex"]
@@ -194,20 +251,32 @@ def main():
     ap.add_argument("--axis", default="daily", choices=list(AXES))
     ap.add_argument("--label", default=None)
     ap.add_argument("--top", type=int, default=50)
+    ap.add_argument("--benchmark", default=None, choices=["csi300", "csi500", "csi1000"],
+                    help="换框架：对可交易宽基指数算超额(剥离等权小盘 beta)；缺省=universe 等权")
     a = ap.parse_args()
     label = a.label or os.path.splitext(os.path.basename(a.config))[0]
     rnd = _next_round()
     prior = _prior_best_oos()
     g, n, ax = run(a.config, a.axis, a.top, label)
+    bench = a.benchmark
+    ew = None
+    if bench:                                           # 换框架：超额改 vs 指数
+        idx = load_index(bench)
+        ew = (g["excess_return"], n["excess_return"])   # 透明：保留 vs-EW 供参考
+        gi, ni = to_index_relative(g, *idx), to_index_relative(n, *idx)
+        if gi is None or ni is None:
+            raise SystemExit("index-relative conversion failed (nav curve too short)")
+        g, n = gi, ni
     v0, flags0, m = judge(g, n, sweep=None)            # Tier-1
     sweep = None
     if v0 == "PASS":                                    # Tier-2 仅过 OOS 门触发
-        sweep = tier2_sweep(a.config, a.axis, label)
+        sweep = tier2_sweep(a.config, a.axis, label, bench)
         v, flags, _ = judge(g, n, sweep)
     else:
         v, flags = v0, flags0
-    print(card(rnd, label, a.axis, a.note, a.top, g, n, ax, v, flags, m, sweep, prior))
-    append_ledger(rnd, label, a.note, a.axis, v, flags, m)
+    note_led = a.note + (f" [bench:{bench}]" if bench else "")
+    print(card(rnd, label, a.axis, a.note, a.top, g, n, ax, v, flags, m, sweep, prior, bench, ew))
+    append_ledger(rnd, label, note_led, a.axis, v, flags, m, bench)
 
 
 if __name__ == "__main__":
