@@ -234,6 +234,18 @@ def card(rnd, label, axis, note, top, g, n, a, verdict, flags, m, sweep, prior, 
     return "\n".join(L)
 
 
+def write_round_sidecar(iter_dir, rnd, label, bench, reb, config_path, tier2_cells):
+    """写 .iter/round_<rnd>.json 供 GUI round card 读取(tier2 cells + 配置路径)。纯持久化,不影响裁决。"""
+    import json, os
+    os.makedirs(iter_dir, exist_ok=True)
+    path = os.path.join(iter_dir, f"round_{rnd}.json")
+    rec = {"round": rnd, "label": label, "benchmark": bench or "EW", "rebalance": reb,
+           "config_path": config_path, "tier2": tier2_cells}
+    with open(path, "w", encoding="utf-8") as fp:
+        json.dump(rec, fp, ensure_ascii=False, indent=2)
+    return path
+
+
 def append_ledger(rnd, label, note, axis, verdict, flags, m, bench=None, reb=1):
     os.makedirs(os.path.dirname(LEDGER_JSONL), exist_ok=True)
     rec = {"round": rnd, "label": label, "axis": axis, "note": note,
@@ -288,6 +300,15 @@ def main():
                 + (" [sector-neutral]" if sectors else ""))
     print(card(rnd, label, a.axis, a.note, a.top, g, n, ax, v, flags, m, sweep, prior, bench, ew, a.rebalance))
     append_ledger(rnd, label, note_led, a.axis, v, flags, m, bench, a.rebalance)
+    try:
+        _TIER2_GRID = [(t, r) for t in (30, 50, 100) for r in (1, 5)]
+        tier2_cells = ([{"top": t, "rebalance": r, "net_excess": x}
+                        for (t, r), x in zip(_TIER2_GRID, sweep)]
+                       if sweep is not None else [])
+        write_round_sidecar(os.path.dirname(LEDGER_JSONL), rnd, label, bench,
+                            a.rebalance, a.config, tier2_cells)
+    except Exception as _e:
+        print(f"[warn] sidecar write failed (non-fatal): {_e}", file=sys.stderr)
 
 
 if __name__ == "__main__":

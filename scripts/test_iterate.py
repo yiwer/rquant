@@ -72,6 +72,17 @@ def test_to_index_relative():
     assert out["risk"]["sharpe"] == 1.0
 
 
+def test_round_sidecar_shape(tmp_path):
+    import iterate
+    cells = [{"top": 50, "rebalance": 1, "net_excess": 0.64}]
+    p = iterate.write_round_sidecar(str(tmp_path), 4, "value_pb", "csi300", 1,
+                                    "examples/screen/iter/value_pb_base.yaml", cells)
+    import json
+    d = json.loads(open(p, encoding="utf-8").read())
+    assert d["round"] == 4 and d["config_path"].endswith("value_pb_base.yaml")
+    assert d["tier2"][0]["net_excess"] == 0.64 and d["benchmark"] == "csi300"
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
