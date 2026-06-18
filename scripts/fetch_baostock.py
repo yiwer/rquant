@@ -7,7 +7,7 @@ time 统一 "YYYY-MM-DD HH:MM:SS"（日线 15:00:00）。resume 跳过已存在�
 仅在收盘后/数据稳定时联网跑。
 """
 import argparse, os, socket, sys, time
-socket.setdefaulttimeout(90)  # baostock 查询无超时 → 单股网络挂死会冻结整体；90s 超时使其变可重试异常
+socket.setdefaulttimeout(60)  # baostock 查询无超时 → 单股网络挂死会冻结整体；60s 超时使其变可重试异常
 import baostock as bs
 import pandas as pd
 
@@ -130,6 +130,12 @@ def main():
             ok += 1
         if i % 10 == 0 or i == len(syms):
             print(f"  [{i}/{len(syms)}] ok={ok} skip={skip} fail={fail}", flush=True)
+        if i % 100 == 0:  # 周期性重登录，尝试重置 baostock 会话级限流
+            try:
+                bs.logout()
+            except Exception:
+                pass
+            _login()
     bs.logout()
     if failed:
         print("failed(first 20):", ", ".join(f"{s}({m})" for s, m in failed[:20]))
