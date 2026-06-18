@@ -1,0 +1,14 @@
+# 质量(ROE)横截面 tilt：sigmoid(fund.roe/scale)，ROE 越高分越高（roe 为百分数，15=15%）。
+# 仅作 value_frac 两段的第二段 tilt（在价值池内按质量排序），非独立选股器。
+meta: { name: roe_xs, forward_window: 20, stances: [long, flat] }
+params: { roe_scale: 20 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.roe > 0", goto: q, label: profitable }
+    default: { goto: flat, label: flat }
+leaves:
+  q: { stance: long, weight: "sigmoid(fund.roe / roe_scale)" }
+  flat: { stance: flat }

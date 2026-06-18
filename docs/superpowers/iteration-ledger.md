@@ -49,6 +49,7 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 - **value×低波**(双防御)：毛−0.62/净−1.14——更防御但无超额；低波 tilt 反推高换手。
 - **value 池内反转**：毛−1.56/净−1.95——便宜跌者=续跌价值陷阱，价值地板救不了反转。
 - **价值+长趋势 / 价值×动量 / 质量(ROE) / 成长 / PE / PE+PB**：27 轮全证伪（OOS 超额≤0 或成本墙）。对应树 `value_longtrend/value_pb_trend/quality_v1/value_pe/value_pepb/value_roe`。
+- **value ∩ quality（Greenblatt，round 3）**：便宜 30% PB 池内按 ROE 取 top-50，**净超额 −2.39 / 净 OOS −1.13 证伪**。最干净防御画像（净 Sharpe 0.72、换手 3.6%、回撤 0.28、train 近平 −0.15）但仍 lag 强基准；**质量倾斜浓缩大盘价值 → OOS(2024-26 小盘暴动)比纯价值 −0.66 更落后**。质量在价值之上不添 OOS alpha。树 `value_pb`+`roe_xs`。
 
 ### 日内微结构类（日内轴，6mo/sina/幸存者，**无 OOS**）
 - **6 因子 × 正反两向 = 12 全证伪**：last_leg 尾盘动量 / intraday_rev 日内反转 / close_vs_vwap 收盘强度 / intraday_range 日内波幅 / vol_tilt 量能后移 / overnight 隔夜跳空。唯二净微正者前后半翻号(非稳健) + break-even<2×成本。
@@ -77,3 +78,4 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 |---|---|---|---|---|---|---|---|---|
 | 1 | value_pb_base | baseline: pure-PB value defensive (smoke) | -1.184 | -0.659 | 1.13 | daily | gross-excess<=0,net-OOS<=0,in-sample-only,break-even<40bps | FALSIFIED |
 | 2 | corr_pv_hi | corr_pv hi: select top-50 by price-volume correlation (volume confirms price) | -5.035 | -1.599 | -0.36 | daily | gross-excess<=0,net-OOS<=0,net-sharpe<=0,break-even<40bps | FALSIFIED |
+| 3 | value_quality_and | value AND quality (Greenblatt): cheapest 30% PB, then top-50 by ROE | -2.394 | -1.134 | 0.72 | daily | gross-excess<=0,net-OOS<=0,break-even<40bps | FALSIFIED |

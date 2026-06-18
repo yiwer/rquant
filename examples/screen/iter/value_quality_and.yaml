@@ -1,0 +1,12 @@
+# round 3: 多因子 AND 共识（value ∩ quality，Greenblatt 风格）。
+# value_frac 两段：先按 value_pb 取最便宜 30%（价值闸），池内按 roe_xs 质量(ROE) tilt 取 top-50。
+# 假设：便宜 AND 高质双优股，比单纯便宜(round 1)多出质量 alpha、跑出正净 OOS 超额。
+# 机制有别于已证伪的 value×momentum（连乘倾斜，动量害价值）——这里第二轴是基本面质量。
+quality_trees: [examples/trees/screen/value_pb.yaml]
+setup_trees:
+  质量: [examples/trees/screen/roe_xs.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 1.0, tilt_setups: ["质量"], quality_layers: 5 }
+value_frac: 0.3
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }
