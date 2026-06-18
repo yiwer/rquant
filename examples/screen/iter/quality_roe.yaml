@@ -1,0 +1,9 @@
+# round 7: 纯质量(高 ROE)选股 vs 可交易指数。delta：换框架后价值跑赢指数，质量(ROE)是否也跑赢？
+# 此前"质量证伪"皆 vs 等权全集；vs CSI300 从未测。quality=roe_xs(sigmoid(roe/20))，λ=0，top-50。
+quality_trees: [examples/trees/screen/roe_xs.yaml]
+setup_trees:
+  inert: [examples/trees/screen/momentum_xs.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["inert"], quality_layers: 5 }
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }
