@@ -130,12 +130,6 @@ def main():
             ok += 1
         if i % 10 == 0 or i == len(syms):
             print(f"  [{i}/{len(syms)}] ok={ok} skip={skip} fail={fail}", flush=True)
-        if i % 100 == 0:  # 周期性重登录，尝试重置 baostock 会话级限流
-            try:
-                bs.logout()
-            except Exception:
-                pass
-            _login()
     bs.logout()
     if failed:
         print("failed(first 20):", ", ".join(f"{s}({m})" for s, m in failed[:20]))
