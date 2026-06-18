@@ -10,8 +10,9 @@ import glob, os, subprocess, sys, time
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 K15M = os.path.join(REPO, "data", "baostock", "k15m")
 LOG = os.path.join(REPO, "data", "baostock", "fetch.log")
-POLL = 90       # 查询间隔秒
-STALL = 360     # 无新增超过此秒数 → 判停滞重启（单股最长~60s 超时，360s 不会误杀）
+POLL = 90        # 查询间隔秒
+STALL = 360      # 每个 STALL 窗口评估一次增长
+MIN_GROWTH = 4   # STALL 窗口内新增 < 此 → 判停滞/限频爬行并重启（健康 ~40s/股→360s 约+9；<4=异常）
 MAX_RESTARTS = 500
 
 
@@ -26,18 +27,19 @@ def main():
         f.write(f"\n[watchdog] === start fetch (restart #{restarts}) count={count()} ===\n"); f.flush()
         p = subprocess.Popen([sys.executable, os.path.join(REPO, "scripts", "fetch_baostock.py")],
                              stdout=f, stderr=subprocess.STDOUT, cwd=REPO)
-        last, last_prog = count(), time.time()
+        win_count, win_time = count(), time.time()
         reason = None
         while True:
             time.sleep(POLL)
             rc = p.poll()
-            c = count()
-            if c > last:
-                last, last_prog = c, time.time()
             if rc is not None:
                 reason = "exited"; break
-            if time.time() - last_prog > STALL:
-                p.kill(); reason = "stall"; break
+            now = time.time()
+            if now - win_time >= STALL:  # 每窗评估增长；<MIN_GROWTH 视为停滞/爬行
+                c = count()
+                if c - win_count < MIN_GROWTH:
+                    p.kill(); reason = f"slow(+{c - win_count}/{int(STALL)}s)"; break
+                win_count, win_time = c, now
         f.write(f"[watchdog] subprocess {reason} at count={count()}\n"); f.close()
         if reason == "exited":
             tail = open(LOG, encoding="utf-8", errors="replace").read()[-800:]
