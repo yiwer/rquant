@@ -12,7 +12,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::backtest::portfolio::{
-    accrue, build_timeline, last_close_at, score_symbol, select_top, turnover_between,
+    accrue, build_timeline, last_close_at, score_symbol, select_top, select_top_per_sector,
+    turnover_between,
 };
 use crate::screen::combine::{combine, MergeParams};
 use crate::screen::config::load_screen_config;
@@ -95,6 +96,8 @@ pub struct ScreenBacktestConfig {
     /// Point-in-time membership CSV (date,symbol); when set, each rebalance restricts candidates
     /// to symbols effective at that date (survivorship-free top-2000 mask). None → no restriction.
     pub membership_path: Option<PathBuf>,
+    /// symbol→行业 CSV；配 config.merge.per_sector=Some(k) 时行业中性选股（每行业 top-k）。None → 全局。
+    pub sectors_path: Option<PathBuf>,
 }
 
 /// 单标的、单调仓点的多树合并结果（内部 helper）。
@@ -188,6 +191,8 @@ pub async fn run_screen_backtest(
     }
     let membership = cfg.membership_path.as_ref()
         .map(|p| crate::data::membership::Membership::load_csv(p)).transpose()?;
+    let sectors = cfg.sectors_path.as_ref()
+        .map(|p| crate::screen::load_sector_map(p)).transpose()?.unwrap_or_default();
     let aux: BTreeMap<String, AuxTable> = BTreeMap::new();
 
     let full = build_timeline(&primaries);
@@ -243,7 +248,9 @@ pub async fn run_screen_backtest(
                 evals.insert(e.symbol.clone(), ev);
             }
         }
-        let selected = if let Some(f) = value_frac {
+        let selected = if let Some(k) = sc.merge.per_sector {
+            select_top_per_sector(&scores, &sectors, k) // 行业中性：每行业 top-k（忽略 top/value_frac）
+        } else if let Some(f) = value_frac {
             let qv: Vec<(String, f64)> = evals.iter().map(|(s, e)| (s.clone(), e.quality)).collect();
             let keep = ((f * qv.len() as f64).ceil() as usize).max(1);
             let cheap = select_top(&qv, keep);
@@ -489,6 +496,7 @@ leaves: { l: { stance: long, weight: 1.0 }, f: { stance: flat } }
             config_path: cfg_f.path().to_path_buf(), universe_path: univ.path().to_path_buf(),
             from: None, to: None, rebalance: 4, top: None, warmup: 5, window: 10, cost_bps: 10.0, soft: false, out_path: None,
             membership_path: None,
+            sectors_path: None,
         };
         let r = run_screen_backtest(&cfg, &LlmEvaluator::Disabled).await.unwrap();
         let mom = r.tag_attribution.iter().find(|a| a.tag == "动量延续").expect("动量延续 attribution present");
@@ -516,6 +524,7 @@ leaves: { l: { stance: long, weight: 1.0 }, f: { stance: flat } }
             config_path: cfg_f.path().to_path_buf(), universe_path: univ.path().to_path_buf(),
             from: None, to: None, rebalance: 4, top: None, warmup: 5, window: 10, cost_bps: 10.0, soft: false, out_path: None,
             membership_path: None,
+            sectors_path: None,
         };
         let r = run_screen_backtest(&cfg, &LlmEvaluator::Disabled).await.unwrap();
         let slice = r.regime_slices.iter().find(|s| s.label == "full").expect("regime slice present");
@@ -546,6 +555,7 @@ leaves: { l: { stance: long, weight: 1.0 }, f: { stance: flat } }
             rebalance: 4, top: None, warmup: 5, window: 10, cost_bps: 10.0, soft: false,
             out_path: None,
             membership_path: None,
+            sectors_path: None,
         };
         let r = run_screen_backtest(&cfg, &LlmEvaluator::Disabled).await.unwrap();
         assert!(r.n_rebalances >= 2);
@@ -576,6 +586,7 @@ leaves: { l: { stance: long, weight: 1.0 }, f: { stance: flat } }
             config_path: cfg_f.path().to_path_buf(), universe_path: univ.path().to_path_buf(),
             from: None, to: None, rebalance: 4, top: None, warmup: 5, window: 10, cost_bps: 10.0, soft: false, out_path: None,
             membership_path: None,
+            sectors_path: None,
         };
         let r = run_screen_backtest(&cfg, &LlmEvaluator::Disabled).await.unwrap();
         assert!(!r.quality_layers.is_empty(), "quality layers should be computed");
@@ -611,6 +622,7 @@ leaves: { l: { stance: long, weight: "1 / (1 + close/fund.bps)" }, f: { stance: 
             config_path: cfg_f.path().to_path_buf(), universe_path: univ.path().to_path_buf(),
             from: None, to: None, rebalance: 4, top: None, warmup: 5, window: 10, cost_bps: 0.0, soft: false, out_path: None,
             membership_path: None,
+            sectors_path: None,
         };
         let r = run_screen_backtest(&cfg, &LlmEvaluator::Disabled).await.unwrap();
         assert!(r.avg_members > 0.0, "value tree using fund.bps must score (fundamentals threaded)");
@@ -647,6 +659,7 @@ leaves: { l: { stance: long, weight: "sigmoid((close/ref(close,2) - 1) * 50)" },
             config_path: cfg_f.path().to_path_buf(), universe_path: univ.path().to_path_buf(),
             from: None, to: None, rebalance: 4, top: None, warmup: 5, window: 10, cost_bps: 0.0, soft: false, out_path: None,
             membership_path: None,
+            sectors_path: None,
         };
         let r = run_screen_backtest(&cfg, &LlmEvaluator::Disabled).await.unwrap();
         for h in &r.holdings {
@@ -675,6 +688,7 @@ leaves: { l: { stance: long, weight: "sigmoid((close/ref(close,2) - 1) * 50)" },
             config_path: cfg_f.path().to_path_buf(), universe_path: univ.path().to_path_buf(),
             from: None, to: None, rebalance: 4, top: None, warmup: 5, window: 10, cost_bps: 0.0, soft: false, out_path: None,
             membership_path: Some(mem.path().to_path_buf()),
+            sectors_path: None,
         };
         let r = run_screen_backtest(&cfg, &LlmEvaluator::Disabled).await.unwrap();
         for h in &r.holdings {

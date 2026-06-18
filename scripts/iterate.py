@@ -151,37 +151,39 @@ def _prior_best_oos():
     return best
 
 
-def run(cfg, axis, top, label, reb=1):
-    """Tier-1：gross(0) + net(COST)。reb=1 复用 daily_eval.run_once；reb≠1 走 _screen（部署节奏）。"""
+def run(cfg, axis, top, label, reb=1, sectors=None):
+    """Tier-1：gross(0) + net(COST)。reb=1 且无 sectors 复用 run_once；否则走 _screen（部署节奏/行业中性）。"""
     a = AXES[axis]
     uni = os.path.join(de.REPO_ROOT, a["universe"])
     os.makedirs(de.RUNS, exist_ok=True)
     g_out = os.path.join(de.RUNS, f"iter_{label}_gross.json")
     n_out = os.path.join(de.RUNS, f"iter_{label}_net.json")
-    if reb == 1:
+    if reb == 1 and not sectors:
         g = de.run_once(cfg, 0.0, a["frm"], a["to"], a["warmup"], a["window"], top, g_out, uni, "none")
         n = de.run_once(cfg, COST, a["frm"], a["to"], a["warmup"], a["window"], top, n_out, uni, "none")
     else:
-        g = _screen(cfg, 0.0, a, top, reb, g_out, uni)
-        n = _screen(cfg, COST, a, top, reb, n_out, uni)
+        g = _screen(cfg, 0.0, a, top, reb, g_out, uni, sectors)
+        n = _screen(cfg, COST, a, top, reb, n_out, uni, sectors)
     return g, n, a
 
 
-def _screen(cfg, cost, a, top, reb, out, uni):
-    """直接调引擎（支持 --rebalance 扫描，run_once 固定 reb=1 故不可复用）。"""
+def _screen(cfg, cost, a, top, reb, out, uni, sectors=None):
+    """直接调引擎（支持 --rebalance 扫描 + --sectors 行业中性，run_once 不支持故不可复用）。"""
     import subprocess
     cmd = [de.BIN, "screen", "--backtest", "--universe", uni, "--config", cfg,
            "--rebalance", str(reb), "--warmup", str(a["warmup"]), "--window", str(a["window"]),
            "--cost-bps", str(cost), "--from", a["frm"], "--to", a["to"], "--top", str(top), "--out", out]
+    if sectors:
+        cmd += ["--sectors", sectors]
     subprocess.run(cmd, cwd=de.REPO_ROOT, stdout=subprocess.DEVNULL,
                    stderr=subprocess.PIPE, encoding="utf-8", errors="replace")
     with open(out, encoding="utf-8") as f:
         return json.load(f)
 
 
-def tier2_sweep(cfg, axis, label, bench=None):
+def tier2_sweep(cfg, axis, label, bench=None, sectors=None):
     """敏感性：top∈{30,50,100} × reb∈{1,5} 各跑 net，收集净超额（检符号翻转）。
-    bench 给定时超额改 vs 指数（与主裁决同口径）。"""
+    bench 给定时超额改 vs 指数（与主裁决同口径）；sectors 给定时行业中性(per_sector 来自配置)。"""
     a = AXES[axis]
     uni = os.path.join(de.REPO_ROOT, a["universe"])
     idx = load_index(bench) if bench else None
@@ -189,7 +191,7 @@ def tier2_sweep(cfg, axis, label, bench=None):
     for top in (30, 50, 100):
         for reb in (1, 5):
             o = os.path.join(de.RUNS, f"iter_{label}_s{top}_{reb}.json")
-            rep = _screen(cfg, COST, a, top, reb, o, uni)
+            rep = _screen(cfg, COST, a, top, reb, o, uni, sectors)
             if idx:
                 ir = to_index_relative(rep, *idx)
                 out.append(ir["excess_return"] if ir else None)
@@ -258,11 +260,13 @@ def main():
     ap.add_argument("--benchmark", default=None, choices=["csi300", "csi500", "csi1000"],
                     help="换框架：对可交易宽基指数算超额(剥离等权小盘 beta)；缺省=universe 等权")
     ap.add_argument("--rebalance", type=int, default=1, help="调仓间隔(bar)；1=日频(默认)，5≈周，20≈月(部署节奏)")
+    ap.add_argument("--sectors", default=None, help="行业中性：symbol→行业 CSV(配 config merge.per_sector=k)")
     a = ap.parse_args()
     label = a.label or os.path.splitext(os.path.basename(a.config))[0]
+    sectors = os.path.join(de.REPO_ROOT, a.sectors) if (a.sectors and not os.path.isabs(a.sectors)) else a.sectors
     rnd = _next_round()
     prior = _prior_best_oos()
-    g, n, ax = run(a.config, a.axis, a.top, label, a.rebalance)
+    g, n, ax = run(a.config, a.axis, a.top, label, a.rebalance, sectors)
     bench = a.benchmark
     ew = None
     if bench:                                           # 换框架：超额改 vs 指数
@@ -275,11 +279,13 @@ def main():
     v0, flags0, m = judge(g, n, sweep=None)            # Tier-1
     sweep = None
     if v0 == "PASS":                                    # Tier-2 仅过 OOS 门触发
-        sweep = tier2_sweep(a.config, a.axis, label, bench)
+        sweep = tier2_sweep(a.config, a.axis, label, bench, sectors)
         v, flags, _ = judge(g, n, sweep)
     else:
         v, flags = v0, flags0
-    note_led = a.note + (f" [bench:{bench}]" if bench else "") + (f" [reb{a.rebalance}]" if a.rebalance != 1 else "")
+    note_led = (a.note + (f" [bench:{bench}]" if bench else "")
+                + (f" [reb{a.rebalance}]" if a.rebalance != 1 else "")
+                + (" [sector-neutral]" if sectors else ""))
     print(card(rnd, label, a.axis, a.note, a.top, g, n, ax, v, flags, m, sweep, prior, bench, ew, a.rebalance))
     append_ledger(rnd, label, note_led, a.axis, v, flags, m, bench, a.rebalance)
 

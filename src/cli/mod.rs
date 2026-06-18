@@ -279,6 +279,9 @@ enum Cmd {
         /// Point-in-time universe membership CSV (date,symbol); restrict each rebalance/as-of to that date's members
         #[arg(long)]
         membership: Option<PathBuf>,
+        /// symbol->industry CSV; with config merge.per_sector=k, selects top-k per industry (sector-neutral)
+        #[arg(long)]
+        sectors: Option<PathBuf>,
     },
     /// Walk-forward parameter optimization (grid x anchored-expanding IS -> OS)
     Optimize {
@@ -673,6 +676,7 @@ pub async fn main() -> anyhow::Result<()> {
         Cmd::Screen {
             universe, config, backtest, as_of, from, to, top, rebalance,
             warmup, window, cost_bps, soft, out, llm_model, llm_base_url, llm_cache_dir, membership,
+            sectors,
         } => {
             let llm = build_llm(llm_model, llm_base_url, llm_cache_dir)?;
             let parse_date = |o: Option<String>| -> crate::Result<Option<chrono::NaiveDate>> {
@@ -697,6 +701,7 @@ pub async fn main() -> anyhow::Result<()> {
                     soft,
                     out_path: out,
                     membership_path: membership.clone(),
+                    sectors_path: sectors.clone(),
                 };
                 let report = crate::screen::backtest::run_screen_backtest(&bcfg, &llm).await?;
                 crate::screen::backtest::print_screen_backtest(&report);
@@ -709,6 +714,7 @@ pub async fn main() -> anyhow::Result<()> {
                     window,
                     out_path: out,
                     membership_path: membership,
+                    sectors_path: sectors,
                 };
                 let result = crate::screen::run_screen(&rcfg, &llm).await?;
                 crate::screen::print_screen(&result);

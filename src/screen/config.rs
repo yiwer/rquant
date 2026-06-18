@@ -26,6 +26,10 @@ pub struct MergeConfig {
     /// 参与选股倾斜的形态标签（其余形态仅标注不倾斜）。
     #[serde(default = "default_tilt_setups")]
     pub tilt_setups: Vec<String>,
+    /// 行业中性：Some(k)=每行业内取 top-k（个股等权，压低单行业集中度）；None=全局 select_top（默认）。
+    /// 需配 CLI --sectors 提供 symbol→行业映射；置位时忽略 top/value_frac。
+    #[serde(default)]
+    pub per_sector: Option<usize>,
 }
 
 fn default_theta_fire() -> f64 { 0.5 }
@@ -46,6 +50,7 @@ impl Default for MergeConfig {
             quality_layers: default_layers(),
             lambda: default_lambda(),
             tilt_setups: default_tilt_setups(),
+            per_sector: None,
         }
     }
 }

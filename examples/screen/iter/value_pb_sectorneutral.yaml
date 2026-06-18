@@ -1,0 +1,10 @@
+# 行业中性价值：每行业内按便宜度取 top-K（per_sector），剥离行业配置效应，纯测板块内选股。
+# 用 value_pb_deploy 树（便宜PB + 盈利/流动性地板）；merge.per_sector=3 → 每行业 top-3 等权。
+# 需 CLI --sectors data/baostock/sector_membership.csv。验证：行业中性后保住"选择半"超额、降 regime 依赖。
+quality_trees: [examples/trees/screen/value_pb_deploy.yaml]
+setup_trees:
+  inert: [examples/trees/screen/momentum_xs.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["inert"], quality_layers: 5, per_sector: 3 }
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }

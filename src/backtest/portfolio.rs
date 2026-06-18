@@ -6,7 +6,7 @@ use crate::Result;
 use crate::Error;
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -42,6 +42,32 @@ pub fn select_top(scores: &[(String, f64)], n: usize) -> Vec<(String, f64)> {
     pos.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal).then(a.0.cmp(&b.0)));
     pos.truncate(n);
     pos
+}
+
+/// 行业中性选股：每个行业内 score>0 取前 k（同 select_top 排序），再汇总（再按 score 降序/symbol 升序）。
+/// `sectors` 为 symbol→行业；不在映射中的标的归入单一 "__none__" 组（保守，不给未分类无限名额）。
+/// 等权在下游（1/选中数）；行业权重 ∝ 该行业入选数(≤k) → 压低单一行业(如金融)集中度。
+pub fn select_top_per_sector(
+    scores: &[(String, f64)],
+    sectors: &HashMap<String, String>,
+    k: usize,
+) -> Vec<(String, f64)> {
+    let cmp = |a: &(String, f64), b: &(String, f64)| {
+        b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal).then(a.0.cmp(&b.0))
+    };
+    let mut groups: BTreeMap<String, Vec<(String, f64)>> = BTreeMap::new();
+    for (sym, s) in scores.iter().filter(|(_, s)| *s > 0.0) {
+        let sec = sectors.get(sym).cloned().unwrap_or_else(|| "__none__".to_string());
+        groups.entry(sec).or_default().push((sym.clone(), *s));
+    }
+    let mut out: Vec<(String, f64)> = Vec::new();
+    for (_, mut v) in groups {
+        v.sort_by(&cmp);
+        v.truncate(k);
+        out.extend(v);
+    }
+    out.sort_by(&cmp);
+    out
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -548,6 +574,39 @@ mod tests {
     fn select_top_empty_scores() {
         let top = select_top(&[], 5);
         assert!(top.is_empty());
+    }
+
+    // ── select_top_per_sector（行业中性）──────────────────────────────────────
+
+    #[test]
+    fn select_top_per_sector_caps_each_sector() {
+        let scores = vec![
+            ("a".to_string(), 0.9), ("b".to_string(), 0.8), ("c".to_string(), 0.7), // 行业 X
+            ("d".to_string(), 0.95), ("e".to_string(), 0.6),                          // 行业 Y
+            ("f".to_string(), -0.1),                                                  // 负分→剔除
+        ];
+        let mut sec = HashMap::new();
+        for s in ["a", "b", "c", "f"] { sec.insert(s.to_string(), "X".to_string()); }
+        for s in ["d", "e"] { sec.insert(s.to_string(), "Y".to_string()); }
+        let out = select_top_per_sector(&scores, &sec, 2);
+        let syms: Vec<&str> = out.iter().map(|(s, _)| s.as_str()).collect();
+        // X 内 top-2 = a,b（c 落选、f 负分）；Y 内 top-2 = d,e；汇总按分降序 → d,a,b,e
+        assert_eq!(syms, vec!["d", "a", "b", "e"]);
+    }
+
+    #[test]
+    fn select_top_per_sector_unmapped_pooled_and_k1() {
+        let scores = vec![
+            ("a".to_string(), 0.9), ("b".to_string(), 0.8),  // 行业 X
+            ("u".to_string(), 0.7), ("v".to_string(), 0.5),  // 未分类 → __none__ 同组
+        ];
+        let mut sec = HashMap::new();
+        sec.insert("a".to_string(), "X".to_string());
+        sec.insert("b".to_string(), "X".to_string());
+        let out = select_top_per_sector(&scores, &sec, 1);
+        let syms: Vec<&str> = out.iter().map(|(s, _)| s.as_str()).collect();
+        // X 取 a(.9)；__none__ 池取 u(.7)（v 落选）→ 降序 a,u
+        assert_eq!(syms, vec!["a", "u"]);
     }
 
     // ── accrue / turnover_between ─────────────────────────────────────────────

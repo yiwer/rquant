@@ -15,9 +15,29 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use crate::backtest::portfolio::{build_timeline, is_fresh, select_top};
+use crate::backtest::portfolio::{build_timeline, is_fresh, select_top, select_top_per_sector};
 use crate::screen::combine::{combine, CombineOutput, MergeParams};
 use crate::screen::config::{load_screen_config, ScreenConfig};
+
+/// 读 symbol→行业 映射 CSV（首列 symbol、次列 industry；跳表头/空行；忽略其余列）。
+/// 供行业中性选股（per_sector）。如 data/baostock/sector_membership.csv。
+pub fn load_sector_map(path: &std::path::Path) -> Result<std::collections::HashMap<String, String>> {
+    let text = std::fs::read_to_string(path)?;
+    let mut m = std::collections::HashMap::new();
+    for (i, line) in text.lines().enumerate() {
+        if i == 0 || line.trim().is_empty() {
+            continue;
+        }
+        let mut it = line.split(',');
+        if let (Some(sym), Some(ind)) = (it.next(), it.next()) {
+            let (sym, ind) = (sym.trim(), ind.trim());
+            if !sym.is_empty() && !ind.is_empty() {
+                m.insert(sym.to_string(), ind.to_string());
+            }
+        }
+    }
+    Ok(m)
+}
 
 /// 单棵树命中理由。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +80,8 @@ pub struct ScreenRunConfig {
     /// Point-in-time membership CSV (date,symbol); when set, restricts candidates to members
     /// effective at the as-of time. None → no restriction.
     pub membership_path: Option<PathBuf>,
+    /// symbol→行业 CSV；配 config.merge.per_sector=Some(k) 时行业中性选股（每行业 top-k）。None → 全局。
+    pub sectors_path: Option<PathBuf>,
 }
 
 fn dir(s: Stance) -> f64 {
@@ -120,6 +142,7 @@ fn pick_as_of(timeline: &[NaiveDateTime], as_of: Option<NaiveDate>) -> Result<Na
 /// as-of 选股：并行跑树集成 → 合并 → 排名 → ScreenResult。
 pub async fn run_screen(cfg: &ScreenRunConfig, llm: &LlmEvaluator) -> Result<ScreenResult> {
     let sc: ScreenConfig = load_screen_config(&cfg.config_path)?;
+    let sectors = cfg.sectors_path.as_ref().map(|p| load_sector_map(p)).transpose()?.unwrap_or_default();
     let quality = load_trees(&sc.quality_trees)?;
     let mut setups: BTreeMap<String, Vec<(String, Tree)>> = BTreeMap::new();
     for (tag, paths) in &sc.setup_trees {
@@ -210,8 +233,11 @@ pub async fn run_screen(cfg: &ScreenRunConfig, llm: &LlmEvaluator) -> Result<Scr
         r.rank = idx + 1;
     }
     let scores: Vec<(String, f64)> = rows.iter().map(|r| (r.symbol.clone(), r.combined_score)).collect();
-    let chosen: std::collections::BTreeSet<String> =
-        select_top(&scores, top).into_iter().map(|(s, _)| s).collect();
+    let picked = match sc.merge.per_sector {
+        Some(k) => select_top_per_sector(&scores, &sectors, k), // 行业中性：每行业 top-k
+        None => select_top(&scores, top),
+    };
+    let chosen: std::collections::BTreeSet<String> = picked.into_iter().map(|(s, _)| s).collect();
     for r in rows.iter_mut() {
         r.selected = chosen.contains(&r.symbol);
     }
@@ -325,6 +351,7 @@ leaves:
             window: 10,
             out_path: None,
             membership_path: None,
+            sectors_path: None,
         };
         let res = run_screen(&run, &LlmEvaluator::Disabled).await.unwrap();
         assert_eq!(res.n_universe, 2);
