@@ -42,6 +42,7 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 - **纯低波**(20日波动最低)：毛+0.31 但净−1.35，**成本墙样板**——中换手×日成本吞掉 −60% 超额。
 - **中度反转**(剔暴跌尾)：毛−1.02/净−2.02，2024 单年诱人=regime 特异；换手 85%/日。
 - **MACD / 道氏趋势 / RSI 超卖 / 布林 %b / Brooks 价格行为 / 规模代理(小盘)**：27 轮循环全证伪（毛≤0 或净 OOS≤0）。对应树 `macd_xs/dow_trend_xs/rsi_os_xs/boll_pctb_xs/price_action_xs/small_xs`。
+- **量价相关性 corr_pv（高确认向，round 2）**：选 corr(close,volume,20) 最高 top-50，**毛超额 −4.52 灾难证伪**——高量价确认股=高关注/接盘股，次日大幅跑输 EW（基准 +442%、组合 −10%）；换手 21%/日。背离向（低 corr_pv）同族低 EV（只会贴另一批股 EW，难过严格闸）。树 `corr_pv_xs`。
 
 ### 价值/基本面类（有效窗 2019-05 起；基本面 CSV 最早 2019-04-30）
 - **纯价值**(PB 最低)：毛−0.62/净−0.78，**净 Sharpe +0.15**（唯一正）——仅防御（换手 0.062 极低、回撤 0.28 小），但 lag 强基准、无超额。
@@ -62,7 +63,7 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 > 优先未试、机制上有别于已证伪族者。新 `features_day` 指标：kdj/cci/wr/obv/vwap20/roc/rvol20/corr_pv20（多数未作选股器测过）。
 
 - [ ] **多因子 AND 共识**：同时满足"便宜(低PB) AND 高质(高ROE)"双优股池（≠ value×momentum 的连乘倾斜；用 value_frac 两段 + 质量闸交集）。
-- [ ] **量价背离**：`corr_pv20` 低/负（价涨量缩 or 价跌量缩）作横截面信号——新指标，未测。
+- [x] ~~**量价背离**：`corr_pv20`~~ → round 2 测高确认向=灾难证伪（毛 −4.52）；背离向低 EV，暂搁。
 - [ ] **资金流向代理**：`obv` 斜率 / `rvol20` 放量 × 价值闸——是否过滤价值陷阱。
 - [ ] **regime 条件选股**：按市场波动/趋势 regime 切换因子（防御 regime 用价值、趋势 regime 用动量）——单棵树内 gate。
 - [ ] **板块相对强弱**：需引擎 sector-neutral / 分组 select（当前 select_top 全局）——[引擎缺口](specs/2026-06-18-iteration-harness-design.md#9-已知引擎缺口-v1-不阻塞标注)，v1 不阻塞，留后续 spec。
@@ -75,3 +76,4 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 | round | label | 假设 | net超额 | net-OOS超额 | netSharpe | axis | flags | 裁决 |
 |---|---|---|---|---|---|---|---|---|
 | 1 | value_pb_base | baseline: pure-PB value defensive (smoke) | -1.184 | -0.659 | 1.13 | daily | gross-excess<=0,net-OOS<=0,in-sample-only,break-even<40bps | FALSIFIED |
+| 2 | corr_pv_hi | corr_pv hi: select top-50 by price-volume correlation (volume confirms price) | -5.035 | -1.599 | -0.36 | daily | gross-excess<=0,net-OOS<=0,net-sharpe<=0,break-even<40bps | FALSIFIED |

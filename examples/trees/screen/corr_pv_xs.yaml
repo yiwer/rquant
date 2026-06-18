@@ -1,0 +1,16 @@
+# 量价相关性选股信号：corr(close, volume, n) ∈ [-1,1] 经 sigmoid 映射到 (0,1)。
+# 高正相关 = 量价同向（涨放量/跌缩量，量能确认价格）；低/负 = 量价背离。
+# select_top 取 corr_pv 最高 N 只（量能最确认者）。纯价格+成交量，无基本面、无方向性动量。
+# 新 baostock 数据集解锁的未试角度（features_day 有 corr_pv20，此处用引擎 DSL 现算等价）。
+meta: { name: corr_pv_xs, forward_window: 20, stances: [long, flat] }
+params: { cpv_n: 20, cpv_scale: 3 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "close > 0", goto: c, label: ok }
+    default: { goto: flat, label: flat }
+leaves:
+  c: { stance: long, weight: "sigmoid(corr(close, volume, cpv_n) * cpv_scale)" }
+  flat: { stance: flat }

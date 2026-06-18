@@ -1,0 +1,10 @@
+# round 2: 量价确认选股——选 corr(close,volume,20) 最高 top-50（量能确认价格者）。
+# 假设：量价同向（量能确认）的股票次日横截面占优。机制有别于已证伪的动量/反转/价值族。
+# quality=corr_pv_xs, λ=0 → combined=quality（动量 setup 占位满足校验、被乘 0）。
+quality_trees: [examples/trees/screen/corr_pv_xs.yaml]
+setup_trees:
+  动量延续: [examples/trees/screen/momentum_xs.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["动量延续"], quality_layers: 5 }
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }
