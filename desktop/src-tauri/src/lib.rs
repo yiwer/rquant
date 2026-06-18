@@ -11,6 +11,7 @@ pub mod dto_screen;
 pub mod error;
 pub mod gates;
 pub mod index_relative;
+pub mod iter_cmds;
 pub mod iter_read;
 pub mod journal;
 pub mod manual_run;
@@ -78,6 +79,10 @@ pub fn run() {
             screen_cmds::screen_runs_list,
             screen_cmds::screen_run_report,
             screen_cmds::screen_index_relative,
+            iter_cmds::iter_ledger,
+            iter_cmds::iter_queue,
+            iter_cmds::iter_round_card,
+            iter_cmds::iter_run_round,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
