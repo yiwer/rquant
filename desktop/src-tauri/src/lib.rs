@@ -10,6 +10,7 @@ pub mod dto_iter;
 pub mod dto_screen;
 pub mod error;
 pub mod gates;
+pub mod analyze;
 pub mod index_relative;
 pub mod iter_cmds;
 pub mod iter_read;

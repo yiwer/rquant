@@ -65,6 +65,10 @@ impl Workspace {
     pub fn index_dir(&self) -> PathBuf {
         self.root.join("data").join("baostock").join("index")
     }
+    pub fn daily_runs_dir(&self) -> PathBuf { self.root.join(".daily_runs") }
+    pub fn sector_dir(&self) -> PathBuf { self.root.join("data").join("baostock").join("sector") }
+    pub fn sector_membership_path(&self) -> PathBuf { self.root.join("data").join("baostock").join("sector_membership.csv") }
+    pub fn kday_dir(&self) -> PathBuf { self.root.join("data").join("baostock").join("kday") }
     pub fn screen_runs_dir(&self) -> PathBuf {
         self.desktop_data_dir().join("screen_runs")
     }
