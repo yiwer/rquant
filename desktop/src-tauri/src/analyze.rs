@@ -130,3 +130,72 @@ mod twoleg_tests {
         assert!((w1.excess - 0.4).abs() < 1e-9);
     }
 }
+
+pub struct Deploy { pub lag0_excess: f64, pub lag1_excess: f64, pub drag: f64, pub adv_median: f64, pub capacity: Vec<(f64, f64)> }
+const DEPLOY_RATE: f64 = 20.0 / 2.0 / 1.0e4; // 单边成本(20bps round-trip)
+
+fn replay_nav(rebals: &[(String, Vec<String>)], price: &dyn Fn(&str,&str)->Option<f64>, lag: usize) -> Vec<(String, f64)> {
+    let mut nav = 1.0_f64; let mut out = Vec::new();
+    let mut prev: Vec<String> = Vec::new();
+    for i in 0..rebals.len().saturating_sub(1 + lag) {
+        let sel = &rebals[i].1;
+        let wn = if sel.is_empty() {0.0} else {1.0/sel.len() as f64};
+        let wp = if prev.is_empty() {0.0} else {1.0/prev.len() as f64};
+        let mut names: std::collections::BTreeSet<&str> = sel.iter().map(|s| s.as_str()).collect();
+        for s in &prev { names.insert(s.as_str()); }
+        let tov: f64 = names.iter().map(|s| {
+            let a = if sel.iter().any(|x| x==s) {wn} else {0.0};
+            let b = if prev.iter().any(|x| x==s) {wp} else {0.0};
+            (a-b).abs() }).sum();
+        nav *= 1.0 - DEPLOY_RATE * tov;
+        let (d0, d1) = (&rebals[i+lag].0, &rebals[i+1+lag].0);
+        let w = wn;
+        let mut r = 0.0;
+        for s in sel { if let (Some(p0),Some(p1)) = (price(s,d0), price(s,d1)) { if p0>0.0 { r += w*(p1/p0-1.0); } } }
+        nav *= 1.0 + r;
+        out.push((rebals[i+1].0.clone(), nav));
+        prev = sel.clone();
+    }
+    out
+}
+
+pub fn deploy(rebals: &[(String, Vec<String>)], price: &dyn Fn(&str,&str)->Option<f64>, adv: &dyn Fn(&str,&str)->Option<f64>, bench: &dyn Fn(&str)->Option<f64>, build_days: f64) -> Deploy {
+    let excess_of = |nav: &[(String,f64)]| -> f64 {
+        if nav.len() < 2 { return 0.0; }
+        let sr = nav.last().unwrap().1 / 1.0 - 1.0;
+        match (bench(&nav[0].0), bench(&nav.last().unwrap().0)) { (Some(b0),Some(b1)) if b0>0.0 => sr - (b1/b0-1.0), _ => sr }
+    };
+    let nav0 = replay_nav(rebals, price, 0);
+    let nav1 = replay_nav(rebals, price, 1);
+    let (e0, e1) = (excess_of(&nav0), excess_of(&nav1));
+    let mut per_reb_min = Vec::new(); let mut n_typ = 0usize;
+    for (t, sel) in rebals { if sel.is_empty() { continue; } n_typ = n_typ.max(sel.len());
+        let advs: Vec<f64> = sel.iter().filter_map(|s| adv(s, t)).collect();
+        if let Some(m) = advs.iter().cloned().fold(None, |acc:Option<f64>,x| Some(acc.map_or(x, |a| a.min(x)))) { per_reb_min.push(m); } }
+    let worst_min = per_reb_min.iter().cloned().fold(f64::INFINITY, f64::min);
+    let worst_min = if worst_min.is_finite() { worst_min } else { 0.0 };
+    let mut sorted = per_reb_min.clone(); sorted.sort_by(|a,b| a.partial_cmp(b).unwrap());
+    let adv_median = if sorted.is_empty() {0.0} else { sorted[sorted.len()/2] };
+    let capacity = [0.05, 0.10, 0.20].iter().map(|p| (*p, n_typ as f64 * p * worst_min * build_days)).collect();
+    Deploy { lag0_excess: e0, lag1_excess: e1, drag: e1 - e0, adv_median, capacity }
+}
+
+#[cfg(test)]
+mod deploy_tests {
+    use super::*;
+    use std::collections::HashMap;
+    #[test]
+    fn capacity_scales_with_adv_pct() {
+        let rebals = vec![("2024-01-02".to_string(), vec!["A".to_string()]), ("2024-02-02".to_string(), vec!["A".to_string()]), ("2024-03-04".to_string(), vec!["A".to_string()])];
+        let px: HashMap<(&str,&str),f64> = HashMap::from([(("A","2024-01-02"),10.0),(("A","2024-02-02"),11.0),(("A","2024-03-04"),12.0)]);
+        let price = |s:&str,d:&str| px.get(&(s,d)).copied();
+        let adv = |_s:&str,_d:&str| Some(1.0e8_f64);
+        let bm: HashMap<&str,f64> = HashMap::from([("2024-01-02",100.0),("2024-02-02",100.0),("2024-03-04",100.0)]);
+        let bench = |d:&str| bm.get(d).copied();
+        let r = deploy(&rebals, &price, &adv, &bench, 1.0);
+        let c10 = r.capacity.iter().find(|(p,_)| (p-0.10).abs()<1e-9).unwrap();
+        assert!((c10.1 - 1.0e7).abs() < 1.0);
+        let c20 = r.capacity.iter().find(|(p,_)| (p-0.20).abs()<1e-9).unwrap();
+        assert!((c20.1 - 2.0e7).abs() < 1.0);
+    }
+}
