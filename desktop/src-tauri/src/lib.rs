@@ -2,6 +2,7 @@
 //! 零业务逻辑——一切计算调 `rquant` 库；spec: docs/superpowers/specs/2026-06-12-rquant-desktop-design.md
 
 pub mod backtest_run;
+pub mod eval_cmds;
 pub mod books;
 pub mod commands;
 pub mod data_bench;
@@ -87,6 +88,8 @@ pub fn run() {
             iter_cmds::iter_queue,
             iter_cmds::iter_round_card,
             iter_cmds::iter_run_round,
+            eval_cmds::eval_list_reports,
+            eval_cmds::eval_certify,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
