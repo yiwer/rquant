@@ -33,6 +33,13 @@
 
 `cd desktop && npm run tauri dev` 启动后:① 选股页跑 `value_pb_base.yaml` as-of 2026-06-12 top50 → 排行榜非空;② 研究页台账显示 10 轮,点 R10 看 round card,核对 OOS 超额/verdict 与 `.iter/ledger.jsonl` 一致。
 
+## 认证 & 分析(子项 2a,2026-06-20)
+
+- **认证**(新顶层页):选 1+ 个已有 optimize 报告 JSON(扫 `.daily_runs/` 与仓库根)→ 运行认证(`rquant::verdict::certify`,默认阈值,**不重判**)→ 5 门槛 Verdict 矩阵(✓/✗ · 值 · 阈值 · 说明)。
+- **因子工作台**(填实 `/factor`):选 universe + 输入因子 DSL(如 `fund.bps/close` 账面市值比、`fund.roe`、`sma(close,20)`)+ horizon/分层/采样 → IC/RankIC 表 + IC 衰减 + 分层收益 + 相关阵(`rquant::factor::run_factor`)。
+- **选股回测结果 →「分析」tab**:行业归因(配置/选择拆分)· 两腿(再选成长 run + w 行高亮)· 部署加固(T+1 拖累 + 容量);均为 Rust 端口的后验算术、数值对拍 `analyze_*.py`,**基准固定沪深300**(已在卡片标注)。
+- 设计/计划:`docs/superpowers/{specs/2026-06-20-client-refactor-cert-analysis-design.md, plans/2026-06-20-client-refactor-cert-analysis.md}`。
+
 ## 范围边界
 
-本子项不含:GUI 内编辑配置/树、与上期 diff/导出/下单(子项 3)、做实 factor/optimize/portfolio 占位 + eval 认证视图(子项 2)、数据管线监控 UI(子项 3)。
+本子项不含:GUI 内编辑配置/树、与上期 diff/导出/下单(子项 3)、optimize(WFO 网格)/ portfolio(组合回测)做实(子项 2b)、数据管线监控 UI(子项 3)。

@@ -6,7 +6,7 @@ import type { FactorReportDto } from "@bindings/FactorReportDto";
 import FactorReport from "../components/FactorReport";
 export default function Factor() {
   const st = useFactor(); const { message } = AntApp.useApp();
-  const [exprs, setExprs] = useState<[string, string][]>([["value_pb", "1/(1+fund.pb)"]]);
+  const [exprs, setExprs] = useState<[string, string][]>([["价值BP", "fund.bps/close"]]);
   const [horizon, setH] = useState(16); const [layers, setL] = useState(5); const [sample, setS] = useState(16);
   const [running, setRunning] = useState(false);
   async function run() {
