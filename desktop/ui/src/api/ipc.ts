@@ -58,5 +58,15 @@ export const api = {
   iterRoundCard: (round: number) => invoke<import("@bindings/RoundCardDto").RoundCardDto>("iter_round_card", { round }),
   iterRunRound: (config: string, note: string, axis: string, top: number, benchmark: string, rebalance: number) =>
     invoke<string>("iter_run_round", { config, note, axis, top, benchmark, rebalance }),
+  // 因子
+  factorRun: (factors: [string, string][], horizon: number, layers: number, sample: number) =>
+    invoke<string>("factor_run", { factors, horizon, layers, sample }),
+  // 认证
+  evalListReports: () => invoke<import("@bindings/OptimizeReportInfoDto").OptimizeReportInfoDto[]>("eval_list_reports"),
+  evalCertify: (paths: string[], name: string) => invoke<import("@bindings/VerdictDto").VerdictDto>("eval_certify", { paths, name }),
+  // 分析器
+  analyzeSector: (runId: string) => invoke<import("@bindings/SectorAttribDto").SectorAttribDto>("analyze_sector", { runId }),
+  analyzeTwoleg: (valueRunId: string, growthRunId: string, w: number) => invoke<import("@bindings/TwoLegDto").TwoLegDto>("analyze_twoleg", { valueRunId, growthRunId, w }),
+  analyzeDeploy: (runId: string) => invoke<import("@bindings/DeployDto").DeployDto>("analyze_deploy", { runId }),
 };
 export type Api = typeof api;
