@@ -54,5 +54,6 @@ test("shows index-relative excess and OOS by default", () => {
     </AntApp>
   );
   expect(screen.getByText(/指数相对/)).toBeInTheDocument();
-  expect(screen.getByText("2024-26_OOS")).toBeInTheDocument();
+  // regime 标签经 regimeLabelZh 显示替换：底层 label 仍是 2024-26_OOS，仅显示成 _样本外。
+  expect(screen.getByText("2024-26_样本外")).toBeInTheDocument();
 });

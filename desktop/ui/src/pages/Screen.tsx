@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
-import { App as AntApp, Button, Card, Col, DatePicker, InputNumber, Row, Select, Tabs } from "antd";
+import { App as AntApp, Button, Card, Col, DatePicker, InputNumber, Row, Select, Spin, Tabs } from "antd";
 import { listen } from "@tauri-apps/api/event";
 import { useScreen } from "../stores/screen";
 import type { ScreenResultDto } from "@bindings/ScreenResultDto";
 import ScreenPickTable from "../components/ScreenPickTable";
 import ScreenBacktestResult from "../components/ScreenBacktestResult";
 
-export default function Screen() {
+/** 选股榜（指定日）——自包含 tab：配置 + 日期 + 数量 + 运行 + 结果。 */
+function AsofTab() {
   const st = useScreen();
   const { message } = AntApp.useApp();
   const [config, setConfig] = useState<string>("");
@@ -14,10 +15,10 @@ export default function Screen() {
   const [top, setTop] = useState<number>(50);
   const [asofResult, setAsofResult] = useState<ScreenResultDto | null>(null);
   const [running, setRunning] = useState(false);
-  useEffect(() => { void st.loadConfigs(); void st.loadRuns(); }, []);
+  useEffect(() => { void st.loadConfigs(); }, []);
 
   async function runAsof() {
-    if (!config || !asOf) { message.warning("请选择配置与 as-of 日期"); return; }
+    if (!config || !asOf) { message.warning("请选择配置与指定日日期"); return; }
     setRunning(true);
     try {
       const taskId = await st.api.screenAsof(config, asOf, top);
@@ -29,24 +30,44 @@ export default function Screen() {
     } catch (e) { message.error(String(e)); setRunning(false); }
   }
 
-  const left = (
-    <Card size="small" title="选股配置">
-      <Select style={{ width: "100%" }} placeholder="配置" value={config || undefined}
-        onChange={setConfig} options={st.configs.map((c) => ({ value: c.path, label: c.name ?? c.path }))} />
-      <DatePicker style={{ width: "100%", marginTop: 8 }} onChange={(_, s) => setAsOf((s ?? "") as string)} />
-      <InputNumber style={{ width: "100%", marginTop: 8 }} addonBefore="Top" min={1} value={top} onChange={(v) => setTop(v ?? 50)} />
-      <Button type="primary" block style={{ marginTop: 8 }} loading={running} disabled={!config} onClick={runAsof}>运行选股</Button>
-    </Card>
-  );
   return (
-    <Row gutter={12}>
-      <Col span={6}>{left}</Col>
-      <Col span={18}>
-        <Tabs items={[
-          { key: "asof", label: "选股榜 (as-of)", children: asofResult ? <ScreenPickTable result={asofResult} /> : <span style={{ opacity: 0.6 }}>选配置并运行</span> },
-          { key: "bt", label: "选股回测", children: <ScreenBacktestResult /> },
-        ]} />
-      </Col>
-    </Row>
+    <div>
+      <Card size="small" style={{ marginBottom: 8 }}>
+        <Row gutter={8} align="middle">
+          <Col flex="auto">
+            <Select style={{ width: "100%" }} placeholder="选股配置" value={config || undefined}
+              onChange={setConfig} options={st.configs.map((c) => ({ value: c.path, label: c.name ?? c.path }))} />
+          </Col>
+          <Col>
+            <DatePicker placeholder="指定日" onChange={(_, s) => setAsOf((s ?? "") as string)} />
+          </Col>
+          <Col>
+            <InputNumber addonBefore="数量" min={1} value={top} onChange={(v) => setTop(v ?? 50)} />
+          </Col>
+          <Col>
+            <Button type="primary" loading={running} disabled={!config} onClick={runAsof}>运行选股</Button>
+          </Col>
+        </Row>
+      </Card>
+      {running ? (
+        <div style={{ textAlign: "center", padding: 48 }}>
+          <Spin />
+          <div style={{ marginTop: 12, opacity: 0.6 }}>选股中…</div>
+        </div>
+      ) : asofResult ? (
+        <ScreenPickTable result={asofResult} />
+      ) : (
+        <span style={{ opacity: 0.6 }}>选择配置与指定日日期，点「运行选股」查看当日选股榜。</span>
+      )}
+    </div>
+  );
+}
+
+export default function Screen() {
+  return (
+    <Tabs items={[
+      { key: "asof", label: "选股榜（指定日）", children: <AsofTab /> },
+      { key: "bt", label: "选股回测", children: <ScreenBacktestResult /> },
+    ]} />
   );
 }

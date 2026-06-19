@@ -35,11 +35,11 @@ pub fn parse_queue(md: &str) -> IterQueueDto {
 pub fn gates_from(r: &LedgerRoundDto) -> Vec<RoundGateDto> {
     let be_flag = r.flags.iter().any(|x| x.starts_with("break-even<"));
     vec![
-        RoundGateDto { name: "gross 超额>0".into(), pass: !r.flags.iter().any(|x| x == "gross-excess<=0"), value: r.gross_ex, threshold: Some(0.0), note: "源头有 alpha".into() },
-        RoundGateDto { name: "net-OOS 超额>0".into(), pass: !r.flags.iter().any(|x| x == "net-OOS<=0"), value: r.net_oos_ex, threshold: Some(0.0), note: "金标准".into() },
-        RoundGateDto { name: "net Sharpe>0".into(), pass: !r.flags.iter().any(|x| x == "net-sharpe<=0"), value: r.net_sharpe, threshold: Some(0.0), note: String::new() },
-        RoundGateDto { name: "break-even≥40bps".into(), pass: !be_flag, value: r.break_even, threshold: Some(40.0), note: "≥2×成本".into() },
-        RoundGateDto { name: "无 sign-flip".into(), pass: !r.flags.iter().any(|x| x == "sign-flip"), value: None, threshold: None, note: "Tier-2 敏感扫".into() },
+        RoundGateDto { name: "毛超额>0".into(), pass: !r.flags.iter().any(|x| x == "gross-excess<=0"), value: r.gross_ex, threshold: Some(0.0), note: "源头有超额".into() },
+        RoundGateDto { name: "净·样本外超额>0".into(), pass: !r.flags.iter().any(|x| x == "net-OOS<=0"), value: r.net_oos_ex, threshold: Some(0.0), note: "金标准".into() },
+        RoundGateDto { name: "净夏普>0".into(), pass: !r.flags.iter().any(|x| x == "net-sharpe<=0"), value: r.net_sharpe, threshold: Some(0.0), note: String::new() },
+        RoundGateDto { name: "盈亏平衡≥40基点".into(), pass: !be_flag, value: r.break_even, threshold: Some(40.0), note: "≥2×成本".into() },
+        RoundGateDto { name: "无符号翻转".into(), pass: !r.flags.iter().any(|x| x == "sign-flip"), value: None, threshold: None, note: "敏感性扫描·二阶".into() },
     ]
 }
 
@@ -69,9 +69,9 @@ mod tests {
             flags: vec!["gross-excess<=0".into(), "break-even<40bps".into()],
             gross_ex:Some(-0.1), net_ex:None, net_oos_ex:Some(0.2), net_train_ex:None, net_sharpe:Some(0.5), break_even:Some(10.0) };
         let g = gates_from(&r);
-        assert!(!g.iter().find(|x| x.name=="gross 超额>0").unwrap().pass);
-        assert!(g.iter().find(|x| x.name=="net-OOS 超额>0").unwrap().pass);
-        assert!(g.iter().find(|x| x.name=="无 sign-flip").unwrap().pass);
+        assert!(!g.iter().find(|x| x.name=="毛超额>0").unwrap().pass);
+        assert!(g.iter().find(|x| x.name=="净·样本外超额>0").unwrap().pass);
+        assert!(g.iter().find(|x| x.name=="无符号翻转").unwrap().pass);
     }
     #[test]
     fn parse_queue_extracts_two_sections() {

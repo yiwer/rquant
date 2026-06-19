@@ -55,7 +55,7 @@ pub fn index_list(state: tauri::State<AppState>) -> Vec<String> {
 pub fn screen_asof(state: tauri::State<AppState>, config: String, as_of: String, top: u32) -> Result<String, String> {
     let ws = state.ws.clone();
     state.tasks.start("screen_asof", true, move |ctx| {
-        ctx.progress(0.1, "load", &config);
+        ctx.progress(0.1, "加载", &config);
         let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
         let llm = rquant::cli::build_llm(String::new(), String::new(), ws.root().join(".rquant-cache").join("llm")).map_err(|e| e.to_string())?;
         let cfg = rquant::screen::ScreenRunConfig {
@@ -65,7 +65,7 @@ pub fn screen_asof(state: tauri::State<AppState>, config: String, as_of: String,
             top: Some(top as usize), window: 260, out_path: None,
             membership_path: None, sectors_path: None,
         };
-        ctx.progress(0.4, "screen", "");
+        ctx.progress(0.4, "选股", "");
         let res = rt.block_on(rquant::screen::run_screen(&cfg, &llm)).map_err(|e| e.to_string())?;
         let rows = res.rows.iter().map(|r| ScreenPickDto {
             rank: r.rank, symbol: r.symbol.clone(),
@@ -95,10 +95,10 @@ pub fn screen_backtest_run(state: tauri::State<AppState>, config: String, from: 
             out_path: None, membership_path: None, sectors_path: None,
         };
         let id = crate::screen_runs::new_id();
-        ctx.progress(0.2, "gross", "cost=0");
+        ctx.progress(0.2, "毛档", "cost=0");
         let gross = rt.block_on(rquant::screen::backtest::run_screen_backtest(&mk(0.0), &llm)).map_err(|e| e.to_string())?;
         if ctx.cancelled() { return Err("cancelled".into()); }
-        ctx.progress(0.6, "net", &format!("cost={cost_bps}"));
+        ctx.progress(0.6, "净档", &format!("cost={cost_bps}"));
         let net = rt.block_on(rquant::screen::backtest::run_screen_backtest(&mk(cost_bps), &llm)).map_err(|e| e.to_string())?;
         let created = chrono::Local::now().naive_local().format("%Y-%m-%dT%H:%M:%S").to_string();
         let meta = ScreenRunMetaDto { id: id.clone(), config: config.clone(), from: from.clone(), to: to.clone(),
@@ -106,7 +106,7 @@ pub fn screen_backtest_run(state: tauri::State<AppState>, config: String, from: 
         crate::screen_runs::write_meta(&ws, &meta)?;
         crate::screen_runs::write_report(&ws, &id, "gross", &serde_json::to_string(&gross).map_err(|e| e.to_string())?)?;
         crate::screen_runs::write_report(&ws, &id, "net", &serde_json::to_string(&net).map_err(|e| e.to_string())?)?;
-        ctx.progress(0.95, "archive", &id);
+        ctx.progress(0.95, "归档", &id);
         Ok(serde_json::json!({ "run_id": id }))
     })
 }

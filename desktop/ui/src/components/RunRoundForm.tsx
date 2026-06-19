@@ -3,6 +3,7 @@ import { App as AntApp, Button, Input, Select } from "antd";
 import { listen } from "@tauri-apps/api/event";
 import { useScreen } from "../stores/screen";
 import { useResearch } from "../stores/research";
+import { indexZh } from "../labels";
 
 export default function RunRoundForm() {
   const sc = useScreen();
@@ -25,9 +26,9 @@ export default function RunRoundForm() {
   return <div>
     <Select style={{ width: "100%" }} placeholder="配置" value={config || undefined} onChange={setConfig}
       options={sc.configs.map((c) => ({ value: c.path, label: c.name ?? c.path }))} />
-    <Input style={{ marginTop: 8 }} placeholder="假设 note" value={note} onChange={(e) => setNote(e.target.value)} />
+    <Input style={{ marginTop: 8 }} placeholder="假设说明" value={note} onChange={(e) => setNote(e.target.value)} />
     <Select style={{ width: "100%", marginTop: 8 }} value={bench} onChange={setBench}
-      options={(sc.indices.length ? sc.indices : ["csi300", "csi500", "csi1000"]).map((i) => ({ value: i, label: i.toUpperCase() }))} />
+      options={(sc.indices.length ? sc.indices : ["csi300", "csi500", "csi1000"]).map((i) => ({ value: i, label: indexZh(i) }))} />
     <Button type="primary" block style={{ marginTop: 8 }} disabled={!config} onClick={run}>▶ 运行一轮</Button>
   </div>;
 }

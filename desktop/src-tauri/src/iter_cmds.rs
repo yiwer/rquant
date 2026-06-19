@@ -71,7 +71,7 @@ pub fn iter_run_round(
             .arg(rebalance.to_string())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        ctx.progress(0.05, "spawn", "iterate.py");
+        ctx.progress(0.05, "启动", "iterate.py");
         let mut child = cmd
             .spawn()
             .map_err(|e| format!("启动 Python 失败(确认已装 Python 与依赖): {e}"))?;
@@ -81,7 +81,7 @@ pub fn iter_run_round(
                     let _ = child.kill();
                     return Err("cancelled".into());
                 }
-                ctx.progress(0.5, "run", &line);
+                ctx.progress(0.5, "运行", &line);
             }
         }
         let status = child.wait().map_err(|e| e.to_string())?;
@@ -100,7 +100,7 @@ pub fn iter_run_round(
         let last = crate::iter_read::parse_ledger(&txt)
             .into_iter()
             .max_by_key(|r| r.round);
-        ctx.progress(0.98, "done", "");
+        ctx.progress(0.98, "完成", "");
         serde_json::to_value(last).map_err(|e| e.to_string())
     })
 }

@@ -29,7 +29,29 @@ export const TERM = {
 export const MODE_GLOSS = "模拟=资金曲线 / 打分=相对排名；硬=取最优 / 软=概率加权";
 
 export const VERDICT_ZH: Record<string, string> = { PASS: "通过", FALSIFIED: "证伪" };
+export const verdictZh = (v: string): string => VERDICT_ZH[v] ?? v;
+
+// 指数显示名（命令实参/CSV 名仍是 csi300/csi500/csi1000，不可改 value，否则找不到 data/baostock/index/<name>.csv）。
+export const INDEX_ZH: Record<string, string> = {
+  csi300: "沪深300", csi500: "中证500", csi1000: "中证1000",
+};
+// 找不到映射时回退原值大写（如自定义指数）。
+export const indexZh = (k: string): string => INDEX_ZH[k.toLowerCase()] ?? k.toUpperCase();
+
+// regime/分段 标签仅做显示替换（OOS→样本外、train→训练），不改底层 label 值。
+export const regimeLabelZh = (label: string): string =>
+  label.replace(/OOS/g, "样本外").replace(/train/gi, "训练");
+
 export const SCREEN_TERM = {
   combined: "综合分", quality: "质量分", speculative: "投机分", excess: "超额",
-  oos: "OOS 超额", breakEven: "盈亏平衡", indexRel: "指数相对", ewRef: "等权 · 不可投·参考",
+  oos: "样本外超额", breakEven: "盈亏平衡", indexRel: "指数相对", ewRef: "等权基准（不可投）",
+} as const;
+
+// 一等术语悬浮解释（antd Tooltip，帮助非专业用户）。
+export const TERM_HELP = {
+  indexRel: "组合相对可交易指数的超额收益。",
+  oos: "训练期之外（样本外）的超额，最可信。",
+  breakEven: "策略毛收益被多少单边成本（基点）抹平，越高越抗成本。",
+  ewRef: "全市场等权，含微盘不可真实投资，仅作参考基准。",
+  combined: "综合分 = 质量分 × (1 + λ·倾斜)。",
 } as const;

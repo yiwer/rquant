@@ -9,15 +9,31 @@ import {
   Row,
   Segmented,
   Select,
+  Spin,
   Statistic,
   Table,
+  Tooltip,
 } from "antd";
+import { QuestionCircleOutlined } from "@ant-design/icons";
 import { listen } from "@tauri-apps/api/event";
 import * as echarts from "echarts";
 import { useScreen } from "../stores/screen";
+import { indexZh, regimeLabelZh, TERM_HELP } from "../labels";
 
 const pct = (v?: number | null) =>
-  v == null ? "—" : `${(v * 100).toFixed(1)}%`;
+  v == null ? "—" : `${(v * 100).toFixed(2)}%`;
+
+/** 一等术语标题 + 克制的 ? 角标悬浮解释。 */
+function HelpTitle({ text, help }: { text: string; help: string }) {
+  return (
+    <span>
+      {text}{" "}
+      <Tooltip title={help}>
+        <QuestionCircleOutlined style={{ opacity: 0.45, fontSize: 12, cursor: "help" }} />
+      </Tooltip>
+    </span>
+  );
+}
 
 /** Inline excess-return line chart — avoids NavChart's JournalPointDto mismatch. */
 function ExcessChart({ data }: { data: { t: string; excess: number }[] }) {
@@ -47,7 +63,7 @@ function ExcessChart({ data }: { data: { t: string; excess: number }[] }) {
       chart.dispose();
     };
   }, [data]);
-  return <div ref={ref} style={{ height: 240 }} />;
+  return <div ref={ref} style={{ height: 220 }} />;
 }
 
 export default function ScreenBacktestResult() {
@@ -149,7 +165,7 @@ export default function ScreenBacktestResult() {
           </Col>
           <Col>
             <InputNumber
-              addonBefore="Top"
+              addonBefore="数量"
               min={1}
               value={top}
               onChange={(v) => setTop(v ?? 50)}
@@ -165,7 +181,7 @@ export default function ScreenBacktestResult() {
           </Col>
           <Col>
             <InputNumber
-              addonBefore="成本bps"
+              addonBefore="成本(基点)"
               min={0}
               value={cost}
               onChange={(v) => setCost(v ?? 20)}
@@ -204,8 +220,15 @@ export default function ScreenBacktestResult() {
         </div>
       </Card>
 
-      {!rep ? (
-        <span style={{ opacity: 0.6 }}>运行或选择一次回测以查看结果</span>
+      {running && !rep ? (
+        <div style={{ textAlign: "center", padding: 48 }}>
+          <Spin />
+          <div style={{ marginTop: 12, opacity: 0.6 }}>回测中…</div>
+        </div>
+      ) : !rep ? (
+        <span style={{ opacity: 0.6 }}>
+          设置区间与参数后点「运行回测」，或在上方下拉里选择一次历史回测查看结果。
+        </span>
       ) : (
         <>
           {/* Benchmark 切换 */}
@@ -214,9 +237,16 @@ export default function ScreenBacktestResult() {
             options={[
               ...st.indices.map((i) => ({
                 value: i,
-                label: i.toUpperCase(),
+                label: indexZh(i),
               })),
-              { value: "EW", label: "等权·参考" },
+              {
+                value: "EW",
+                label: (
+                  <Tooltip title={TERM_HELP.ewRef}>
+                    <span>等权基准（不可投）</span>
+                  </Tooltip>
+                ),
+              },
             ]}
             onChange={(b) => {
               if (selId) void st.setBenchmark(selId, b as string);
@@ -227,7 +257,12 @@ export default function ScreenBacktestResult() {
           <Card
             size="small"
             style={{ marginTop: 8, background: "rgba(59,130,246,.05)" }}
-            title={`指数相对（vs ${st.benchmark.toUpperCase()}）`}
+            title={
+              <HelpTitle
+                text={`指数相对（vs ${indexZh(st.benchmark)}）`}
+                help={TERM_HELP.indexRel}
+              />
+            }
           >
             <Row gutter={16}>
               <Col>
@@ -239,7 +274,7 @@ export default function ScreenBacktestResult() {
               </Col>
               <Col>
                 <Statistic
-                  title="OOS超额"
+                  title={<HelpTitle text="样本外超额" help={TERM_HELP.oos} />}
                   value={pct(
                     ir?.per_regime.find((r) => r.label.includes("OOS"))?.excess
                   )}
@@ -248,7 +283,7 @@ export default function ScreenBacktestResult() {
               </Col>
               <Col>
                 <Statistic
-                  title="盈亏平衡(bps)"
+                  title={<HelpTitle text="盈亏平衡(基点)" help={TERM_HELP.breakEven} />}
                   value={
                     rep.break_even != null
                       ? rep.break_even.toFixed(0)
@@ -261,16 +296,16 @@ export default function ScreenBacktestResult() {
 
           {/* 次行：绝对口径 */}
           <div style={{ opacity: 0.8, fontSize: 12, margin: "8px 0" }}>
-            绝对：净总 {pct(rep.net_total_return)} · Sharpe{" "}
+            绝对：净总 {pct(rep.net_total_return)} · 夏普{" "}
             {rep.abs_sharpe != null ? rep.abs_sharpe.toFixed(2) : "—"} · 回撤{" "}
-            {pct(rep.max_drawdown)} · 换手 {rep.turnover.toFixed(1)}
+            {pct(rep.max_drawdown)} · 换手 {rep.turnover.toFixed(2)}
           </div>
 
-          {/* 累计超额曲线（独立成行） */}
+          {/* 累计超额曲线（独立成行，固定高度） */}
           {ir && ir.curve.length > 0 && (
             <Card
               size="small"
-              title={`累计超额曲线（vs ${st.benchmark.toUpperCase()}）`}
+              title={`累计超额曲线（vs ${indexZh(st.benchmark)}）`}
               style={{ marginBottom: 8 }}
             >
               <ExcessChart data={ir.curve} />
@@ -278,22 +313,22 @@ export default function ScreenBacktestResult() {
           )}
 
           {/* 三联等高网格 */}
-          <Row gutter={8}>
-            <Col span={8}>
-              <Card size="small" title="regime 切片（超额）">
+          <Row gutter={8} align="stretch">
+            <Col span={8} style={{ display: "flex" }}>
+              <Card size="small" title="分段切片（超额）" style={{ width: "100%" }}>
                 {ir?.per_regime.map((r) => (
                   <div
                     key={r.label}
                     style={{ display: "flex", justifyContent: "space-between" }}
                   >
-                    <span>{r.label}</span>
+                    <span>{regimeLabelZh(r.label)}</span>
                     <span style={{ color: "#16a34a" }}>{pct(r.excess)}</span>
                   </div>
                 ))}
               </Card>
             </Col>
-            <Col span={8}>
-              <Card size="small" title="标签归因">
+            <Col span={8} style={{ display: "flex" }}>
+              <Card size="small" title="标签归因" style={{ width: "100%" }}>
                 {rep.tag_attribution.map((t) => (
                   <div
                     key={t.tag}
@@ -305,8 +340,8 @@ export default function ScreenBacktestResult() {
                 ))}
               </Card>
             </Col>
-            <Col span={8}>
-              <Card size="small" title="优质分分层">
+            <Col span={8} style={{ display: "flex" }}>
+              <Card size="small" title="优质分分层" style={{ width: "100%" }}>
                 <Table
                   size="small"
                   pagination={false}
