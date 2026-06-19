@@ -12,8 +12,12 @@ import {
   Spin,
   Statistic,
   Table,
+  Tabs,
   Tooltip,
 } from "antd";
+import SectorAttrib from "./SectorAttrib";
+import TwoLegBlend from "./TwoLegBlend";
+import DeployHardening from "./DeployHardening";
 import { QuestionCircleOutlined } from "@ant-design/icons";
 import { listen } from "@tauri-apps/api/event";
 import * as echarts from "echarts";
@@ -359,6 +363,15 @@ export default function ScreenBacktestResult() {
               </Card>
             </Col>
           </Row>
+          {selId && (
+            <Card size="small" title="分析" style={{ marginTop: 8 }}>
+              <Tabs items={[
+                { key: "sector", label: "行业归因", children: <SectorAttrib runId={selId} /> },
+                { key: "twoleg", label: "两腿组合", children: <TwoLegBlend runId={selId} /> },
+                { key: "deploy", label: "部署加固", children: <DeployHardening runId={selId} /> },
+              ]} />
+            </Card>
+          )}
         </>
       )}
     </div>
