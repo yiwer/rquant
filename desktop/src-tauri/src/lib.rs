@@ -1,6 +1,7 @@
 //! rquant 桌面端桥接层：DTO 转换 + 任务调度 + 工作区路径解析。
 //! 零业务逻辑——一切计算调 `rquant` 库；spec: docs/superpowers/specs/2026-06-12-rquant-desktop-design.md
 
+pub mod analyze_cmds;
 pub mod backtest_run;
 pub mod eval_cmds;
 pub mod factor_cmds;
@@ -92,6 +93,9 @@ pub fn run() {
             eval_cmds::eval_list_reports,
             eval_cmds::eval_certify,
             factor_cmds::factor_run,
+            analyze_cmds::analyze_sector,
+            analyze_cmds::analyze_twoleg,
+            analyze_cmds::analyze_deploy,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
