@@ -82,6 +82,7 @@ export default function ScreenBacktestResult() {
   const [cost, setCost] = useState(20);
   const [running, setRunning] = useState(false);
   const [selId, setSelId] = useState<string | null>(null);
+  const [anaTab, setAnaTab] = useState("sector");
 
   useEffect(() => {
     void st.loadConfigs();
@@ -365,10 +366,10 @@ export default function ScreenBacktestResult() {
           </Row>
           {selId && (
             <Card size="small" title="分析" style={{ marginTop: 8 }}>
-              <Tabs items={[
-                { key: "sector", label: "行业归因", children: <SectorAttrib runId={selId} /> },
-                { key: "twoleg", label: "两腿组合", children: <TwoLegBlend runId={selId} /> },
-                { key: "deploy", label: "部署加固", children: <DeployHardening runId={selId} /> },
+              <Tabs activeKey={anaTab} onChange={setAnaTab} items={[
+                { key: "sector", label: "行业归因", children: anaTab === "sector" ? <SectorAttrib runId={selId} /> : null },
+                { key: "twoleg", label: "两腿组合", children: anaTab === "twoleg" ? <TwoLegBlend runId={selId} /> : null },
+                { key: "deploy", label: "部署加固", children: anaTab === "deploy" ? <DeployHardening runId={selId} /> : null },
               ]} />
             </Card>
           )}

@@ -8,9 +8,9 @@ export default function SectorAttrib({ runId }: { runId: string }) {
   useEffect(() => { (async () => { try { setD(await st.api.analyzeSector(runId)); } catch (e) { message.error(String(e)); } })(); }, [runId]);
   if (!d) return <span style={{ opacity: .6 }}>计算中…</span>;
   const pct = (v: number) => `${(v*100).toFixed(1)}%`;
-  return <Row gutter={16}>
+  return <><div style={{ opacity: .6, fontSize: 12, marginBottom: 8 }}>归因基准:沪深300</div><Row gutter={16}>
     <Col><Statistic title="总超额" value={pct(d.excess_total)} /></Col>
     <Col><Statistic title="配置效应占比" value={pct(d.alloc_pct)} /></Col>
     <Col><Statistic title="选择效应占比" value={pct(d.select_pct)} /></Col>
-  </Row>;
+  </Row></>;
 }

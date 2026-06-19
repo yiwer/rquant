@@ -13,8 +13,9 @@ export default function TwoLegBlend({ runId }: { runId: string }) {
     <Select style={{ width: 320 }} placeholder="选成长腿 run" value={growth || undefined} onChange={setGrowth}
       options={st.runs.filter(r => r.id !== runId).map(r => ({ value: r.id, label: `${r.config} · ${r.created}` }))} />
     {d && <>
+      <div style={{ opacity: .6, fontSize: 12 }}>超额基准:沪深300</div>
       <div style={{ margin: "8px 0" }}>价值腿权重 w={w.toFixed(1)}(最优 {d.best_w.toFixed(1)})<Slider min={0} max={1} step={0.1} value={w} onChange={setW} /></div>
-      <Table size="small" pagination={false} rowKey="w" dataSource={d.rows}
+      <Table size="small" pagination={false} rowKey="w" dataSource={d.rows} onRow={(r) => ({ style: Math.abs(r.w - w) < 0.05 ? { background: "rgba(59,130,246,.12)" } : {} })}
         columns={[{ title: "w(价值)", dataIndex: "w", render: (x: number) => x.toFixed(1) },
           { title: "净总", dataIndex: "net_total", render: pct }, { title: "超额", dataIndex: "excess", render: pct },
           { title: "样本外超额", dataIndex: "oos_excess", render: pct }, { title: "夏普", dataIndex: "sharpe", render: (x: number) => x.toFixed(2) },

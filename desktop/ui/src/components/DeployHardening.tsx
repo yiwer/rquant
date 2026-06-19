@@ -10,6 +10,7 @@ export default function DeployHardening({ runId }: { runId: string }) {
   const pct = (v: number) => `${(v*100).toFixed(1)}%`;
   const yi = (v: number) => `${(v/1e8).toFixed(2)} 亿`;
   return <div>
+    <div style={{ opacity: .6, fontSize: 12, marginBottom: 8 }}>执行/容量基准:沪深300</div>
     <Row gutter={16}>
       <Col><Statistic title="即时执行超额" value={pct(d.lag0_excess)} /></Col>
       <Col><Statistic title="T+1 执行超额" value={pct(d.lag1_excess)} /></Col>
