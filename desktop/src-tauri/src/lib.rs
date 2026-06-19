@@ -3,6 +3,7 @@
 
 pub mod backtest_run;
 pub mod eval_cmds;
+pub mod factor_cmds;
 pub mod books;
 pub mod commands;
 pub mod data_bench;
@@ -90,6 +91,7 @@ pub fn run() {
             iter_cmds::iter_run_round,
             eval_cmds::eval_list_reports,
             eval_cmds::eval_certify,
+            factor_cmds::factor_run,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
