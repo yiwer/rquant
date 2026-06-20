@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { App as AntApp, Button, Input, Select } from "antd";
-import { listen } from "@tauri-apps/api/event";
 import { useScreen } from "../stores/screen";
 import { useResearch } from "../stores/research";
+import { useTaskInfo, useTaskStartedAt } from "../stores/tasks";
+import { api } from "../api/ipc";
 import { indexZh } from "../labels";
+import TaskRunning from "./TaskRunning";
 
 export default function RunRoundForm() {
   const sc = useScreen();
@@ -12,17 +14,26 @@ export default function RunRoundForm() {
   const [config, setConfig] = useState("");
   const [note, setNote] = useState("");
   const [bench, setBench] = useState("csi300");
+
+  const taskInfo = useTaskInfo(rs.runTaskId);
+  const startedAt = useTaskStartedAt(rs.runTaskId);
+  const running = taskInfo?.status === "running";
+
   async function run() {
     if (!config) { message.warning("请选择配置"); return; }
-    try {
-      const taskId = await rs.api.iterRunRound(config, note, "daily", 50, bench, 1);
-      message.success("已开始跑轮(后台)");
-      const un = await listen<{ id: string; status: string }>("task://progress", (e) => {
-        if (e.payload.id !== taskId) return;
-        if (e.payload.status === "done" || e.payload.status === "failed") { void rs.load(); void un(); }
-      });
-    } catch (e) { message.error(String(e)); }
+    await rs.runRound(config, note, "daily", 50, bench, 1);
   }
+
+  if (running && taskInfo) {
+    return (
+      <TaskRunning
+        info={taskInfo}
+        startedAt={startedAt}
+        onCancel={() => void api.taskCancel(rs.runTaskId!)}
+      />
+    );
+  }
+
   return <div>
     <Select style={{ width: "100%" }} placeholder="配置" value={config || undefined} onChange={setConfig}
       options={sc.configs.map((c) => ({ value: c.path, label: c.name ?? c.path }))} />

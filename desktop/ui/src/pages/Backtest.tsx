@@ -1,6 +1,8 @@
 import { useEffect } from "react";
 import { Alert, App as AntApp, Card, Col, Row, Spin, Tabs, Typography } from "antd";
 import { useBacktest } from "../stores/backtest";
+import { useTaskInfo, useTaskStartedAt } from "../stores/tasks";
+import { api } from "../api/ipc";
 import { friendlyError } from "../errors";
 import BacktestConfigForm from "../components/BacktestConfigForm";
 import RunHistoryList from "../components/RunHistoryList";
@@ -10,10 +12,15 @@ import RawJsonView from "../components/RawJsonView";
 import KlineSignalsView from "../components/KlineSignalsView";
 import ReplayView from "../components/ReplayView";
 import CompareView from "../components/CompareView";
+import TaskRunning from "../components/TaskRunning";
 
 export default function Backtest() {
   const st = useBacktest();
   const { message } = AntApp.useApp();
+
+  const taskInfo = useTaskInfo(st.runTaskId);
+  const startedAt = useTaskStartedAt(st.runTaskId);
+  const running = taskInfo?.status === "running";
 
   useEffect(() => {
     void st.loadRuns();
@@ -27,7 +34,15 @@ export default function Backtest() {
     <Row gutter={12}>
       <Col span={7}>
         <Card size="small" title="回测配置" style={{ marginBottom: 12 }}>
-          <BacktestConfigForm onStarted={() => void st.loadRuns()} />
+          {running && taskInfo ? (
+            <TaskRunning
+              info={taskInfo}
+              startedAt={startedAt}
+              onCancel={() => void api.taskCancel(st.runTaskId!)}
+            />
+          ) : (
+            <BacktestConfigForm onStarted={() => void st.loadRuns()} />
+          )}
         </Card>
         <Card size="small" title={`历史留档(${st.runs.length})`}>
           <RunHistoryList

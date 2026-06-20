@@ -6,11 +6,13 @@ import type { TreeInfoDto } from "@bindings/TreeInfoDto";
 import type { CsvInfoDto } from "@bindings/CsvInfoDto";
 import type { BacktestConfigDto } from "@bindings/BacktestConfigDto";
 import { api } from "../api/ipc";
+import { useBacktest } from "../stores/backtest";
 import { modeZh, MODE_GLOSS, TERM } from "../labels";
 import { friendlyError } from "../errors";
 
-export default function BacktestConfigForm({ onStarted }: { onStarted: (taskId: string) => void }) {
+export default function BacktestConfigForm({ onStarted }: { onStarted: () => void }) {
   const { message } = AntApp.useApp();
+  const bt = useBacktest();
   const [trees, setTrees] = useState<TreeInfoDto[]>([]);
   const [csvs, setCsvs] = useState<CsvInfoDto[]>([]);
   const [useFetch, setUseFetch] = useState(false);
@@ -41,9 +43,9 @@ export default function BacktestConfigForm({ onStarted }: { onStarted: (taskId: 
     };
     setStarting(true);
     try {
-      const taskId = await api.backtestRun(config);
-      message.success(`回测已启动(任务 ${taskId})`);
-      onStarted(taskId);
+      await bt.backtestRun(config);
+      message.success("回测已启动");
+      onStarted();
     } catch (e) {
       const fe = friendlyError(String(e));
       message.error(fe.title);

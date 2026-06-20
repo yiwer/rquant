@@ -1,26 +1,29 @@
 import { useState } from "react";
 import { App as AntApp, Button, Card, Col, Input, InputNumber, Row, Space } from "antd";
-import { listen } from "@tauri-apps/api/event";
 import { useFactor } from "../stores/factor";
-import type { FactorReportDto } from "@bindings/FactorReportDto";
+import { useTaskInfo, useTaskStartedAt } from "../stores/tasks";
+import { api } from "../api/ipc";
+import TaskRunning from "../components/TaskRunning";
 import FactorReport from "../components/FactorReport";
+
 export default function Factor() {
-  const st = useFactor(); const { message } = AntApp.useApp();
+  const st = useFactor();
+  const { message } = AntApp.useApp();
   const [exprs, setExprs] = useState<[string, string][]>([["价值BP", "fund.bps/close"]]);
-  const [horizon, setH] = useState(16); const [layers, setL] = useState(5); const [sample, setS] = useState(16);
-  const [running, setRunning] = useState(false);
+  const [horizon, setH] = useState(16);
+  const [layers, setL] = useState(5);
+  const [sample, setS] = useState(16);
+
+  const taskInfo = useTaskInfo(st.runTaskId);
+  const startedAt = useTaskStartedAt(st.runTaskId);
+  const running = taskInfo?.status === "running";
+
   async function run() {
     const valid = exprs.filter(([n, e]) => n && e);
     if (!valid.length) { message.warning("请添加因子表达式"); return; }
-    setRunning(true);
-    try {
-      const taskId = await st.api.factorRun(valid, horizon, layers, sample);
-      const un = await listen<{ id: string; status: string; result: FactorReportDto | null }>("task://progress", (ev) => {
-        if (ev.payload.id !== taskId) return;
-        if (ev.payload.status === "done") { st.setReport(ev.payload.result); setRunning(false); void un(); }
-        else if (ev.payload.status === "failed") { message.error("因子分析失败"); setRunning(false); void un(); } });
-    } catch (e) { message.error(String(e)); setRunning(false); }
+    await st.runFactor(valid, horizon, layers, sample);
   }
+
   return (
     <Row gutter={12}>
       <Col span={8}><Card size="small" title="因子工作台">
@@ -35,7 +38,19 @@ export default function Factor() {
           <Button type="primary" block loading={running} onClick={run}>运行分析</Button>
         </Space>
       </Card></Col>
-      <Col span={16}>{st.report ? <FactorReport report={st.report} /> : <span style={{ opacity: .6 }}>添加因子并运行</span>}</Col>
+      <Col span={16}>
+        {running && taskInfo ? (
+          <TaskRunning
+            info={taskInfo}
+            startedAt={startedAt}
+            onCancel={() => void api.taskCancel(st.runTaskId!)}
+          />
+        ) : st.report ? (
+          <FactorReport report={st.report} />
+        ) : (
+          <span style={{ opacity: .6 }}>添加因子并运行</span>
+        )}
+      </Col>
     </Row>
   );
 }
