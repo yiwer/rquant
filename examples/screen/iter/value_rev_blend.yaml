@@ -1,0 +1,12 @@
+# round 24: 价值+营收成长 双策略均衡(2-sleeve)——quality_trees=[value_pb, growth_revyoy] 取均值 → 综合分 top-50。
+# 机制：均值组合两个互补因子(价值 train 强 / 营收成长 OOS 强)，测"均值组合"能否像 GARP(闸+tilt)一样平滑 regime。
+# 对照 r18 rev-GARP(闸式组合 OOS+1.75)与 r10(3因子均值 OOS+0.47)。复用 value_pb + growth_revyoy。
+quality_trees:
+  - examples/trees/screen/value_pb.yaml
+  - examples/trees/screen/growth_revyoy.yaml
+setup_trees:
+  inert: [examples/trees/screen/momentum_xs.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["inert"], quality_layers: 5 }
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }
