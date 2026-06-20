@@ -62,8 +62,6 @@ fn compute_month(
         return Err("该日无选股(数据未刷新或配置异常)".into());
     }
     let dlist = crate::deploy_book::diff(&st.holdings, &picks);
-    let _n_buy = dlist.iter().filter(|d| d.action == "Buy").count() as u32;
-    let _n_sell = dlist.iter().filter(|d| d.action == "Sell").count() as u32;
     // 实现收益:上月持仓 last_date→as_of 的 EW 收益(首月=0)
     let syms: std::collections::BTreeSet<String> = st.holdings.iter().cloned().collect();
     let mut px: HashMap<String, HashMap<String, f64>> = HashMap::new();
@@ -72,7 +70,15 @@ fn compute_month(
     }
     let price = |s: &str, d: &str| px.get(s).and_then(|m| m.get(d)).copied();
     let realized = match &st.last_date {
-        Some(d0) => crate::deploy_book::ew_return(&st.holdings, &price, d0, as_of),
+        Some(d0) => {
+            if !st.holdings.is_empty() {
+                let covered = st.holdings.iter().filter(|s| price(s, d0).is_some() && price(s, as_of).is_some()).count();
+                if covered == 0 {
+                    return Err("持仓行情缺失,无法计算实现收益(数据未刷新?)".into());
+                }
+            }
+            crate::deploy_book::ew_return(&st.holdings, &price, d0, as_of)
+        }
         None => 0.0,
     };
     let prev_nav = if st.nav > 0.0 { st.nav } else { 1.0 };
@@ -80,12 +86,10 @@ fn compute_month(
     // 沪深300 归一 bench_nav
     let idx =
         crate::index_relative::load_index(&ws.index_dir().join("csi300.csv"))?;
-    let bench_at = crate::index_relative::idx_at(&idx, as_of);
-    let bench_base = st.bench_base.or(bench_at);
-    let bench_nav = match (bench_base, bench_at) {
-        (Some(b0), Some(b1)) if b0 > 0.0 => b1 / b0,
-        _ => 1.0,
-    };
+    let bench_at = crate::index_relative::idx_at(&idx, as_of)
+        .ok_or_else(|| "沪深300 指数不覆盖该日(数据未刷新?)".to_string())?;
+    let bench_base = st.bench_base.unwrap_or(bench_at);
+    let bench_nav = if bench_base > 0.0 { bench_at / bench_base } else { 1.0 };
     let proj_excess = (proj_nav - 1.0) - (bench_nav - 1.0);
     let picks_dto: Vec<DeployHoldingDto> = picks
         .iter()
