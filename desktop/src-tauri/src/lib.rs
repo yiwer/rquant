@@ -55,6 +55,10 @@ pub fn run() {
             use tauri::Manager;
             let ws = paths::Workspace::detect(&std::env::current_dir()?)
                 .ok_or("workspace not found: run from inside the rquant repo")?;
+            // 进程 CWD 设为仓库根:screen 配置内部按相对路径引用树(如 quality_trees:
+            // [deploy/xxx.yaml]),由 run_screen 按 CWD 解析。桌面 app 经 cargo tauri/打包
+            // 启动时 CWD≠仓库根→相对树路径找不到(os error 3)。与 CLI(自仓库根运行)对齐。
+            let _ = std::env::set_current_dir(ws.root());
             let sink = Arc::new(TauriSink(app.handle().clone()));
             app.manage(commands::AppState { ws, tasks: Arc::new(tasks::TaskRegistry::new(sink)) });
             Ok(())
