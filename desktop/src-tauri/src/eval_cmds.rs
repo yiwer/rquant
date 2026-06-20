@@ -36,6 +36,27 @@ pub fn eval_certify(state: tauri::State<AppState>, paths: Vec<String>, name: Str
     if loaded.is_empty() { return Err("未选择任何 optimize 报告".into()); }
     let strategy = if name.trim().is_empty() { loaded[0].0.clone() } else { name };
     let v = rquant::verdict::certify(&loaded, &strategy, &rquant::verdict::GateThresholds::default());
+
+    // Side-path audit record — ignore failures.
+    let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+    let _ = crate::audit::append(
+        &state.ws.audit_path(),
+        &crate::audit::AuditRecord {
+            id: format!("certify-{}", now.replace([':', '-'], "")),
+            kind: "eval_certify".into(),
+            params: serde_json::json!({"reports": &paths, "name": &strategy}),
+            started_at: now.clone(),
+            ended_at: now,
+            duration_ms: 0.0,
+            stages: vec![],
+            files: paths.clone(),
+            status: "done".into(),
+            error: None,
+            result_summary: Some(format!("verdict certified={}", v.certified)),
+            artifact: None,
+        },
+    );
+
     Ok(VerdictDto {
         strategy: v.strategy, n_symbols: v.n_symbols as u32, certified: v.certified,
         gates: v.gates.iter().map(|g| GateOutcomeDto {

@@ -55,7 +55,22 @@ pub fn iter_run_round(
 ) -> Result<String, String> {
     let ws = state.ws.clone();
     state.tasks.start("iter_round", true, move |ctx| {
-        let mut cmd = Command::new(crate::paths::python_exe());
+        let py = crate::paths::python_exe();
+        let cmdline = format!(
+            "{py} scripts/iterate.py {config} --note {note} --axis {axis} --top {top} --benchmark {benchmark} --rebalance {rebalance}"
+        );
+        ctx.note_params(serde_json::json!({
+            "config": &config,
+            "note": &note,
+            "axis": &axis,
+            "top": top,
+            "benchmark": &benchmark,
+            "rebalance": rebalance,
+            "cmdline": &cmdline,
+        }));
+        log::info!("iter_run_round: {cmdline}");
+
+        let mut cmd = Command::new(&py);
         cmd.current_dir(ws.root())
             .arg("scripts/iterate.py")
             .arg(&config)
@@ -75,6 +90,17 @@ pub fn iter_run_round(
         let mut child = cmd
             .spawn()
             .map_err(|e| format!("启动 Python 失败(确认已装 Python 与依赖): {e}"))?;
+
+        // Spawn a thread to drain stderr concurrently to avoid pipe-deadlock if
+        // the child fills the pipe buffer before stdout is fully consumed.
+        let stderr_handle = child.stderr.take().map(|stderr| {
+            std::thread::spawn(move || {
+                let mut s = String::new();
+                let _ = BufReader::new(stderr).read_to_string(&mut s);
+                s
+            })
+        });
+
         if let Some(out) = child.stdout.take() {
             for line in BufReader::new(out).lines().map_while(Result::ok) {
                 if ctx.cancelled() {
@@ -84,23 +110,31 @@ pub fn iter_run_round(
                 ctx.progress(0.5, "运行", &line);
             }
         }
+
         let status = child.wait().map_err(|e| e.to_string())?;
+
+        // Collect full stderr now that the child has exited and the thread can finish.
+        let stderr_output = stderr_handle
+            .and_then(|h| h.join().ok())
+            .unwrap_or_default();
+
         if !status.success() {
-            let mut err = String::new();
-            if let Some(mut e) = child.stderr.take() {
-                let _ = e.read_to_string(&mut err);
-            }
             return Err(format!(
-                "iterate.py 退出码 {:?}: {}",
+                "iterate.py 退出码 {:?}: {}\n命令: {}",
                 status.code(),
-                err.lines().last().unwrap_or("")
+                stderr_output,
+                cmdline,
             ));
         }
+
         let txt = std::fs::read_to_string(ws.ledger_jsonl()).unwrap_or_default();
         let last = crate::iter_read::parse_ledger(&txt)
             .into_iter()
             .max_by_key(|r| r.round);
         ctx.progress(0.98, "完成", "");
+        if let Some(ref r) = last {
+            ctx.note_summary(&format!("round {} {}", r.round, r.label));
+        }
         serde_json::to_value(last).map_err(|e| e.to_string())
     })
 }
