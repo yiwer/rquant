@@ -45,14 +45,29 @@ pub fn assemble_overview(ws: &Workspace) -> OverviewDto {
 
 pub fn assemble_book_detail(ws: &Workspace, book_id: &str) -> Result<BookDetailDto, String> {
     let book = find_book(book_id).ok_or_else(|| format!("unknown book {}", book_id))?;
-    let card = read_book_card(ws, book);
-    // 13 字段快照:仅 single 且 state ok
+    let mut card = read_book_card(ws, book);
+    // 13-field snapshot: single + state ok only.
+    // If read_paper_state returns Err (corrupt state file), surface it on the card
+    // rather than silently returning None — mirrors read_book_card's corrupt handling.
     let snapshot = if card.kind == "single" && card.status == "ok" {
         let name = rquant::tree::loader::load_tree_file(&book.tree_path(ws)).map_err(|e| e.to_string())?.meta.name;
-        rquant::signal::read_paper_state(&book.state_path(ws), &name)
-            .ok()
-            .flatten()
-            .map(|st| snapshot_to_dto(&st.account))
+        match rquant::signal::read_paper_state(&book.state_path(ws), &name) {
+            Ok(Some(st)) => Some(snapshot_to_dto(&st.account)),
+            Ok(None) => None,
+            Err(e) => {
+                let e_str = e.to_string();
+                log::error!("assemble_book_detail: corrupt state for {book_id}: {e_str}");
+                card.status = "corrupt".into();
+                card.advice = Some(
+                    crate::error::ErrorDto::from_anyhow(&anyhow::anyhow!(e_str))
+                        .advice
+                        .unwrap_or_else(|| {
+                            "state 异常:查看消息并考虑删除重建(重放幂等)".into()
+                        }),
+                );
+                None
+            }
+        }
     } else {
         None
     };
@@ -64,7 +79,21 @@ pub fn assemble_book_detail(ws: &Workspace, book_id: &str) -> Result<BookDetailD
 
 #[tauri::command]
 pub fn cockpit_overview(state: tauri::State<AppState>) -> OverviewDto {
-    assemble_overview(&state.ws)
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| assemble_overview(&state.ws)))
+        .unwrap_or_else(|_| {
+            log::error!("cockpit_overview panicked");
+            OverviewDto {
+                cards: Vec::new(),
+                diff: Vec::new(),
+                diff_t: None,
+                runlog: crate::dto::RunlogStatusDto {
+                    last_header: None,
+                    ok: None,
+                    summary: "cockpit assembly panicked — check logs".into(),
+                },
+                schtask: None,
+            }
+        })
 }
 
 #[tauri::command]
@@ -299,6 +328,32 @@ pub fn fetch_batch(
 mod tests {
     use super::*;
     use crate::paths::Workspace;
+
+    #[test]
+    fn book_detail_corrupt_state_surfaces_corrupt_card() {
+        // I2 regression: an empty/corrupt state file must set card.status="corrupt"
+        // rather than silently returning snapshot=None with status="ok".
+        let (_td, ws) = {
+            let td = tempfile::tempdir().unwrap();
+            let root = td.path().to_path_buf();
+            std::fs::create_dir_all(root.join("paper")).unwrap();
+            std::fs::create_dir_all(root.join("deploy")).unwrap();
+            let repo = Workspace::detect(&std::env::current_dir().unwrap()).unwrap();
+            for f in ["tree_v4_frozen.yaml", "strength_v1_frozen.yaml"] {
+                std::fs::copy(repo.deploy_dir().join(f), root.join("deploy").join(f)).unwrap();
+            }
+            let ws = Workspace::new(root);
+            (td, ws)
+        };
+        // Write a corrupt (empty) state file for b1 (single book).
+        let book = &crate::books::BOOKS[0];
+        std::fs::write(book.state_path(&ws), b"").unwrap();
+        // assemble_book_detail must surface corrupt rather than blank.
+        let dto = assemble_book_detail(&ws, "b1").unwrap();
+        assert_eq!(dto.card.status, "corrupt", "I2: corrupt state must be surfaced on card");
+        assert!(dto.card.advice.is_some(), "I2: advice must be populated for corrupt card");
+        assert!(dto.snapshot.is_none(), "I2: snapshot must be None for corrupt state");
+    }
 
     #[test]
     fn overview_assembles_three_cards_and_appends_journal() {

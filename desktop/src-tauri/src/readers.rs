@@ -25,7 +25,12 @@ pub fn snapshot_to_dto(s: &AccountSnapshot) -> SnapshotDto {
         min_price_since_entry: s.min_price_since_entry,
         bars_since_exit: s.bars_since_exit,
         last_trip_return: s.last_trip_return,
-        trip: s.trip.as_ref().map(|t| serde_json::to_value(t).unwrap_or(serde_json::Value::Null)),
+        trip: s.trip.as_ref().map(|t| {
+            serde_json::to_value(t).unwrap_or_else(|e| {
+                log::warn!("trip serialize failed: {e}");
+                serde_json::Value::Null
+            })
+        }),
     }
 }
 

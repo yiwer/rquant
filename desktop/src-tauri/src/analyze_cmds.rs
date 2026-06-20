@@ -12,10 +12,26 @@ fn rebals_of(net: &serde_json::Value) -> Vec<(String, Vec<String>)> {
 }
 fn load_kday(ws: &crate::paths::Workspace, sym: &str) -> HashMap<String, (f64, f64)> {
     let mut m = HashMap::new();
-    if let Ok(txt) = std::fs::read_to_string(ws.kday_dir().join(format!("{sym}.csv"))) {
-        for line in txt.lines().skip(1) { let c: Vec<&str> = line.split(',').collect();
-            if c.len() >= 7 { if let (Ok(close), Ok(amt)) = (c[4].parse::<f64>(), c[6].parse::<f64>()) {
-                m.insert(c[0].get(..10).unwrap_or(c[0]).to_string(), (close, amt)); } } }
+    let Ok(txt) = std::fs::read_to_string(ws.kday_dir().join(format!("{sym}.csv"))) else {
+        return m;
+    };
+    let mut lines = txt.lines();
+    let Some(header) = lines.next() else { return m };
+    let headers: Vec<&str> = header.split(',').collect();
+    let close_idx = headers.iter().position(|h| h.trim().eq_ignore_ascii_case("close"));
+    let amount_idx = headers.iter().position(|h| h.trim().eq_ignore_ascii_case("amount"));
+    let (Some(close_idx), Some(amount_idx)) = (close_idx, amount_idx) else {
+        log::warn!("load_kday: {sym}.csv missing 'close' or 'amount' column in header");
+        return m;
+    };
+    for line in lines {
+        let c: Vec<&str> = line.split(',').collect();
+        let max_idx = close_idx.max(amount_idx);
+        if c.len() > max_idx {
+            if let (Ok(close), Ok(amt)) = (c[close_idx].parse::<f64>(), c[amount_idx].parse::<f64>()) {
+                m.insert(c[0].get(..10).unwrap_or(c[0]).to_string(), (close, amt));
+            }
+        }
     }
     m
 }
@@ -41,8 +57,24 @@ pub fn analyze_sector(state: tauri::State<AppState>, run_id: String) -> Result<S
     for ind in inds {
         let mut m = HashMap::new();
         if let Ok(txt) = std::fs::read_to_string(state.ws.sector_dir().join(format!("{ind}.csv"))) {
-            for line in txt.lines().skip(1) { let c: Vec<&str> = line.split(',').collect();
-                if c.len() >= 3 { if let Ok(idx) = c[2].parse::<f64>() { m.insert(c[0].get(..10).unwrap_or(c[0]).to_string(), idx); } } } }
+            let mut sector_lines = txt.lines();
+            if let Some(hdr) = sector_lines.next() {
+                let hdrs: Vec<&str> = hdr.split(',').collect();
+                match hdrs.iter().position(|h| h.trim().eq_ignore_ascii_case("index")) {
+                    None => { log::warn!("sector {ind}.csv missing 'index' column in header"); }
+                    Some(idx_col) => {
+                        for line in sector_lines {
+                            let c: Vec<&str> = line.split(',').collect();
+                            if c.len() > idx_col {
+                                if let Ok(v) = c[idx_col].parse::<f64>() {
+                                    m.insert(c[0].get(..10).unwrap_or(c[0]).to_string(), v);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         sec_panel.insert(ind, m);
     }
     let sector_lvl = |ind: &str, d: &str| sec_panel.get(ind).and_then(|m| m.get(d)).copied();
