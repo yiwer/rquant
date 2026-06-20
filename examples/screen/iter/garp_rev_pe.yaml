@@ -1,0 +1,11 @@
+# round 23: PE-GARP（盈利估值版营收 GARP）——PE 最便宜半数(eps/价 高=便宜)股池内按营收增速 rev_yoy 选 top-50。
+# 测"估值纪律"能否从 PB(账面)推广到 PE(盈利)：若与 r18 rev-GARP(PB 闸)同样 PASS，则"任何便宜闸 + 营收成长 = 赢家"更稳健普适。
+# 复用 value_pe(eps>0，cheap=1/(1+close/eps)) + growth_revyoy。
+quality_trees: [examples/trees/screen/value_pe.yaml]
+setup_trees:
+  营收成长: [examples/trees/screen/growth_revyoy.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 1.0, tilt_setups: ["营收成长"], quality_layers: 5 }
+value_frac: 0.5
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }
