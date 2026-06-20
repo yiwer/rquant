@@ -1,0 +1,10 @@
+# round 12: 营收成长 rev_yoy vs 可交易指数（monthly）。
+# 假设：营收同比增速(更难粉饰的成长信号)能像净利增速(r9 np_yoy 净OOS+0.51)一样跑赢指数。
+# 与 r9 同口径(monthly reb20 / csi300 / top50)直接 A/B：营收 vs 净利 哪个成长信号更强/更稳健。
+quality_trees: [examples/trees/screen/growth_revyoy.yaml]
+setup_trees:
+  inert: [examples/trees/screen/momentum_xs.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["inert"], quality_layers: 5 }
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }

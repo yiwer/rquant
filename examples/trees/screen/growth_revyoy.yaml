@@ -1,0 +1,15 @@
+# 成长因子：营收同比增速 rev_yoy（百分数，如 25=25%）经 sigmoid 映射，增速越高分越高。
+# 营收增长比净利增长(np_yoy)更难通过会计手段粉饰 → 更"干净"的成长信号。
+# gate 仅排除缺财务（NaN）；负增速→低分。供成长因子 A/B（vs r9 np_yoy）。
+meta: { name: growth_revyoy, forward_window: 20, stances: [long, flat] }
+params: { r_scale: 20 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.rev_yoy > -100000", goto: g, label: has_rev }
+    default: { goto: flat, label: flat }
+leaves:
+  g: { stance: long, weight: "sigmoid(fund.rev_yoy / r_scale)" }
+  flat: { stance: flat }
