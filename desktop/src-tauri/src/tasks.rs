@@ -2,10 +2,13 @@
 //! 重任务(网格/批量/manual run)独占一个槽位(spec §12.5);轻命令不经此处。
 //! paper/ 写互斥说明:M1 唯一写者 manual_run 是重任务,独占槽位即满足 spec §7 的
 //! "同一时刻至多一个 commit 型任务"——后续里程碑引入第二类写者时再升级为显式锁。
+use crate::audit::{AuditRecord, AuditStage};
 use crate::dto::{TaskInfoDto, TaskProgressDto};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 pub trait ProgressSink: Send + Sync + 'static {
     fn emit(&self, info: &TaskInfoDto);
@@ -22,6 +25,15 @@ impl TaskCtx {
         self.cancel.load(Ordering::Relaxed)
     }
     pub fn progress(&self, pct: f32, stage: &str, detail: &str) {
+        // Push an AuditStage with elapsed time before updating info
+        self.shared.with_accum(&self.id, |a| {
+            let at_ms = a.start.elapsed().as_millis() as f64;
+            a.stages.push(AuditStage {
+                stage: stage.to_string(),
+                detail: detail.to_string(),
+                at_ms,
+            });
+        });
         self.shared.update(&self.id, |info| {
             info.progress = TaskProgressDto {
                 pct,
@@ -30,21 +42,56 @@ impl TaskCtx {
             };
         });
     }
+    pub fn note_params(&self, p: serde_json::Value) {
+        self.shared.with_accum(&self.id, |a| a.params = p);
+    }
+    pub fn note_file(&self, path: &str) {
+        self.shared.with_accum(&self.id, |a| {
+            if !a.files.iter().any(|f| f == path) {
+                a.files.push(path.to_string())
+            }
+        });
+    }
+    pub fn note_summary(&self, s: &str) {
+        self.shared.with_accum(&self.id, |a| a.summary = Some(s.to_string()));
+    }
+}
+
+/// Per-task audit accumulator: collects data during task execution.
+struct AuditAccum {
+    started_at: String,
+    start: Instant,
+    params: serde_json::Value,
+    files: Vec<String>,
+    summary: Option<String>,
+    stages: Vec<AuditStage>,
+}
+
+fn now_iso() -> String {
+    chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string()
 }
 
 struct Shared {
-    tasks: Mutex<HashMap<String, (TaskInfoDto, Arc<AtomicBool>)>>,
+    tasks: Mutex<HashMap<String, (TaskInfoDto, Arc<AtomicBool>, AuditAccum)>>,
     sink: Arc<dyn ProgressSink>,
     heavy_busy: AtomicBool,
+    audit_path: PathBuf,
 }
 
 impl Shared {
     fn update(&self, id: &str, f: impl FnOnce(&mut TaskInfoDto)) {
-        let mut g = self.tasks.lock().expect("task map poisoned");
-        if let Some((info, _)) = g.get_mut(id) {
+        let mut g = self.tasks.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some((info, _, _)) = g.get_mut(id) {
             f(info);
             // sink panic 不得毒化 tasks 锁(注册表全局瘫痪)——隔离之
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.sink.emit(info)));
+        }
+    }
+
+    fn with_accum(&self, id: &str, f: impl FnOnce(&mut AuditAccum)) {
+        let mut g = self.tasks.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some((_, _, accum)) = g.get_mut(id) {
+            f(accum);
         }
     }
 }
@@ -55,12 +102,13 @@ pub struct TaskRegistry {
 }
 
 impl TaskRegistry {
-    pub fn new(sink: Arc<dyn ProgressSink>) -> Self {
+    pub fn new(sink: Arc<dyn ProgressSink>, audit_path: PathBuf) -> Self {
         TaskRegistry {
             shared: Arc::new(Shared {
                 tasks: Mutex::new(HashMap::new()),
                 sink,
                 heavy_busy: AtomicBool::new(false),
+                audit_path,
             }),
             seq: AtomicU64::new(1),
         }
@@ -95,9 +143,17 @@ impl TaskRegistry {
             error: None,
             result: None,
         };
+        let accum = AuditAccum {
+            started_at: now_iso(),
+            start: Instant::now(),
+            params: serde_json::Value::Null,
+            files: Vec::new(),
+            summary: None,
+            stages: Vec::new(),
+        };
         {
-            let mut g = self.shared.tasks.lock().expect("task map poisoned");
-            g.insert(id.clone(), (info.clone(), cancel.clone()));
+            let mut g = self.shared.tasks.lock().unwrap_or_else(|p| p.into_inner());
+            g.insert(id.clone(), (info.clone(), cancel.clone(), accum));
         }
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.shared.sink.emit(&info)));
 
@@ -108,6 +164,7 @@ impl TaskRegistry {
         };
         let shared = self.shared.clone();
         let tid = id.clone();
+        let task_kind = kind.to_string();
         std::thread::spawn(move || {
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body(&ctx)));
             if heavy {
@@ -135,13 +192,41 @@ impl TaskRegistry {
                         Some("panic in task body (engine call guarded by catch_unwind)".into());
                 }
             });
+
+            // --- Audit side-path: assemble AuditRecord and append to disk ---
+            // Extract the final info + accum under a single lock, then release before I/O.
+            let audit_data = {
+                let g = shared.tasks.lock().unwrap_or_else(|p| p.into_inner());
+                g.get(&tid).map(|(info, _, accum)| {
+                    let duration_ms = accum.start.elapsed().as_millis() as f64;
+                    AuditRecord {
+                        id: tid.clone(),
+                        kind: task_kind.clone(),
+                        params: accum.params.clone(),
+                        started_at: accum.started_at.clone(),
+                        ended_at: now_iso(),
+                        duration_ms,
+                        stages: accum.stages.clone(),
+                        files: accum.files.clone(),
+                        status: info.status.clone(),
+                        error: info.error.clone(),
+                        result_summary: accum.summary.clone(),
+                        artifact: None,
+                    }
+                })
+            };
+            if let Some(rec) = audit_data {
+                if let Err(e) = crate::audit::append(&shared.audit_path, &rec) {
+                    eprintln!("[audit] append failed for task {}: {}", tid, e);
+                }
+            }
         });
         Ok(id)
     }
 
     pub fn cancel(&self, id: &str) {
-        let g = self.shared.tasks.lock().expect("task map poisoned");
-        if let Some((_, c)) = g.get(id) {
+        let g = self.shared.tasks.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some((_, c, _)) = g.get(id) {
             c.store(true, Ordering::Relaxed);
         }
     }
@@ -150,9 +235,9 @@ impl TaskRegistry {
         self.shared
             .tasks
             .lock()
-            .expect("task map poisoned")
+            .unwrap_or_else(|p| p.into_inner())
             .get(id)
-            .map(|(i, _)| i.clone())
+            .map(|(i, _, _)| i.clone())
     }
 
     pub fn list(&self) -> Vec<TaskInfoDto> {
@@ -160,9 +245,9 @@ impl TaskRegistry {
             .shared
             .tasks
             .lock()
-            .expect("task map poisoned")
+            .unwrap_or_else(|p| p.into_inner())
             .values()
-            .map(|(i, _)| i.clone())
+            .map(|(i, _, _)| i.clone())
             .collect();
         v.sort_by(|a, b| a.id.cmp(&b.id));
         v
@@ -191,13 +276,15 @@ mod tests {
         panic!("task {} never reached {}; last: {:?}", id, want, reg.get(id));
     }
 
-    fn reg() -> TaskRegistry {
-        TaskRegistry::new(Arc::new(NullSink))
+    fn reg() -> (TaskRegistry, tempfile::TempDir) {
+        let td = tempfile::tempdir().unwrap();
+        let ap = td.path().join("audit.jsonl");
+        (TaskRegistry::new(Arc::new(NullSink), ap), td)
     }
 
     #[test]
     fn task_runs_to_done_with_result() {
-        let r = reg();
+        let (r, _td) = reg();
         let id = r
             .start("demo", false, |ctx| {
                 ctx.progress(0.5, "half", "");
@@ -210,7 +297,7 @@ mod tests {
 
     #[test]
     fn cancel_flag_reaches_task_body() {
-        let r = reg();
+        let (r, _td) = reg();
         let id = r
             .start("loop", false, |ctx| {
                 for _ in 0..1000 {
@@ -230,7 +317,7 @@ mod tests {
 
     #[test]
     fn panic_becomes_failed_not_process_death() {
-        let r = reg();
+        let (r, _td) = reg();
         let id = r.start("boom", false, |_ctx| panic!("kaboom")).unwrap();
         let info = wait_status(&r, &id, "failed");
         assert!(info.error.unwrap().contains("panic"));
@@ -238,7 +325,7 @@ mod tests {
 
     #[test]
     fn heavy_slot_is_exclusive() {
-        let r = reg();
+        let (r, _td) = reg();
         let _id1 = r
             .start("heavy1", true, |_ctx| {
                 std::thread::sleep(Duration::from_millis(300));
@@ -248,5 +335,44 @@ mod tests {
         std::thread::sleep(Duration::from_millis(30));
         let err = r.start("heavy2", true, |_ctx| Ok(serde_json::Value::Null));
         assert!(err.is_err(), "second heavy task must be rejected while first runs");
+    }
+
+    #[test]
+    fn task_writes_audit_record_on_done() {
+        let td = tempfile::tempdir().unwrap();
+        let ap = td.path().join("audit.jsonl");
+        let r = TaskRegistry::new(std::sync::Arc::new(NullSink), ap.clone());
+        let id = r.start("screen_asof", false, |ctx| {
+            ctx.note_params(serde_json::json!({"as_of":"2026-06-16","top":50}));
+            ctx.note_file("data/baostock/universe_baostock_day.csv");
+            ctx.progress(0.4, "选股", "");
+            ctx.note_summary("top-50");
+            Ok(serde_json::json!({"n":50}))
+        }).unwrap();
+        wait_status(&r, &id, "done");
+        // 给写盘一点时间(终态写在 spawn 线程)
+        for _ in 0..200 { if ap.exists() && !crate::audit::read(&ap,10,None,None).is_empty() { break } std::thread::sleep(Duration::from_millis(10)); }
+        let recs = crate::audit::read(&ap, 10, None, None);
+        assert_eq!(recs.len(), 1);
+        let a = &recs[0];
+        assert_eq!(a.kind, "screen_asof");
+        assert_eq!(a.status, "done");
+        assert_eq!(a.params["top"], 50);
+        assert!(a.files.iter().any(|f| f.contains("universe_baostock_day")));
+        assert!(a.stages.iter().any(|s| s.stage == "选股"));
+        assert_eq!(a.result_summary.as_deref(), Some("top-50"));
+    }
+
+    #[test]
+    fn task_writes_audit_record_on_failure() {
+        let td = tempfile::tempdir().unwrap();
+        let ap = td.path().join("audit.jsonl");
+        let r = TaskRegistry::new(std::sync::Arc::new(NullSink), ap.clone());
+        let id = r.start("boom", false, |_ctx| Err("kaboom".to_string())).unwrap();
+        wait_status(&r, &id, "failed");
+        for _ in 0..200 { if crate::audit::read(&ap,10,None,None).len()==1 { break } std::thread::sleep(Duration::from_millis(10)); }
+        let recs = crate::audit::read(&ap, 10, None, None);
+        assert_eq!(recs[0].status, "failed");
+        assert_eq!(recs[0].error.as_deref(), Some("kaboom"));
     }
 }

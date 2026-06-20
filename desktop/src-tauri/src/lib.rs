@@ -61,7 +61,8 @@ pub fn run() {
             // 启动时 CWD≠仓库根→相对树路径找不到(os error 3)。与 CLI(自仓库根运行)对齐。
             let _ = std::env::set_current_dir(ws.root());
             let sink = Arc::new(TauriSink(app.handle().clone()));
-            app.manage(commands::AppState { ws, tasks: Arc::new(tasks::TaskRegistry::new(sink)) });
+            let audit_path = ws.audit_path();
+            app.manage(commands::AppState { ws, tasks: Arc::new(tasks::TaskRegistry::new(sink, audit_path)) });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
