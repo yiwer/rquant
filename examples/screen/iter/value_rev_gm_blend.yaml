@@ -1,0 +1,13 @@
+# round 26: 价值+营收成长+高毛利 三核均衡——quality_trees=[value_pb, growth_revyoy, quality_gm] 均值 → top-50。
+# 测在双核冠军(r24 value+rev OOS+1.31)上加第3个【与成长低相关】的质量因子(毛利率,不像 ROE r15 那样稀释)是否再增益。
+# 对照 r24(双核)与 r10(value+ROE+np_yoy 被 ROE 稀释至 +0.47)。复用三棵现成树，无新树。
+quality_trees:
+  - examples/trees/screen/value_pb.yaml
+  - examples/trees/screen/growth_revyoy.yaml
+  - examples/trees/screen/quality_gm.yaml
+setup_trees:
+  inert: [examples/trees/screen/momentum_xs.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["inert"], quality_layers: 5 }
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }
