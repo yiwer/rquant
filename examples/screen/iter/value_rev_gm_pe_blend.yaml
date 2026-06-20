@@ -1,0 +1,14 @@
+# round 30: 四核(双价值度量)——value_pb + value_pe + 营收成长 rev_yoy + 高毛利 gross_margin 四树均值 → top-50。
+# 测"正交性原则"边界:加第2个【价值】度量(PE 与 PB 同维=冗余)应【稀释】(印证 r10/r15 维度内冗余降益)，反衬 r26 三核(三正交维)之优。
+# 预注册假设=冗余度量稀释(非钓参)。复用四现成树。
+quality_trees:
+  - examples/trees/screen/value_pb.yaml
+  - examples/trees/screen/value_pe.yaml
+  - examples/trees/screen/growth_revyoy.yaml
+  - examples/trees/screen/quality_gm.yaml
+setup_trees:
+  inert: [examples/trees/screen/momentum_xs.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["inert"], quality_layers: 5 }
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }
