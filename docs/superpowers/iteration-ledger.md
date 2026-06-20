@@ -50,6 +50,7 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 - **value 池内反转**：毛−1.56/净−1.95——便宜跌者=续跌价值陷阱，价值地板救不了反转。
 - **价值+长趋势 / 价值×动量 / 质量(ROE) / 成长 / PE / PE+PB**：27 轮全证伪（OOS 超额≤0 或成本墙）。对应树 `value_longtrend/value_pb_trend/quality_v1/value_pe/value_pepb/value_roe`。
 - **value ∩ quality（Greenblatt，round 3）**：便宜 30% PB 池内按 ROE 取 top-50，**净超额 −2.39 / 净 OOS −1.13 证伪**。最干净防御画像（净 Sharpe 0.72、换手 3.6%、回撤 0.28、train 近平 −0.15）但仍 lag 强基准；**质量倾斜浓缩大盘价值 → OOS(2024-26 小盘暴动)比纯价值 −0.66 更落后**。质量在价值之上不添 OOS alpha。树 `value_pb`+`roe_xs`。
+- **value × 资金流(rvol，round 16)**：PB 便宜半数池内按相对成交量 rvol(volume/sma20) tilt。**表头诱人却 sign-flip 证伪**——净超额 +4.49、Sharpe 1.0、OOS +2.09 看似最佳,但 Tier-2 top-30 净超额转负(−0.76)、**换手 79.8%/日、be 仅 110bps**。放量=快衰减高换手信号、浓缩进最高关注股(同 corr_pv)→ 成本墙吞噬 + 非稳健。**资金流不救价值**。树 `value_pb`+`rvol_xs`。
 
 ### 日内微结构类（日内轴，6mo/sina/幸存者，**无 OOS**）
 - **6 因子 × 正反两向 = 12 全证伪**：last_leg 尾盘动量 / intraday_rev 日内反转 / close_vs_vwap 收盘强度 / intraday_range 日内波幅 / vol_tilt 量能后移 / overnight 隔夜跳空。唯二净微正者前后半翻号(非稳健) + break-even<2×成本。
@@ -79,7 +80,7 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 
 - [ ] **多因子 AND 共识**：同时满足"便宜(低PB) AND 高质(高ROE)"双优股池（≠ value×momentum 的连乘倾斜；用 value_frac 两段 + 质量闸交集）。
 - [x] ~~**量价背离**：`corr_pv20`~~ → round 2 测高确认向=灾难证伪（毛 −4.52）；背离向低 EV，暂搁。
-- [ ] **资金流向代理**：`obv` 斜率 / `rvol20` 放量 × 价值闸——是否过滤价值陷阱。
+- [x] ~~**资金流向代理**：`rvol20` 放量 × 价值闸~~ → round 16 **sign-flip 证伪**(换手 79.8%/日、be 110bps、top-30 转负);放量不救价值。obv 斜率同族(高换手)暂搁。
 - [ ] **regime 条件选股**：按市场波动/趋势 regime 切换因子（防御 regime 用价值、趋势 regime 用动量）——单棵树内 gate。
 - [ ] **板块相对强弱**：需引擎 sector-neutral / 分组 select（当前 select_top 全局）——[引擎缺口](specs/2026-06-18-iteration-harness-design.md#9-已知引擎缺口-v1-不阻塞标注)，v1 不阻塞，留后续 spec。
 - [ ] **日内微结构（正经 OOS）**：仅当有多年 survivorship-free 日内数据时（当前 EV 低）。
@@ -105,3 +106,4 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 | 13 | quality_gm | gross margin (pricing power/moat): quality axis distinct from ROE, vs index [bench:csi300] [reb20] | +1.721 | 0.561 | 0.52 | daily | — | PASS |
 | 14 | garp | GARP: growth (np_yoy) within cheapest-half PB pool — growth with valuation discipline [bench:csi300] [reb20] | +3.374 | 1.088 | 0.83 | daily | — | PASS |
 | 15 | quality_growth | quality-growth consensus: high ROE AND high np_yoy (profitable growers) vs index [bench:csi300] [reb20] | +2.203 | 1.045 | 0.60 | daily | — | PASS |
+| 16 | value_flow | value x capital-flow: rvol (volume/sma20) tilt within cheapest-half PB pool — does volume flow filter value traps? [bench:csi300] [reb20] | +4.491 | 2.088 | 1.00 | daily | sign-flip | FALSIFIED |

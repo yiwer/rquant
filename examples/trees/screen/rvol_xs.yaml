@@ -1,0 +1,15 @@
+# 资金流向代理：相对成交量 rvol = volume / sma(volume,20)，放量(>1)得分高（被吸筹/资金流入）。
+# 仅作 value_frac 两段的第二段 tilt（价值池内按资金流排序），非独立选股器。
+# gate 仅排除无量；rvol 经 sigmoid 单调映射（rvol=1→0.5，rvol=2→0.88）。
+meta: { name: rvol_xs, forward_window: 20, stances: [long, flat] }
+params: { rv_scale: 0.5 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "sma(volume, 20) > 0", goto: g, label: has_vol }
+    default: { goto: flat, label: flat }
+leaves:
+  g: { stance: long, weight: "sigmoid((volume / sma(volume, 20) - 1) / rv_scale)" }
+  flat: { stance: flat }

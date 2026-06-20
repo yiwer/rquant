@@ -1,0 +1,12 @@
+# round 16: 价值×资金流向(放量)——PB 最便宜半数池内按相对成交量 rvol(volume/sma(volume,20)) tilt 选 top-50。
+# to-try #3：放量=资金流入/被吸筹 → 是否过滤"便宜但无人问津"的价值陷阱(便宜+缩量=续跌)。
+# 机制有别于已证伪的 value 池内反转(价格信号)与 corr_pv(量价相关)；这里第二轴是成交量水平/流向。
+# 复用 value_pb + 新 rvol_xs。value_frac 0.5 价值闸，lambda=1 池内全按资金流 tilt。
+quality_trees: [examples/trees/screen/value_pb.yaml]
+setup_trees:
+  资金流: [examples/trees/screen/rvol_xs.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 1.0, tilt_setups: ["资金流"], quality_layers: 5 }
+value_frac: 0.5
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }
