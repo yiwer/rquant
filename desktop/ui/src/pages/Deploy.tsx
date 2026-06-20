@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { App as AntApp, Button, Card, Col, DatePicker, Row, Statistic, Table } from "antd";
-import { listen } from "@tauri-apps/api/event";
 import * as echarts from "echarts";
 import { useDeploy } from "../stores/deploy";
-import type { DeployMonthDto } from "@bindings/DeployMonthDto";
+import { useTaskInfo, useTaskStartedAt } from "../stores/tasks";
 import type { DeployNavPointDto } from "@bindings/DeployNavPointDto";
 import DiffTable from "../components/DiffTable";
+import TaskRunning from "../components/TaskRunning";
 
 /** Inline NAV vs 沪深300 chart — NavChart is coupled to JournalPointDto/portfolio shape
  *  and cannot accept DeployNavPointDto. Built inline following ScreenBacktestResult's
@@ -52,37 +52,19 @@ export default function Deploy() {
   const st = useDeploy();
   const { message } = AntApp.useApp();
   const [asOf, setAsOf] = useState("");
-  const [running, setRunning] = useState(false);
   const [committing, setCommitting] = useState(false);
+
+  const runInfo = useTaskInfo(st.runTaskId);
+  const runStartedAt = useTaskStartedAt(st.runTaskId);
+  const running = !!runInfo && runInfo.status !== "done" && runInfo.status !== "failed" && runInfo.status !== "cancelled";
 
   useEffect(() => { void st.load(); }, []);
 
   const pct = (v?: number | null) => (v == null ? "—" : `${(v * 100).toFixed(1)}%`);
 
-  async function runMonth() {
+  async function handleRunMonth() {
     if (!asOf) { message.warning("请选月末日期"); return; }
-    setRunning(true);
-    try {
-      const taskId = await st.api.deployRunMonth(asOf);
-      const un = await listen<{ id: string; status: string; result: DeployMonthDto | null }>(
-        "task://progress",
-        (e) => {
-          if (e.payload.id !== taskId) return;
-          if (e.payload.status === "done") {
-            st.setPreview(e.payload.result);
-            setRunning(false);
-            void un();
-          } else if (e.payload.status === "failed") {
-            message.error("跑本月失败");
-            setRunning(false);
-            void un();
-          }
-        }
-      );
-    } catch (e) {
-      message.error(String(e));
-      setRunning(false);
-    }
+    await st.runMonth(asOf);
   }
 
   async function confirm() {
@@ -123,12 +105,20 @@ export default function Deploy() {
               type="primary"
               loading={running}
               style={{ marginLeft: 8 }}
-              onClick={runMonth}
+              onClick={handleRunMonth}
             >
               跑本月(预览)
             </Button>
           </div>
-          {pv && (
+          {running && runInfo ? (
+            <div style={{ marginTop: 8 }}>
+              <TaskRunning
+                info={runInfo}
+                startedAt={runStartedAt}
+                onCancel={() => { void st.api.taskCancel(st.runTaskId!); }}
+              />
+            </div>
+          ) : pv ? (
             <Card
               size="small"
               title={`预览 ${pv.as_of}：拟 NAV ${pv.proj_nav.toFixed(3)} · 超额 ${pct(pv.proj_excess)} · 实现 ${pct(pv.realized_ret)}`}
@@ -147,7 +137,7 @@ export default function Deploy() {
                 确认调仓(落账)
               </Button>
             </Card>
-          )}
+          ) : null}
         </Card>
       </Col>
       <Col span={15}>
