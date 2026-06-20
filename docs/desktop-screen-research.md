@@ -40,6 +40,18 @@
 - **选股回测结果 →「分析」tab**:行业归因(配置/选择拆分)· 两腿(再选成长 run + w 行高亮)· 部署加固(T+1 拖累 + 容量);均为 Rust 端口的后验算术、数值对拍 `analyze_*.py`,**基准固定沪深300**(已在卡片标注)。
 - 设计/计划:`docs/superpowers/{specs/2026-06-20-client-refactor-cert-analysis-design.md, plans/2026-06-20-client-refactor-cert-analysis.md}`。
 
+## 部署(value 纸面盘,子项 3a,2026-06-20)
+
+把已验证的价值策略前向 go-live 跟踪搬上 GUI:新顶层 **`部署`** 页 + 驾驶舱 **第 4 卡「价值选股盘」**。
+
+- **机制(screen 驱动,忠实)**:月度 `deploy_run_month(as_of)` 跑冻结配置 `deploy/value_pb_deploy_frozen.yaml`(top-50)的 as-of 选股 → 与上月持仓 **diff**(买/卖/持,等权)→ 拟 NAV/超额 vs 沪深300。两步手动:`跑本月(预览)`(**不落账**)→ `确认调仓`(`deploy_commit_month` 才写状态 + 滚 NAV + 追加 journal)。状态文件 `.rquant-desktop/deploy_book/value.json`(原子写,gitignored)。
+- **NAV**:go-live 起 NAV=1 前向滚动,持有期收益=上月持仓 `last_date→as_of` 的等权 kday close 收益;超额=本盘累计 −(沪深300 同期),首月归零。历史表现仍看「选股回测」(回测=历史,本账本=前向纸面跟踪)。
+- **纪律(诚实)**:纸面**只跟踪 NAV、不下真单**;预览绝不写、确认才落账;数据缺/损坏不臆造——零行情覆盖、沪深300 不覆盖该日、`as_of` 超数据(实际交易日≠所选)、`value.json` 损坏 均**报错拒绝**而非伪造 NAV 或静默重置;commit 失败不弹成功提示,确认按钮防重复提交。**verdict/裁决不涉**(deploy 只展示,不判 PASS/证伪)。
+- **复用**:`screen::run_screen`(冻结配置)、`index_relative`(沪深300 超额)、`TaskRegistry`、`crate::dto::DiffRowDto` + 前端 `DiffTable`;NAV 曲线因 `NavChart` 与 journal 形态耦合,内联 ECharts 双线图(本盘 NAV + 沪深300 虚线)。
+- **验证**:`deploy_book.rs` 纯逻辑 TDD(diff 买卖持、ew_return 等权收益、状态读写);前端 `stores/deploy.test.ts`(commit 清预览+重载);**真数据对账**:`rquant screen --config deploy/value_pb_deploy_frozen.yaml --as-of <最新数据日> --top 50 --window 260` 与部署页预览同走 `run_screen`(同冻结配置/top/window、均无 LLM 走默认枝),数值可直接对照(2026-06-17:universe 1073、top-50)。**GUI 交互冒烟**(需图形界面):部署页选最新数据日→跑本月→首月全 Buy 50→确认→NAV=1 建仓 + journal 一条。
+- **已知取舍**:部分持仓行情缺失时 `ew_return` 按已覆盖名等权(零覆盖才报错);`deploy_commit_month` 同步执行(单用户月频,可接受);严格幂等(同 as_of 防重追加)留后续,前端确认后清预览+防重复点缓解。
+- 设计/计划:`docs/superpowers/{specs/2026-06-20-client-refactor-deploy-design.md, plans/2026-06-20-client-refactor-deploy.md}`。
+
 ## 范围边界
 
-本子项不含:GUI 内编辑配置/树、与上期 diff/导出/下单(子项 3)、optimize(WFO 网格)/ portfolio(组合回测)做实(子项 2b)、数据管线监控 UI(子项 3)。
+本子项(选股&研究台 + 认证&分析 + value 部署)不含:GUI 内编辑配置/树、optimize(WFO 网格)/ portfolio(组合回测)做实(子项 2b)、数据管线监控 UI(子项 3b)、自动月度排程(仅手动按钮)、真实下单/资金(纸面只跟踪 NAV)。
