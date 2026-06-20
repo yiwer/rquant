@@ -1,0 +1,14 @@
+# 部署加固版高毛利：毛利率 sigmoid 打分，仅在【盈利+流动性地板】内（同 value_pb_deploy 闸）。
+# 供三核可投资版——三 sleeve 同闸 → 失格股全 0 排除。
+meta: { name: quality_gm_deploy, forward_window: 20, stances: [long, flat] }
+params: { gm_scale: 30, liq_n: 20, liq_floor: 50000000 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.bps > 0 and fund.roe > 0 and fund.gross_margin > 0 and sma(close * volume, liq_n) >= liq_floor", goto: q, label: ok }
+    default: { goto: flat, label: excluded }
+leaves:
+  q: { stance: long, weight: "sigmoid(fund.gross_margin / gm_scale)" }
+  flat: { stance: flat }

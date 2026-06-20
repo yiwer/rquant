@@ -1,0 +1,14 @@
+# 部署加固版营收成长：营收增速 sigmoid 打分，但仅在【盈利+流动性地板】内（同 value_pb_deploy 闸）。
+# 供三核可投资版——三 sleeve 同闸 → 失格(亏损/不流动)股在所有 sleeve 全 0 → 被 select_top 排除。
+meta: { name: growth_revyoy_deploy, forward_window: 20, stances: [long, flat] }
+params: { r_scale: 20, liq_n: 20, liq_floor: 50000000 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.bps > 0 and fund.roe > 0 and fund.rev_yoy > -100000 and sma(close * volume, liq_n) >= liq_floor", goto: g, label: ok }
+    default: { goto: flat, label: excluded }
+leaves:
+  g: { stance: long, weight: "sigmoid(fund.rev_yoy / r_scale)" }
+  flat: { stance: flat }

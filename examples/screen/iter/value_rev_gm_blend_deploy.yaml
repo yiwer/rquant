@@ -1,0 +1,13 @@
+# round 29: 三核·可投资 = 三核(value+rev+margin)均值 + 全 sleeve 盈利/流动性地板(roe>0、日均成交额≥5000万)。
+# 三 sleeve 同闸 → 失格(亏损/不流动)股全 0 被排除 = 真·组合级地板(净选可投资股)。冠军(r26)的可投资至容量形态。
+# 对照 r21(rev-GARP 部署加固)看地板对三核的代价。复用 value_pb_deploy + 新 growth_revyoy_deploy + quality_gm_deploy。
+quality_trees:
+  - examples/trees/screen/value_pb_deploy.yaml
+  - examples/trees/screen/growth_revyoy_deploy.yaml
+  - examples/trees/screen/quality_gm_deploy.yaml
+setup_trees:
+  inert: [examples/trees/screen/momentum_xs.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["inert"], quality_layers: 5 }
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }
