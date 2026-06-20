@@ -6,6 +6,7 @@ import type { ScreenBacktestReportDto } from "@bindings/ScreenBacktestReportDto"
 import type { IndexRelativeDto } from "@bindings/IndexRelativeDto";
 import { api as realApi, type Api } from "../api/ipc";
 import { friendlyError } from "../errors";
+import { trackTask } from "./tasks";
 
 interface ScreenState {
   api: Api;
@@ -17,15 +18,21 @@ interface ScreenState {
   indexRel: IndexRelativeDto | null;
   benchmark: string;
   error: string | null;
+  // asof task state
+  asofTaskId: string | null;
+  asofResult: ScreenResultDto | null;
+  asofError: string | null;
   loadConfigs: () => Promise<void>;
   loadRuns: () => Promise<void>;
   selectRun: (id: string) => Promise<void>;
   setBenchmark: (id: string, b: string) => Promise<void>;
+  runAsof: (config: string, asOf: string, top: number) => Promise<void>;
 }
 
 export const useScreen = create<ScreenState>((set, get) => ({
   api: realApi, configs: [], indices: [], asof: null, runs: [], report: null, indexRel: null,
   benchmark: "csi300", error: null,
+  asofTaskId: null, asofResult: null, asofError: null,
   loadConfigs: async () => {
     try { set({ configs: await get().api.screenConfigsList(), indices: await get().api.indexList() }); }
     catch { /* 启动早期静默 */ }
@@ -43,5 +50,26 @@ export const useScreen = create<ScreenState>((set, get) => ({
     set({ benchmark: b });
     try { set({ indexRel: await get().api.screenIndexRelative(id, b) }); }
     catch (e) { set({ error: friendlyError(String(e)).title }); }
+  },
+  runAsof: async (config, asOf, top) => {
+    set({ asofTaskId: null, asofResult: null, asofError: null });
+    try {
+      const id = await get().api.screenAsof(config, asOf, top);
+      set({ asofTaskId: id });
+      trackTask(id, {
+        done: (info) => {
+          const result = (info.result as ScreenResultDto | null) ?? null;
+          set({ asofResult: result });
+        },
+        failed: (info) => {
+          set({ asofError: friendlyError(info.error ?? "选股失败").title });
+        },
+        cancelled: () => {
+          set({ asofError: "已取消" });
+        },
+      });
+    } catch (e) {
+      set({ asofError: friendlyError(String(e)).title });
+    }
   },
 }));
