@@ -36,15 +36,17 @@ export const useResearch = create<ResearchState>((set, get) => ({
       const id = await get().api.iterRunRound(config, note, axis, top, benchmark, rebalance);
       set({ runTaskId: id });
       trackTask(id, {
-        done: () => {
-          void get().load();
+        done: (info) => {
+          if (get().runTaskId === info.id) void get().load();
         },
         failed: (info) => {
-          set({ runError: friendlyError(info.error ?? "跑轮失败").title });
-          void get().load();
+          if (get().runTaskId === info.id) {
+            set({ runError: friendlyError(info.error ?? "跑轮失败").title });
+            void get().load();
+          }
         },
-        cancelled: () => {
-          set({ runError: "已取消" });
+        cancelled: (info) => {
+          if (get().runTaskId === info.id) set({ runError: "已取消" });
         },
       });
     } catch (e) {

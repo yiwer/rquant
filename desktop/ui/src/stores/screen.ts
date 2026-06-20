@@ -64,14 +64,16 @@ export const useScreen = create<ScreenState>((set, get) => ({
       set({ asofTaskId: id });
       trackTask(id, {
         done: (info) => {
-          const result = (info.result as ScreenResultDto | null) ?? null;
-          set({ asofResult: result });
+          if (get().asofTaskId === info.id) {
+            const result = (info.result as ScreenResultDto | null) ?? null;
+            set({ asofResult: result });
+          }
         },
         failed: (info) => {
-          set({ asofError: friendlyError(info.error ?? "选股失败").title });
+          if (get().asofTaskId === info.id) set({ asofError: friendlyError(info.error ?? "选股失败").title });
         },
-        cancelled: () => {
-          set({ asofError: "已取消" });
+        cancelled: (info) => {
+          if (get().asofTaskId === info.id) set({ asofError: "已取消" });
         },
       });
     } catch (e) {
@@ -85,13 +87,13 @@ export const useScreen = create<ScreenState>((set, get) => ({
       set({ btTaskId: id });
       trackTask(id, {
         done: (info) => {
-          set({ btRunId: info.result as string });
+          if (get().btTaskId === info.id) set({ btRunId: info.result as string });
         },
         failed: (info) => {
-          set({ btError: friendlyError(info.error ?? "回测失败").title });
+          if (get().btTaskId === info.id) set({ btError: friendlyError(info.error ?? "回测失败").title });
         },
-        cancelled: () => {
-          set({ btError: "已取消" });
+        cancelled: (info) => {
+          if (get().btTaskId === info.id) set({ btError: "已取消" });
         },
       });
     } catch (e) {

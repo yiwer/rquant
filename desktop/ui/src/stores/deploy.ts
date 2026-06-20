@@ -28,13 +28,13 @@ export const useDeploy = create<DeployState>((set, get) => ({
       set({ runTaskId: id });
       trackTask(id, {
         done: (info) => {
-          set({ preview: info.result as DeployMonthDto });
+          if (get().runTaskId === info.id) set({ preview: info.result as DeployMonthDto });
         },
         failed: (info) => {
-          set({ runError: friendlyError(info.error ?? "跑本月失败").title });
+          if (get().runTaskId === info.id) set({ runError: friendlyError(info.error ?? "跑本月失败").title });
         },
-        cancelled: () => {
-          set({ runError: "已取消" });
+        cancelled: (info) => {
+          if (get().runTaskId === info.id) set({ runError: "已取消" });
         },
       });
     } catch (e) {

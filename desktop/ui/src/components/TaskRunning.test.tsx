@@ -17,3 +17,9 @@ test("determinate bar when pct in (0,1)", () => {
   const { container } = render(<TaskRunning info={info(0.4) as any} startedAt={Date.now()} />);
   expect(container.querySelector(".ant-progress")).toBeTruthy();
 });
+
+test("indeterminate spinner when pct is 0 or 1 (no fabricated bar)", () => {
+  const { container } = render(<TaskRunning info={info(0) as any} startedAt={Date.now()} />);
+  expect(container.querySelector(".ant-spin")).toBeTruthy();
+  expect(container.querySelector(".ant-progress")).toBeFalsy();
+});

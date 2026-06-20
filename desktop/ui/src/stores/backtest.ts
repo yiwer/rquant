@@ -71,16 +71,18 @@ export const useBacktest = create<BacktestState>((set, get) => ({
       set({ runTaskId: id });
       trackTask(id, {
         done: (info) => {
-          const runId = info.result as string;
-          void get().loadRuns().then(() => {
-            if (runId) void get().select(runId);
-          });
+          if (get().runTaskId === info.id) {
+            const runId = info.result as string;
+            void get().loadRuns().then(() => {
+              if (runId) void get().select(runId);
+            });
+          }
         },
         failed: (info) => {
-          set({ runError: friendlyError(info.error ?? "回测失败").title });
+          if (get().runTaskId === info.id) set({ runError: friendlyError(info.error ?? "回测失败").title });
         },
-        cancelled: () => {
-          set({ runError: "已取消" });
+        cancelled: (info) => {
+          if (get().runTaskId === info.id) set({ runError: "已取消" });
         },
       });
     } catch (e) {

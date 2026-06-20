@@ -41,7 +41,10 @@ export default function Backtest() {
               onCancel={() => void api.taskCancel(st.runTaskId!)}
             />
           ) : (
-            <BacktestConfigForm onStarted={() => void st.loadRuns()} />
+            <>
+              {st.runError && <div style={{ color: "#dc2626", marginBottom: 8 }}>{st.runError}</div>}
+              <BacktestConfigForm onStarted={() => void st.loadRuns()} />
+            </>
           )}
         </Card>
         <Card size="small" title={`历史留档(${st.runs.length})`}>

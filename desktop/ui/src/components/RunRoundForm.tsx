@@ -41,5 +41,6 @@ export default function RunRoundForm() {
     <Select style={{ width: "100%", marginTop: 8 }} value={bench} onChange={setBench}
       options={(sc.indices.length ? sc.indices : ["csi300", "csi500", "csi1000"]).map((i) => ({ value: i, label: indexZh(i) }))} />
     <Button type="primary" block style={{ marginTop: 8 }} disabled={!config} onClick={run}>▶ 运行一轮</Button>
+    {rs.runError && <div style={{ color: "#dc2626", marginTop: 8 }}>{rs.runError}</div>}
   </div>;
 }

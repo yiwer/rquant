@@ -30,13 +30,13 @@ export const useFactor = create<FactorState>((set, get) => ({
       set({ runTaskId: id });
       trackTask(id, {
         done: (info) => {
-          set({ report: info.result as FactorReportDto });
+          if (get().runTaskId === info.id) set({ report: info.result as FactorReportDto });
         },
         failed: (info) => {
-          set({ runError: friendlyError(info.error ?? "因子分析失败").title });
+          if (get().runTaskId === info.id) set({ runError: friendlyError(info.error ?? "因子分析失败").title });
         },
-        cancelled: () => {
-          set({ runError: "已取消" });
+        cancelled: (info) => {
+          if (get().runTaskId === info.id) set({ runError: "已取消" });
         },
       });
     } catch (e) {

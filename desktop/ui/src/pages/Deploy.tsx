@@ -118,6 +118,8 @@ export default function Deploy() {
                 onCancel={() => { void st.api.taskCancel(st.runTaskId!); }}
               />
             </div>
+          ) : st.runError ? (
+            <div style={{ color: "#dc2626", marginTop: 8 }}>{st.runError}</div>
           ) : pv ? (
             <Card
               size="small"

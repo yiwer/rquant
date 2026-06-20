@@ -45,6 +45,8 @@ export default function Factor() {
             startedAt={startedAt}
             onCancel={() => void api.taskCancel(st.runTaskId!)}
           />
+        ) : st.runError ? (
+          <span style={{ color: "#dc2626" }}>{st.runError}</span>
         ) : st.report ? (
           <FactorReport report={st.report} />
         ) : (
