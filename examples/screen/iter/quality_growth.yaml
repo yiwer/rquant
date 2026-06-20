@@ -1,0 +1,13 @@
+# round 15: 优质成长（高 ROE ∩ 高净利增速 np_yoy）多因子共识 vs 指数。
+# 机制：两因子均值 → 同时高 ROE 与高增速者得分高（剔除"不盈利的成长"垃圾股）。
+# 有别于纯成长(r9)、纯质量(r7)、含价值的三因子(r10)、GARP(r14,价值闸)。
+# 问：盈利质量约束(而非估值约束)能否让成长更稳/更高 Sharpe。复用 growth_npyoy + roe_xs。
+quality_trees:
+  - examples/trees/screen/growth_npyoy.yaml
+  - examples/trees/screen/roe_xs.yaml
+setup_trees:
+  inert: [examples/trees/screen/momentum_xs.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["inert"], quality_layers: 5 }
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }
