@@ -52,6 +52,16 @@
 - **已知取舍**:部分持仓行情缺失时 `ew_return` 按已覆盖名等权(零覆盖才报错);`deploy_commit_month` 同步执行(单用户月频,可接受);严格幂等(同 as_of 防重追加)留后续,前端确认后清预览+防重复点缓解。
 - 设计/计划:`docs/superpowers/{specs/2026-06-20-client-refactor-deploy-design.md, plans/2026-06-20-client-refactor-deploy.md}`。
 
+## 任务运行体验(task-ux,2026-06-20)
+
+所有任务驱动页(选股指定日/选股回测/部署跑本月/因子/研究跑轮/回测中心)统一运行反馈,解决"只显示『选股中…』、不知要多久、切页任务/结果丢失"。
+
+- **全局任务态**:新 `stores/tasks.ts` 是 `task://progress` 的**唯一订阅者**(+ `task_list` 播种),持 `tasks{id→TaskInfoDto}`+`startedAt`;`App` 启动 `init()` 一次;`TaskDrawer` 改读它(去重)。`trackTask(id,{done,failed,cancelled})` 把任务终态一次性回调给域 store。
+- **运行态/结果在 store 不在组件**:各域 store 持 `*TaskId`+结果/`runError`,故**切页不丢**(全局监听常驻,即便页面卸载也能捕获结果)。共享 `components/TaskRunning.tsx`:阶段(中文)+ 已耗时计时 + 进度条(`pct∈(0,1)` 才用百分比,否则 indeterminate,不伪造)+ 取消。
+- **诚实**:失败/取消在页内红字显示(`friendlyError`),不再静默;`startedAt` 对启动前已在跑的任务为近似(标"约")。**单监听不变量**:全 `desktop/ui/src` 仅 `stores/tasks.ts` 一处 `listen("task://progress")`。
+- **性能注**:选股慢的根因是 **debug 构建**(`cargo tauri dev` 同一选股 16.5s vs release 1.8s,~9×)——用 `cargo tauri dev --release`(桥优化)或 `cargo tauri build` 解决;本项让等待**可见**,速度由 release 构建解决。
+- 设计/计划:`docs/superpowers/{specs/2026-06-20-client-task-ux-design.md, plans/2026-06-20-client-task-ux.md}`。
+
 ## 范围边界
 
 本子项(选股&研究台 + 认证&分析 + value 部署)不含:GUI 内编辑配置/树、optimize(WFO 网格)/ portfolio(组合回测)做实(子项 2b)、数据管线监控 UI(子项 3b)、自动月度排程(仅手动按钮)、真实下单/资金(纸面只跟踪 NAV)。
