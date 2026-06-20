@@ -1,0 +1,13 @@
+# round 28: 三核 行业中性——value_pb + 营收成长 rev_yoy + 高毛利 gross_margin 三树均值,每行业 top-3(per_sector)。
+# 测冠军(r26 三核 净+6.64/OOS+1.92)经行业中性后能否像 r20(对 rev-GARP)那样进一步提 Sharpe/压回撤、降 regime 依赖。
+# 需 CLI --sectors data/baostock/sector_membership.csv。复用三现成树，无新树。
+quality_trees:
+  - examples/trees/screen/value_pb.yaml
+  - examples/trees/screen/growth_revyoy.yaml
+  - examples/trees/screen/quality_gm.yaml
+setup_trees:
+  inert: [examples/trees/screen/momentum_xs.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["inert"], quality_layers: 5, per_sector: 3 }
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }
