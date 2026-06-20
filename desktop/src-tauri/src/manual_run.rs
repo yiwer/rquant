@@ -49,6 +49,8 @@ pub fn universe_symbols(ws: &Workspace) -> anyhow::Result<Vec<String>> {
 
 /// 任务体:books 子集 + commit 旗标。返回 run 摘要 JSON。
 pub fn run_books(ws: &Workspace, ctx: &TaskCtx, book_ids: &[String], commit: bool) -> Result<serde_json::Value, String> {
+    ctx.note_params(serde_json::json!({"books": book_ids, "commit": commit}));
+    log::info!("manual_run: books={} commit={commit}", book_ids.join(","));
     let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
     let llm = rquant::cli::build_llm(String::new(), String::new(), ws.root().join(".rquant-cache").join("llm"))
         .map_err(|e| e.to_string())?;
@@ -61,6 +63,8 @@ pub fn run_books(ws: &Workspace, ctx: &TaskCtx, book_ids: &[String], commit: boo
         }
         let base = i as f32 / total;
         let book = crate::books::find_book(id).ok_or_else(|| format!("unknown book {}", id))?;
+        ctx.note_file(&book.state_path(ws).to_string_lossy().into_owned());
+        ctx.note_file(&book.tree_path(ws).to_string_lossy().into_owned());
         match book.kind {
             BookKind::Single => {
                 ctx.progress(base + 0.1 / total, "fetch", book.symbol);
@@ -116,6 +120,9 @@ pub fn run_books(ws: &Workspace, ctx: &TaskCtx, book_ids: &[String], commit: boo
             }
         }
     }
+    let committed_count = summary.iter().filter(|v| v.get("committed").and_then(|c| c.as_bool()).unwrap_or(false)).count();
+    let targets_count = summary.len();
+    ctx.note_summary(&format!("committed {committed_count} targets {targets_count}"));
     Ok(serde_json::Value::Array(summary))
 }
 

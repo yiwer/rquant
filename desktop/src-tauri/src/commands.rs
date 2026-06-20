@@ -172,7 +172,26 @@ pub fn backtest_run(
     state
         .tasks
         .start("backtest", true, move |ctx| {
-            crate::backtest_run::execute_backtest(&ws, ctx, &config)
+            let tree_abs = ws.root().join(&config.tree_path);
+            let primary_abs = ws.root().join(&config.primary_path);
+            ctx.note_params(serde_json::json!({
+                "tree_path": &config.tree_path,
+                "primary_path": &config.primary_path,
+                "mode": &config.mode,
+                "window": config.window,
+                "cost_bps": config.cost_bps,
+            }));
+            ctx.note_file(&tree_abs.to_string_lossy().into_owned());
+            ctx.note_file(&primary_abs.to_string_lossy().into_owned());
+            log::info!("backtest_run: tree={} primary={} mode={} window={} cost_bps={}",
+                config.tree_path, config.primary_path, config.mode, config.window, config.cost_bps);
+            let result = crate::backtest_run::execute_backtest(&ws, ctx, &config)?;
+            if let Some(id) = result.get("run_id").and_then(|v| v.as_str()) {
+                let run_dir = ws.runs_dir().join(id);
+                ctx.note_file(&run_dir.to_string_lossy().into_owned());
+                ctx.note_summary(&format!("run {id}"));
+            }
+            Ok(result)
         })
 }
 
@@ -262,7 +281,17 @@ pub fn fetch_batch(
     state
         .tasks
         .start("fetch_batch", true, move |ctx| {
-            crate::data_bench::fetch_batch(&ws, ctx, &symbols, scale, datalen, &adjust)
+            ctx.note_params(serde_json::json!({
+                "symbols_n": symbols.len(),
+                "scale": scale,
+                "datalen": datalen,
+                "adjust": &adjust,
+            }));
+            log::info!("fetch_batch: symbols_n={} scale={scale} datalen={datalen} adjust={adjust}", symbols.len());
+            let result = crate::data_bench::fetch_batch(&ws, ctx, &symbols, scale, datalen, &adjust)?;
+            let written_n = result.get("written").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+            ctx.note_summary(&format!("written {written_n}"));
+            Ok(result)
         })
 }
 

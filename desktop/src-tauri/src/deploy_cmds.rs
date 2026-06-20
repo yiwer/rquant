@@ -175,8 +175,14 @@ pub fn deploy_run_month(
 ) -> Result<String, String> {
     let ws = state.ws.clone();
     state.tasks.start("deploy_month", true, move |ctx| {
+        ctx.note_params(serde_json::json!({"as_of": &as_of, "config": DEPLOY_CONFIG}));
+        ctx.note_file(&ws.root().join(DEPLOY_CONFIG).to_string_lossy().into_owned());
+        ctx.note_file(&ws.root().join("data/baostock/universe_baostock_day.csv").to_string_lossy().into_owned());
+        ctx.note_file(&ws.index_dir().join("csi300.csv").to_string_lossy().into_owned());
+        log::info!("deploy_run_month: as_of={as_of} config={DEPLOY_CONFIG}");
         ctx.progress(0.3f32, "选股", &as_of);
         let (dto, _st, _nav, _b) = compute_month(&ws, &as_of)?;
+        ctx.note_summary(&format!("picks {} proj_nav {:.3}", dto.picks.len(), dto.proj_nav));
         serde_json::to_value(dto).map_err(|e| e.to_string())
     })
 }

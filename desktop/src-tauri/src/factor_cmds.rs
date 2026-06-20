@@ -5,17 +5,22 @@ use crate::dto_factor::*;
 pub fn factor_run(state: tauri::State<AppState>, factors: Vec<(String, String)>, horizon: u32, layers: u32, sample: u32) -> Result<String, String> {
     let ws = state.ws.clone();
     if factors.is_empty() { return Err("请至少添加一个因子表达式".into()); }
+    let valid_factors: Vec<(String, String)> = factors;
     state.tasks.start("factor", true, move |ctx| {
+        let factor_names: Vec<&str> = valid_factors.iter().map(|(n, _)| n.as_str()).collect();
+        ctx.note_params(serde_json::json!({"factors": factor_names, "horizon": horizon, "layers": layers, "sample": sample}));
+        log::info!("factor_run: factors={} horizon={horizon} layers={layers} sample={sample}", factor_names.join(","));
         ctx.progress(0.2, "因子", "");
         let tmp = ws.root().join(".rquant-desktop").join("factor_report.json");
         std::fs::create_dir_all(tmp.parent().unwrap()).map_err(|e| e.to_string())?;
         let cfg = rquant::factor::FactorConfig {
             universe_path: ws.root().join("data/baostock/universe_baostock_day.csv"),
-            factors: factors.into_iter().map(|(name, expr)| rquant::factor::FactorSpecItem { name, expr }).collect(),
+            factors: valid_factors.into_iter().map(|(name, expr)| rquant::factor::FactorSpecItem { name, expr }).collect(),
             sample: sample as usize, horizon: horizon as usize, layers: layers as usize,
             warmup: 260, window: 260, out_path: tmp, html_path: None, membership_path: None,
         };
         let rep = rquant::factor::run_factor(&cfg).map_err(|e| e.to_string())?;
+        ctx.note_summary(&format!("symbols {}", rep.n_symbols));
         let dto = FactorReportDto {
             n_symbols: rep.n_symbols as u32, sample: rep.sample as u32, horizon: rep.horizon as u32, layers_q: rep.layers_q as u32,
             factors: rep.factors.iter().map(|f| FactorStatsDto {

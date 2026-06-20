@@ -55,18 +55,30 @@ pub fn index_list(state: tauri::State<AppState>) -> Vec<String> {
 pub fn screen_asof(state: tauri::State<AppState>, config: String, as_of: String, top: u32) -> Result<String, String> {
     let ws = state.ws.clone();
     state.tasks.start("screen_asof", true, move |ctx| {
+        // I4: validate date format before use
+        if !as_of.is_empty() {
+            chrono::NaiveDate::parse_from_str(&as_of, "%Y-%m-%d")
+                .map_err(|_| format!("日期格式应为 YYYY-MM-DD: {as_of}"))?;
+        }
+        let universe_path = ws.root().join("data/baostock/universe_baostock_day.csv");
+        let config_path = ws.root().join(&config);
+        ctx.note_params(serde_json::json!({"config": &config, "as_of": &as_of, "top": top}));
+        ctx.note_file(&universe_path.to_string_lossy().into_owned());
+        ctx.note_file(&config_path.to_string_lossy().into_owned());
+        log::info!("screen_asof: config={config} as_of={as_of} top={top}");
         ctx.progress(0.1, "加载", &config);
         let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
         let llm = rquant::cli::build_llm(String::new(), String::new(), ws.root().join(".rquant-cache").join("llm")).map_err(|e| e.to_string())?;
         let cfg = rquant::screen::ScreenRunConfig {
-            config_path: ws.root().join(&config),
-            universe_path: ws.root().join("data/baostock/universe_baostock_day.csv"),
+            config_path,
+            universe_path,
             as_of: chrono::NaiveDate::parse_from_str(&as_of, "%Y-%m-%d").ok(),
             top: Some(top as usize), window: 260, out_path: None,
             membership_path: None, sectors_path: None,
         };
         ctx.progress(0.4, "选股", "");
         let res = rt.block_on(rquant::screen::run_screen(&cfg, &llm)).map_err(|e| e.to_string())?;
+        ctx.note_summary(&format!("universe {} top {}", res.n_universe, res.top));
         let rows = res.rows.iter().map(|r| ScreenPickDto {
             rank: r.rank, symbol: r.symbol.clone(),
             quality_score: r.quality_score, speculative_score: r.speculative_score, combined_score: r.combined_score,
@@ -83,11 +95,26 @@ pub fn screen_asof(state: tauri::State<AppState>, config: String, as_of: String,
 pub fn screen_backtest_run(state: tauri::State<AppState>, config: String, from: String, to: String, top: u32, rebalance: u32, cost_bps: f64) -> Result<String, String> {
     let ws = state.ws.clone();
     state.tasks.start("screen_backtest", true, move |ctx| {
+        // I4: validate date formats before use
+        if !from.is_empty() {
+            chrono::NaiveDate::parse_from_str(&from, "%Y-%m-%d")
+                .map_err(|_| format!("日期格式应为 YYYY-MM-DD: {from}"))?;
+        }
+        if !to.is_empty() {
+            chrono::NaiveDate::parse_from_str(&to, "%Y-%m-%d")
+                .map_err(|_| format!("日期格式应为 YYYY-MM-DD: {to}"))?;
+        }
+        let universe_path = ws.root().join("data/baostock/universe_baostock_day.csv");
+        let config_path = ws.root().join(&config);
+        ctx.note_params(serde_json::json!({"config": &config, "from": &from, "to": &to, "top": top, "rebalance": rebalance, "cost_bps": cost_bps}));
+        ctx.note_file(&universe_path.to_string_lossy().into_owned());
+        ctx.note_file(&config_path.to_string_lossy().into_owned());
+        log::info!("screen_backtest_run: config={config} from={from} to={to} top={top} rebalance={rebalance} cost_bps={cost_bps}");
         let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
         let llm = rquant::cli::build_llm(String::new(), String::new(), ws.root().join(".rquant-cache").join("llm")).map_err(|e| e.to_string())?;
         let mk = |cost: f64| rquant::screen::backtest::ScreenBacktestConfig {
-            config_path: ws.root().join(&config),
-            universe_path: ws.root().join("data/baostock/universe_baostock_day.csv"),
+            config_path: config_path.clone(),
+            universe_path: universe_path.clone(),
             from: chrono::NaiveDate::parse_from_str(&from, "%Y-%m-%d").ok(),
             to: chrono::NaiveDate::parse_from_str(&to, "%Y-%m-%d").ok(),
             rebalance: rebalance as usize, top: Some(top as usize),
@@ -107,6 +134,7 @@ pub fn screen_backtest_run(state: tauri::State<AppState>, config: String, from: 
         crate::screen_runs::write_report(&ws, &id, "gross", &serde_json::to_string(&gross).map_err(|e| e.to_string())?)?;
         crate::screen_runs::write_report(&ws, &id, "net", &serde_json::to_string(&net).map_err(|e| e.to_string())?)?;
         ctx.progress(0.95, "归档", &id);
+        ctx.note_summary(&format!("run {id}"));
         Ok(serde_json::json!({ "run_id": id }))
     })
 }

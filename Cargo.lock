@@ -3057,6 +3057,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "csv",
+ "log",
  "rquant",
  "serde",
  "serde_json",
