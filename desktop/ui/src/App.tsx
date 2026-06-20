@@ -1,5 +1,7 @@
+import { useEffect } from "react";
 import { HashRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 import { Layout, Menu, Typography } from "antd";
+import { useTasks } from "./stores/tasks";
 import Cockpit from "./pages/Cockpit";
 import BookDetail from "./pages/BookDetail";
 import Backtest from "./pages/Backtest";
@@ -31,6 +33,7 @@ function Placeholder({ name }: { name: string }) {
 }
 
 function Shell() {
+  useEffect(() => { useTasks.getState().init(); }, []);
   const nav = useNavigate();
   const loc = useLocation();
   const selected = MODULES.find((m) => loc.pathname.startsWith(`/${m.key}`))?.key ?? "cockpit";

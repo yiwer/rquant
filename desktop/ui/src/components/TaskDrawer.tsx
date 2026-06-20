@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import { Badge, Button, Drawer, List, Progress, Typography } from "antd";
-import { listen } from "@tauri-apps/api/event";
-import type { TaskInfoDto } from "@bindings/TaskInfoDto";
+import { useShallow } from "zustand/shallow";
+import { useTasks } from "../stores/tasks";
 import { api } from "../api/ipc";
 
 const STATUS_BADGE: Record<string, string> = {
@@ -10,23 +10,9 @@ const STATUS_BADGE: Record<string, string> = {
 
 export default function TaskDrawer() {
   const [open, setOpen] = useState(false);
-  const [tasks, setTasks] = useState<TaskInfoDto[]>([]);
-
-  const refresh = useCallback(() => void api.taskList().then(setTasks).catch(() => {}), []);
-
-  useEffect(() => {
-    refresh();
-    // 后端双发:精确通道 + 固定通道 task://progress(T11);统一订阅固定通道全量刷新
-    const un = listen("task://progress", refresh).catch(() => () => {});
-    const timer = setInterval(refresh, 2000);
-    return () => {
-      void un.then((f) => f());
-      clearInterval(timer);
-    };
-  }, [refresh]);
-
+  const taskMap = useTasks(useShallow((s) => s.tasks));
+  const tasks = useMemo(() => Object.values(taskMap).sort((a, b) => a.id.localeCompare(b.id)), [taskMap]);
   const running = tasks.filter((t) => t.status === "running").length;
-
   return (
     <>
       <Badge count={running} size="small">
