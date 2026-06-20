@@ -97,3 +97,4 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 | 8 | pe_value_m | pure PE value (cheap by earnings) vs index [bench:csi300] [reb20] | +3.244 | 0.226 | 1.21 | daily | — | PASS |
 | 9 | growth_npyoy_m | pure growth (np_yoy) vs index — does growth beat index? [bench:csi300] [reb20] | +3.496 | 1.571 | 0.73 | daily | — | PASS |
 | 10 | multi_factor_vqg_m | multi-factor composite (value PB + quality ROE + growth np_yoy mean) vs index [bench:csi300] [reb20] | +2.851 | 0.466 | 0.86 | daily | — | PASS |
+| 11 | growth_npyoy |  [bench:csi1000] | +2.557 | 1.577 | 0.69 | daily | — | PASS |
