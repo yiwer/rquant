@@ -24,7 +24,9 @@ export const useTasks = create<TasksState>((set, get) => ({
     if (get().inited) return;
     set({ inited: true });
     void api.taskList().then((list) => list.forEach((t) => get().ingest(t))).catch(() => {});
-    void listen<TaskInfoDto>("task://progress", (e) => get().ingest(e.payload));
+    try {
+      void listen<TaskInfoDto>("task://progress", (e) => get().ingest(e.payload)).catch(() => {});
+    } catch { /* 非 Tauri 环境(测试)忽略 */ }
   },
 }));
 
