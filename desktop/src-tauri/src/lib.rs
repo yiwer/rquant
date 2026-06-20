@@ -15,6 +15,7 @@ pub mod dto_screen;
 pub mod dto_factor;
 pub mod dto_eval;
 pub mod dto_analyze;
+pub mod dto_deploy;
 pub mod error;
 pub mod gates;
 pub mod analyze;
