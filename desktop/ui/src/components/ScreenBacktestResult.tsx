@@ -9,7 +9,6 @@ import {
   Row,
   Segmented,
   Select,
-  Spin,
   Statistic,
   Table,
   Tabs,
@@ -18,10 +17,11 @@ import {
 import SectorAttrib from "./SectorAttrib";
 import TwoLegBlend from "./TwoLegBlend";
 import DeployHardening from "./DeployHardening";
+import TaskRunning from "./TaskRunning";
 import { QuestionCircleOutlined } from "@ant-design/icons";
-import { listen } from "@tauri-apps/api/event";
 import * as echarts from "echarts";
 import { useScreen } from "../stores/screen";
+import { useTaskInfo, useTaskStartedAt } from "../stores/tasks";
 import { indexZh, regimeLabelZh, TERM_HELP } from "../labels";
 
 const pct = (v?: number | null) =>
@@ -80,56 +80,34 @@ export default function ScreenBacktestResult() {
   const [top, setTop] = useState(50);
   const [reb, setReb] = useState(1);
   const [cost, setCost] = useState(20);
-  const [running, setRunning] = useState(false);
   const [selId, setSelId] = useState<string | null>(null);
   const [anaTab, setAnaTab] = useState("sector");
+
+  const btInfo = useTaskInfo(st.btTaskId);
+  const btStartedAt = useTaskStartedAt(st.btTaskId);
+  const running = !!st.btTaskId && (!btInfo || (btInfo.status !== "done" && btInfo.status !== "failed" && btInfo.status !== "cancelled"));
 
   useEffect(() => {
     void st.loadConfigs();
     void st.loadRuns();
   }, []);
 
-  async function runBacktest() {
+  // After backtest completes, fetch report and refresh runs list
+  useEffect(() => {
+    if (!st.btRunId) return;
+    const rid = st.btRunId;
+    void st.loadRuns().then(() => {
+      setSelId(rid);
+      void st.selectRun(rid);
+    });
+  }, [st.btRunId]);
+
+  async function handleRunBacktest() {
     if (!config) {
       message.warning("请选择配置");
       return;
     }
-    setRunning(true);
-    try {
-      const taskId = await st.api.screenBacktestRun(
-        config,
-        from,
-        to,
-        top,
-        reb,
-        cost
-      );
-      const un = await listen<{
-        id: string;
-        status: string;
-        result: { run_id?: string } | null;
-      }>("task://progress", (e) => {
-        if (e.payload.id !== taskId) return;
-        if (e.payload.status === "done") {
-          setRunning(false);
-          void un();
-          void st.loadRuns().then(() => {
-            const rid = e.payload.result?.run_id;
-            if (rid) {
-              setSelId(rid);
-              void st.selectRun(rid);
-            }
-          });
-        } else if (e.payload.status === "failed") {
-          message.error("回测失败");
-          setRunning(false);
-          void un();
-        }
-      });
-    } catch (e) {
-      message.error(String(e));
-      setRunning(false);
-    }
+    await st.runBacktest(config, from, to, top, reb, cost);
   }
 
   const rep = st.report;
@@ -197,7 +175,7 @@ export default function ScreenBacktestResult() {
               type="primary"
               loading={running}
               disabled={!config}
-              onClick={runBacktest}
+              onClick={handleRunBacktest}
             >
               运行回测
             </Button>
@@ -223,13 +201,15 @@ export default function ScreenBacktestResult() {
             }))}
           />
         </div>
+        {st.btError && (
+          <div style={{ color: "#dc2626", marginTop: 8, fontSize: 13 }}>{st.btError}</div>
+        )}
       </Card>
 
-      {running && !rep ? (
-        <div style={{ textAlign: "center", padding: 48 }}>
-          <Spin />
-          <div style={{ marginTop: 12, opacity: 0.6 }}>回测中…</div>
-        </div>
+      {running && btInfo ? (
+        <TaskRunning info={btInfo} startedAt={btStartedAt} />
+      ) : running && !btInfo ? (
+        <div style={{ textAlign: "center", padding: 48, opacity: 0.6 }}>回测启动中…</div>
       ) : !rep ? (
         <span style={{ opacity: 0.6 }}>
           设置区间与参数后点「运行回测」，或在上方下拉里选择一次历史回测查看结果。

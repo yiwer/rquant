@@ -14,6 +14,16 @@ test("runAsof tracks task and captures result on done", async () => {
   expect(useScreen.getState().asofResult?.n_universe).toBe(10);
 });
 
+test("runBacktest tracks task and captures run id on done", async () => {
+  const real = useScreen.getState().api;
+  useScreen.setState({ api: { ...real, screenBacktestRun: async () => "tb1" }, btTaskId: null, btRunId: null, btError: null });
+  useTasks.setState({ tasks: {}, startedAt: {}, inited: true });
+  await useScreen.getState().runBacktest("cfg", "2024-01-01", "2026-01-01", 50, 5, 20);
+  expect(useScreen.getState().btTaskId).toBe("tb1");
+  useTasks.getState().ingest({ id: "tb1", kind: "screen_backtest", status: "done", progress: { pct: 1, stage: "归档", detail: "" }, error: null, result: "run_123" as any });
+  expect(useScreen.getState().btRunId).toBe("run_123");
+});
+
 test("setBenchmark refetches index-relative", async () => {
   let lastBench = "";
   useScreen.setState({ api: { ...real,

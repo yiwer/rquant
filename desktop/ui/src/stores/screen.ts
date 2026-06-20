@@ -22,17 +22,23 @@ interface ScreenState {
   asofTaskId: string | null;
   asofResult: ScreenResultDto | null;
   asofError: string | null;
+  // backtest task state
+  btTaskId: string | null;
+  btRunId: string | null;
+  btError: string | null;
   loadConfigs: () => Promise<void>;
   loadRuns: () => Promise<void>;
   selectRun: (id: string) => Promise<void>;
   setBenchmark: (id: string, b: string) => Promise<void>;
   runAsof: (config: string, asOf: string, top: number) => Promise<void>;
+  runBacktest: (config: string, from: string, to: string, top: number, rebalance: number, costBps: number) => Promise<void>;
 }
 
 export const useScreen = create<ScreenState>((set, get) => ({
   api: realApi, configs: [], indices: [], asof: null, runs: [], report: null, indexRel: null,
   benchmark: "csi300", error: null,
   asofTaskId: null, asofResult: null, asofError: null,
+  btTaskId: null, btRunId: null, btError: null,
   loadConfigs: async () => {
     try { set({ configs: await get().api.screenConfigsList(), indices: await get().api.indexList() }); }
     catch { /* 启动早期静默 */ }
@@ -70,6 +76,26 @@ export const useScreen = create<ScreenState>((set, get) => ({
       });
     } catch (e) {
       set({ asofError: friendlyError(String(e)).title });
+    }
+  },
+  runBacktest: async (config, from, to, top, rebalance, costBps) => {
+    set({ btTaskId: null, btRunId: null, btError: null });
+    try {
+      const id = await get().api.screenBacktestRun(config, from, to, top, rebalance, costBps);
+      set({ btTaskId: id });
+      trackTask(id, {
+        done: (info) => {
+          set({ btRunId: info.result as string });
+        },
+        failed: (info) => {
+          set({ btError: friendlyError(info.error ?? "回测失败").title });
+        },
+        cancelled: () => {
+          set({ btError: "已取消" });
+        },
+      });
+    } catch (e) {
+      set({ btError: friendlyError(String(e)).title });
     }
   },
 }));
