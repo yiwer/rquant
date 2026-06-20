@@ -68,7 +68,7 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 - **PASS**（毛>0 且 净OOS>0 且 净Sharpe>0 且 be≥40bps 且无翻转，全满足）。
 - **部署加固**（round 5，月频+质量/流动性地板）：回撤腰斩 0.10、break-even 514bps、换手 1/3.5；T+1 执行拖累可忽略；容量 ~2.5亿(10%ADV)。逐年：2021-26 连赢 6 年(含全 OOS)、成长年 2019-20 输 → 真价值因子。
 - **行业中性**（round 6，引擎 group-select 已建）：每行业 top-3，**OOS 超额 +0.81 > 全局 +0.51、train/OOS 趋平衡 → 更少 regime 依赖**（坐实"半 sector 押注半选股"中选股是稳健半）；代价 回撤 0.10→0.21、Sharpe 1.13→0.89。
-- **成长是 OOS 最强因子族**（rounds 9/11/12）：净利增速 np_yoy 净OOS +1.57(csi300)/+1.58(csi1000)；**营收增速 rev_yoy 更强更稳——净OOS +1.68(round 12,新 prior-best)、净超额 +3.30、be 614bps、Tier-2[2.55..3.51] 无翻转**(营收难粉饰>净利)。成长系在 2024-26 OOS(小盘/题材年)远超价值系(价值 OOS ~+0.5-0.8)，与价值互补(价值 train 强、成长 OOS 强)。
+- **成长是 OOS 最强因子族**（rounds 9/11/12）：净利增速 np_yoy 净OOS +1.57(csi300)/+1.58(csi1000)；**营收增速 rev_yoy 更强更稳——净OOS +1.68(round 12,新 prior-best)、净超额 +3.30、be 614bps、Tier-2[2.55..3.51] 无翻转**(营收难粉饰>净利;**r17 营收成长 vs csi1000 +3.33 ≈ vs csi300 +3.30 → 非规模 beta、大小盘双胜**)。成长系在 2024-26 OOS(小盘/题材年)远超价值系(价值 OOS ~+0.5-0.8)，与价值互补(价值 train 强、成长 OOS 强)。
 - **GARP(合理价格成长,round 14)= 迄今最佳风险调整**：PB 最便宜半数池内按 np_yoy 选 top-50 → 净超额 +3.37、**Sharpe 0.83(成长族最高)**、**train +0.97 / OOS +1.09(双强且均衡)**、回撤 0.40(<纯成长 0.55)、be 418bps、Tier-2[1.88..3.34] 无翻转。估值纪律剔除"高估成长"→ 保住成长强 OOS 的同时补强 train、压低回撤,**直接缓解"OOS 单一 regime"诚实边界**。便宜+成长共识 > 任一单飞。
 - **对照(round 15):质量∩成长稀释、价值∩成长增强**——高 ROE ∩ 高 np_yoy 净超额 +2.20 / OOS +1.05 / Sharpe 0.60,**弱于纯成长(r9 +3.50/+1.57/0.73)与 GARP(r14)**;ROE 与成长正相关→叠加="贵的质量成长",唯**估值(PB)才是真正多元化的约束**。结论:并非所有因子组合都增益,value+growth(GARP)是特例。
 
@@ -107,3 +107,4 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 | 14 | garp | GARP: growth (np_yoy) within cheapest-half PB pool — growth with valuation discipline [bench:csi300] [reb20] | +3.374 | 1.088 | 0.83 | daily | — | PASS |
 | 15 | quality_growth | quality-growth consensus: high ROE AND high np_yoy (profitable growers) vs index [bench:csi300] [reb20] | +2.203 | 1.045 | 0.60 | daily | — | PASS |
 | 16 | value_flow | value x capital-flow: rvol (volume/sma20) tilt within cheapest-half PB pool — does volume flow filter value traps? [bench:csi300] [reb20] | +4.491 | 2.088 | 1.00 | daily | sign-flip | FALSIFIED |
+| 17 | growth_revyoy_csi1000 | rev_yoy growth robustness: vs csi1000 small-cap index — non-size-beta? [bench:csi1000] [reb20] | +3.327 | 1.670 | 0.67 | daily | — | PASS |
