@@ -12,6 +12,7 @@ import TaskDrawer from "./components/TaskDrawer";
 import Verdict from "./pages/Verdict";
 import Factor from "./pages/Factor";
 import Deploy from "./pages/Deploy";
+import Audit from "./pages/Audit";
 
 export const MODULES = [
   { key: "cockpit", label: "驾驶舱" },
@@ -20,6 +21,7 @@ export const MODULES = [
   { key: "deploy", label: "部署" },
   { key: "screen", label: "选股" },
   { key: "research", label: "研究" },
+  { key: "audit", label: "审计" },
   { key: "verdict", label: "认证" },
   { key: "tree", label: "策略树" },
   { key: "factor", label: "因子工作台" },
@@ -61,7 +63,8 @@ function Shell() {
           <Route path="/verdict" element={<Verdict />} />
           <Route path="/factor" element={<Factor />} />
           <Route path="/deploy" element={<Deploy />} />
-          {MODULES.filter((m) => m.key !== "cockpit" && m.key !== "backtest" && m.key !== "data" && m.key !== "screen" && m.key !== "research" && m.key !== "verdict" && m.key !== "factor" && m.key !== "deploy").map((m) => (
+          <Route path="/audit" element={<Audit />} />
+          {MODULES.filter((m) => m.key !== "cockpit" && m.key !== "backtest" && m.key !== "data" && m.key !== "screen" && m.key !== "research" && m.key !== "audit" && m.key !== "verdict" && m.key !== "factor" && m.key !== "deploy").map((m) => (
             <Route key={m.key} path={`/${m.key}`} element={<Placeholder name={m.label} />} />
           ))}
           <Route path="*" element={<Navigate to="/cockpit" replace />} />

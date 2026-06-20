@@ -72,5 +72,8 @@ export const api = {
   deployBookRead: () => invoke<import("@bindings/DeployBookDto").DeployBookDto>("deploy_book_read"),
   deployRunMonth: (asOf: string) => invoke<string>("deploy_run_month", { asOf }),
   deployCommitMonth: (asOf: string) => invoke<string>("deploy_commit_month", { asOf }),
+  // 审计
+  auditList: (limit: number, kind?: string, status?: string) => invoke<import("@bindings/AuditRecordDto").AuditRecordDto[]>("audit_list", { limit, kind: kind ?? null, status: status ?? null }),
+  auditLogTail: (lines: number) => invoke<string>("audit_log_tail", { lines }),
 };
 export type Api = typeof api;

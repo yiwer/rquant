@@ -66,3 +66,18 @@ export const STAGE_ZH: Record<string, string> = {
   净档: "净收益档", 归档: "归档", 因子: "因子计算",
 };
 export const stageZh = (stage: string): string => STAGE_ZH[stage] ?? (stage || "运行中");
+
+// 审计操作类型（kind 串以后端 tasks.start 传入值为准）。
+export const AUDIT_KIND_ZH: Record<string, string> = {
+  screen_asof: "指定日选股",
+  screen_backtest: "选股回测",
+  deploy_month: "部署预览",
+  deploy_commit: "部署落账",
+  factor: "因子分析",
+  iter_round: "研究跑轮",
+  backtest: "回测",
+  manual_run: "手动跑单",
+  fetch_batch: "数据抓取",
+  eval_certify: "认证",
+};
+export const auditKindZh = (k: string): string => AUDIT_KIND_ZH[k] ?? k;
