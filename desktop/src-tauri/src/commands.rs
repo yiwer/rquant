@@ -139,12 +139,15 @@ pub fn assemble_tree_list(ws: &Workspace) -> Vec<crate::dto::TreeInfoDto> {
                     frozen,
                     error: None,
                 }),
-                Err(e) => v.push(crate::dto::TreeInfoDto {
+                // examples/ 下解析失败=坏树,呈现;deploy/ 混有选股配置等非树 yaml
+                // (如 value_pb_deploy_frozen.yaml,缺 meta)——解析失败静默跳过,不当坏树列出。
+                Err(e) if !frozen => v.push(crate::dto::TreeInfoDto {
                     path: rel,
                     name: None,
                     frozen,
                     error: Some(e.to_string()),
                 }),
+                Err(_) => {}
             }
         }
     }
@@ -287,7 +290,7 @@ mod tests {
     }
 
     #[test]
-    fn tree_list_scans_examples_and_deploy() {
+    fn tree_list_shows_examples_failures_skips_deploy_nontrees() {
         let td = tempfile::tempdir().unwrap();
         let root = td.path().to_path_buf();
         std::fs::create_dir_all(root.join("examples")).unwrap();
@@ -297,14 +300,19 @@ mod tests {
             crate::backtest_run::test_fixtures::MINI_TREE,
         )
         .unwrap();
-        std::fs::write(root.join("deploy/bad.yaml"), "not: a tree").unwrap();
+        // examples/ 下坏树 → 呈现为错误
+        std::fs::write(root.join("examples/bad.yaml"), "not: a tree").unwrap();
+        // deploy/ 下非树 yaml(选股配置形态,缺 meta)→ 静默跳过,不当坏树列出
+        std::fs::write(root.join("deploy/value_pb_deploy_frozen.yaml"), "quality_trees: [x.yaml]").unwrap();
         let ws = Workspace::new(root);
         let list = assemble_tree_list(&ws);
-        assert_eq!(list.len(), 2);
         let ok = list.iter().find(|t| t.path.ends_with("ok.yaml")).unwrap();
         assert_eq!(ok.name.as_deref(), Some("m2-mini"));
         assert!(!ok.frozen);
-        let bad = list.iter().find(|t| t.path.ends_with("bad.yaml")).unwrap();
-        assert!(bad.name.is_none() && bad.error.is_some() && bad.frozen);
+        let bad = list.iter().find(|t| t.path.ends_with("examples/bad.yaml")).unwrap();
+        assert!(bad.name.is_none() && bad.error.is_some() && !bad.frozen);
+        // deploy/ 非树静默跳过:不出现在列表
+        assert!(list.iter().all(|t| !t.path.ends_with("value_pb_deploy_frozen.yaml")));
+        assert_eq!(list.len(), 2);
     }
 }
