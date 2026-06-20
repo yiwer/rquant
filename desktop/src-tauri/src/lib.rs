@@ -2,10 +2,12 @@
 //! 零业务逻辑——一切计算调 `rquant` 库；spec: docs/superpowers/specs/2026-06-12-rquant-desktop-design.md
 
 pub mod audit;
+pub mod audit_cmds;
 pub mod analyze_cmds;
 pub mod backtest_run;
 pub mod deploy_book;
 pub mod deploy_cmds;
+pub mod dto_audit;
 pub mod eval_cmds;
 pub mod factor_cmds;
 pub mod books;
@@ -50,8 +52,24 @@ impl tasks::ProgressSink for TauriSink {
 }
 
 pub fn run() {
+    // Resolve log dir before plugin registration (ws only available inside .setup).
+    let log_dir = paths::Workspace::detect(&std::env::current_dir().unwrap_or_default())
+        .map(|w| w.log_dir());
+    let log_plugin = {
+        let builder = tauri_plugin_log::Builder::new()
+            .level(tauri_plugin_log::log::LevelFilter::Info);
+        if let Some(dir) = log_dir {
+            builder
+                .target(tauri_plugin_log::Target::new(
+                    tauri_plugin_log::TargetKind::Folder { path: dir, file_name: None },
+                ))
+                .build()
+        } else {
+            builder.build()
+        }
+    };
     tauri::Builder::default()
-        .plugin(tauri_plugin_log::Builder::new().build())
+        .plugin(log_plugin)
         .setup(|app| {
             use tauri::Manager;
             let ws = paths::Workspace::detect(&std::env::current_dir()?)
@@ -108,6 +126,8 @@ pub fn run() {
             deploy_cmds::deploy_book_read,
             deploy_cmds::deploy_run_month,
             deploy_cmds::deploy_commit_month,
+            audit_cmds::audit_list,
+            audit_cmds::audit_log_tail,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
