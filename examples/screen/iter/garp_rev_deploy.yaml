@@ -1,0 +1,12 @@
+# round 21: 部署加固 rev-GARP（最终可投资形态）——在"盈利+可投资流动性"地板上取 PB 便宜半数，按营收增速 rev_yoy 选 top-50。
+# 价值闸用 value_pb_deploy(fund.bps>0 ∧ fund.roe>0 ∧ 20日均成交额≥5000万) + 营收成长 tilt。
+# 综合赢家 rev-GARP(r18) + 部署纪律(r5)：滤掉亏损/距损价值陷阱 + 不可投资低流动票，看赢家落地后是否仍稳健。
+# 复用 value_pb_deploy + growth_revyoy 两树。
+quality_trees: [examples/trees/screen/value_pb_deploy.yaml]
+setup_trees:
+  营收成长: [examples/trees/screen/growth_revyoy.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 1.0, tilt_setups: ["营收成长"], quality_layers: 5 }
+value_frac: 0.5
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }
