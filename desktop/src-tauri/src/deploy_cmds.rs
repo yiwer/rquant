@@ -8,13 +8,22 @@ const DEPLOY_CONFIG: &str = "deploy/value_pb_deploy_frozen.yaml";
 
 fn load_close(ws: &crate::paths::Workspace, sym: &str) -> HashMap<String, f64> {
     let mut m = HashMap::new();
-    if let Ok(txt) = std::fs::read_to_string(ws.kday_dir().join(format!("{sym}.csv"))) {
-        for line in txt.lines().skip(1) {
-            let c: Vec<&str> = line.split(',').collect();
-            if c.len() >= 5 {
-                if let Ok(close) = c[4].parse::<f64>() {
-                    m.insert(c[0].get(..10).unwrap_or(c[0]).to_string(), close);
-                }
+    let Ok(txt) = std::fs::read_to_string(ws.kday_dir().join(format!("{sym}.csv"))) else {
+        return m;
+    };
+    let mut lines = txt.lines();
+    // Parse header to find the `close` column index.
+    let Some(header) = lines.next() else { return m };
+    let headers: Vec<&str> = header.split(',').collect();
+    let Some(close_idx) = headers.iter().position(|h| h.trim().eq_ignore_ascii_case("close")) else {
+        log::warn!("load_close: {sym}.csv has no 'close' column in header");
+        return m;
+    };
+    for line in lines {
+        let c: Vec<&str> = line.split(',').collect();
+        if c.len() > close_idx {
+            if let Ok(close) = c[close_idx].parse::<f64>() {
+                m.insert(c[0].get(..10).unwrap_or(c[0]).to_string(), close);
             }
         }
     }
@@ -191,32 +200,39 @@ pub fn deploy_run_month(
 pub fn deploy_commit_month(
     state: tauri::State<AppState>,
     as_of: String,
-) -> Result<(), String> {
-    let (dto, mut st, proj_nav, bench_nav) = compute_month(&state.ws, &as_of)?;
-    let picks: Vec<String> = dto.picks.iter().map(|h| h.symbol.clone()).collect();
-    let n_buy = dto.diff.iter().filter(|d| d.action == "Buy").count() as u32;
-    let n_sell = dto.diff.iter().filter(|d| d.action == "Sell").count() as u32;
-    if st.bench_base.is_none() {
-        let idx = crate::index_relative::load_index(
-            &state.ws.index_dir().join("csi300.csv"),
-        )?;
-        st.bench_base = crate::index_relative::idx_at(&idx, &as_of);
-    }
-    st.nav = proj_nav;
-    st.nav_history.push(crate::deploy_book::NavPoint {
-        t: as_of.clone(),
-        nav: proj_nav,
-        bench_nav,
-    });
-    st.months.push(crate::deploy_book::MonthRec {
-        as_of: as_of.clone(),
-        picks: picks.clone(),
-        nav: proj_nav,
-        bench_nav,
-        n_buy,
-        n_sell,
-    });
-    st.holdings = picks;
-    st.last_date = Some(as_of);
-    crate::deploy_book::write_state(&state.ws.deploy_book_path(), &st)
+) -> Result<String, String> {
+    let ws = state.ws.clone();
+    state.tasks.start("deploy_commit", true, move |ctx| {
+        ctx.note_params(serde_json::json!({"as_of": &as_of}));
+        ctx.progress(0.3f32, "选股", &as_of);
+        let (dto, mut st, proj_nav, bench_nav) = compute_month(&ws, &as_of)?;
+        let picks: Vec<String> = dto.picks.iter().map(|h| h.symbol.clone()).collect();
+        let n_buy = dto.diff.iter().filter(|d| d.action == "Buy").count() as u32;
+        let n_sell = dto.diff.iter().filter(|d| d.action == "Sell").count() as u32;
+        if st.bench_base.is_none() {
+            let idx = crate::index_relative::load_index(
+                &ws.index_dir().join("csi300.csv"),
+            )?;
+            st.bench_base = crate::index_relative::idx_at(&idx, &as_of);
+        }
+        st.nav = proj_nav;
+        st.nav_history.push(crate::deploy_book::NavPoint {
+            t: as_of.clone(),
+            nav: proj_nav,
+            bench_nav,
+        });
+        st.months.push(crate::deploy_book::MonthRec {
+            as_of: as_of.clone(),
+            picks: picks.clone(),
+            nav: proj_nav,
+            bench_nav,
+            n_buy,
+            n_sell,
+        });
+        st.holdings = picks;
+        st.last_date = Some(as_of.clone());
+        crate::deploy_book::write_state(&ws.deploy_book_path(), &st)?;
+        ctx.note_summary(&format!("nav {:.3}", proj_nav));
+        Ok(serde_json::Value::Null)
+    })
 }

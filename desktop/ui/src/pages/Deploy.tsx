@@ -52,11 +52,13 @@ export default function Deploy() {
   const st = useDeploy();
   const { message } = AntApp.useApp();
   const [asOf, setAsOf] = useState("");
-  const [committing, setCommitting] = useState(false);
 
   const runInfo = useTaskInfo(st.runTaskId);
   const runStartedAt = useTaskStartedAt(st.runTaskId);
   const running = !!runInfo && runInfo.status !== "done" && runInfo.status !== "failed" && runInfo.status !== "cancelled";
+
+  const commitInfo = useTaskInfo(st.commitTaskId);
+  const committing = !!commitInfo && commitInfo.status === "running";
 
   useEffect(() => { void st.load(); }, []);
 
@@ -69,14 +71,7 @@ export default function Deploy() {
 
   async function confirm() {
     if (!st.preview) return;
-    setCommitting(true);
-    try {
-      const ok = await st.commit(st.preview.as_of);
-      if (ok) message.success("已调仓落账");
-      else message.error(st.error ?? "落账失败");
-    } finally {
-      setCommitting(false);
-    }
+    await st.commit(st.preview.as_of);
   }
 
   const b = st.book;
@@ -127,17 +122,26 @@ export default function Deploy() {
               style={{ marginTop: 8 }}
             >
               <DiffTable rows={pv.diff} t={pv.as_of} title={`本月调仓清单 @ ${pv.as_of}`} />
-              <Button
-                type="primary"
-                danger
-                block
-                style={{ marginTop: 8 }}
-                loading={committing}
-                disabled={committing}
-                onClick={confirm}
-              >
-                确认调仓(落账)
-              </Button>
+              {committing && commitInfo ? (
+                <div style={{ marginTop: 8 }}>
+                  <TaskRunning info={commitInfo} startedAt={undefined} />
+                </div>
+              ) : (
+                <Button
+                  type="primary"
+                  danger
+                  block
+                  style={{ marginTop: 8 }}
+                  loading={committing}
+                  disabled={committing}
+                  onClick={confirm}
+                >
+                  确认调仓(落账)
+                </Button>
+              )}
+              {st.commitError && (
+                <div style={{ color: "#dc2626", marginTop: 8 }}>{st.commitError}</div>
+              )}
             </Card>
           ) : null}
         </Card>

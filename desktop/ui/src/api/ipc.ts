@@ -71,6 +71,6 @@ export const api = {
   // 部署
   deployBookRead: () => invoke<import("@bindings/DeployBookDto").DeployBookDto>("deploy_book_read"),
   deployRunMonth: (asOf: string) => invoke<string>("deploy_run_month", { asOf }),
-  deployCommitMonth: (asOf: string) => invoke<void>("deploy_commit_month", { asOf }),
+  deployCommitMonth: (asOf: string) => invoke<string>("deploy_commit_month", { asOf }),
 };
 export type Api = typeof api;
