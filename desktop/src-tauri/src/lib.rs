@@ -4,6 +4,7 @@
 pub mod analyze_cmds;
 pub mod backtest_run;
 pub mod deploy_book;
+pub mod deploy_cmds;
 pub mod eval_cmds;
 pub mod factor_cmds;
 pub mod books;
@@ -98,6 +99,9 @@ pub fn run() {
             analyze_cmds::analyze_sector,
             analyze_cmds::analyze_twoleg,
             analyze_cmds::analyze_deploy,
+            deploy_cmds::deploy_book_read,
+            deploy_cmds::deploy_run_month,
+            deploy_cmds::deploy_commit_month,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
