@@ -59,3 +59,10 @@ export const TERM_HELP = {
 export const GATE_STATUS_ZH: Record<string, string> = { pass: "通过", fail: "未过", indeterminate: "不定" };
 export const FACTOR_TERM = { ic: "IC(信息系数)", icir: "ICIR", rankic: "RankIC", decay: "IC 衰减", layers: "分层收益", mono: "单调性", spread: "多空价差", cert: "认证", alloc: "配置效应", select: "选择效应", drag: "执行拖累", capacity: "容量" } as const;
 export const DEPLOY_TERM = { paper: "纸面盘", rebalance: "调仓", holdings: "持仓", excess: "超额", run: "跑本月", commit: "确认调仓" } as const;
+
+/** 任务进度阶段标识 → 中文(后端任务体发的 stage:start/加载/选股/毛档/净档/归档/因子/...)。 */
+export const STAGE_ZH: Record<string, string> = {
+  start: "启动", 加载: "加载数据", 选股: "横截面选股", 毛档: "毛收益档",
+  净档: "净收益档", 归档: "归档", 因子: "因子计算",
+};
+export const stageZh = (stage: string): string => STAGE_ZH[stage] ?? (stage || "运行中");
