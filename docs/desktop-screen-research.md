@@ -62,6 +62,17 @@
 - **性能注**:选股慢的根因是 **debug 构建**(`cargo tauri dev` 同一选股 16.5s vs release 1.8s,~9×)——用 `cargo tauri dev --release`(桥优化)或 `cargo tauri build` 解决;本项让等待**可见**,速度由 release 构建解决。
 - 设计/计划:`docs/superpowers/{specs/2026-06-20-client-task-ux-design.md, plans/2026-06-20-client-task-ux.md}`。
 
+## 流程审计 + 健壮性加固(process-audit,2026-06-20)
+
+把每次操作的完整轨迹落盘并在客户端可审计,同时修掉 Critical/Important 健壮性硬伤。
+
+- **审计落盘**:`audit.rs` 的 `AuditRecord`(id/kind/params/起止+耗时/阶段时序/触及文件/状态/完整错误/结果摘要/产物)追加 `.rquant-desktop/audit/audit.jsonl`(gitignored)。**TaskRegistry 单卡点**捕获:任务体经 `ctx.note_params/note_file/note_summary` 声明,registry 在终态组装并 `audit::append`(**旁路:写失败仅 eprintln,绝不影响任务结果**;不持 map 锁做文件 IO)。`eval_certify`(快同步)直接 append。
+- **日志落盘**:`tauri_plugin_log` 加文件 target `.rquant-desktop/logs/`(引擎自身 `log::` 随之持久);各命令补 `log::info!` 关键事实。
+- **审计页**(新顶层 `审计`):操作时间线(时间·类型中文·状态·耗时·参数摘要·错误预览)+ 类型/状态筛选 + 文本检索;点行 → 详情抽屉(完整参数 JSON、阶段时序、触及文件「桥层输入/产物,非逐股」、完整错误、结果)+「原始日志」抽屉(`audit_log_tail`)。命令 `audit_list/audit_log_tail`。
+- **健壮性(Crit+Imp)**:C1 `deploy_commit_month` 改重任务(不再阻塞 IPC、且被审计;sub-3a 诚实守卫保留);C2 `tasks.rs` mutex `into_inner` 防中毒;I1 驾驶舱 `catch_unwind` 降级;I2 `book_detail` 损坏状态透出 corrupt;I3 trip 序列化失败记日志;I4 选股坏日期→Err;I5 iter stderr 并发读(治管道死锁)+全量+cmdline;I6 kday/analyze CSV 按表头列名解析。
+- **诚实边界**:触及文件=桥层可知输入/产物(非逐股);审计为旁路不入主流程错误路径。已知 Minor(未修):factor `valid_factors` 改名为装饰、eval_certify 审计 id 为秒级(同秒重复可能撞 id)、deploy 预览/落账共用重任务槽(顺序流程下反而是单写者保障)。
+- 设计/计划:`docs/superpowers/{specs/2026-06-20-client-process-audit-design.md, plans/2026-06-20-client-process-audit.md}`。
+
 ## 范围边界
 
 本子项(选股&研究台 + 认证&分析 + value 部署)不含:GUI 内编辑配置/树、optimize(WFO 网格)/ portfolio(组合回测)做实(子项 2b)、数据管线监控 UI(子项 3b)、自动月度排程(仅手动按钮)、真实下单/资金(纸面只跟踪 NAV)。
