@@ -1,0 +1,11 @@
+# round 20: 行业中性 rev-GARP——PB 便宜半数池内按营收增速 rev_yoy tilt，每行业取 top-3(per_sector)。
+# 测赢家(r18 rev-GARP)经行业中性后是否保住超额、降 regime/行业集中依赖(对照 r6 对纯价值的效果)。
+# 需 CLI --sectors data/baostock/sector_membership.csv。复用 value_pb + growth_revyoy。
+quality_trees: [examples/trees/screen/value_pb.yaml]
+setup_trees:
+  营收成长: [examples/trees/screen/growth_revyoy.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 1.0, tilt_setups: ["营收成长"], quality_layers: 5, per_sector: 3 }
+value_frac: 0.5
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }
