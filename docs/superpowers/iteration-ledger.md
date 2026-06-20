@@ -71,6 +71,7 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 - **成长是 OOS 最强因子族**（rounds 9/11/12）：净利增速 np_yoy 净OOS +1.57(csi300)/+1.58(csi1000)；**营收增速 rev_yoy 更强更稳——净OOS +1.68(round 12,新 prior-best)、净超额 +3.30、be 614bps、Tier-2[2.55..3.51] 无翻转**(营收难粉饰>净利;**r17 营收成长 vs csi1000 +3.33 ≈ vs csi300 +3.30 → 非规模 beta、大小盘双胜**)。成长系在 2024-26 OOS(小盘/题材年)远超价值系(价值 OOS ~+0.5-0.8)，与价值互补(价值 train 强、成长 OOS 强)。
 - **GARP(合理价格成长,round 14)= 迄今最佳风险调整**：PB 最便宜半数池内按 np_yoy 选 top-50 → 净超额 +3.37、**Sharpe 0.83(成长族最高)**、**train +0.97 / OOS +1.09(双强且均衡)**、回撤 0.40(<纯成长 0.55)、be 418bps、Tier-2[1.88..3.34] 无翻转。估值纪律剔除"高估成长"→ 保住成长强 OOS 的同时补强 train、压低回撤,**直接缓解"OOS 单一 regime"诚实边界**。便宜+成长共识 > 任一单飞。
 - **对照(round 15):质量∩成长稀释、价值∩成长增强**——高 ROE ∩ 高 np_yoy 净超额 +2.20 / OOS +1.05 / Sharpe 0.60,**弱于纯成长(r9 +3.50/+1.57/0.73)与 GARP(r14)**;ROE 与成长正相关→叠加="贵的质量成长",唯**估值(PB)才是真正多元化的约束**。结论:并非所有因子组合都增益,value+growth(GARP)是特例。
+- **★ rev-GARP(round 18)= 迄今最强且最稳**：PB 便宜半数池内按营收增速 rev_yoy 选 top-50(综合 r12 最干净成长 + r14 估值纪律)→ **净超额 +4.76(PASS 最高)、Sharpe 0.87(最高)、train +1.07 / OOS +1.75(双强,OOS 亦居首)、回撤 0.43、be 475bps、Tier-2[2.57..4.69] 全强正无翻转**。关键:**净 vs-EW +0.64(正!)**——连不可投资的等权强基准都跑赢(首个清晰做到的 PASS 轮),大幅强化"非基准依赖"诚实性。营收成长 × 估值纪律 = 最佳综合;待 r19+ 三桶/行业中性/部署加固 稳健性确认。
 
 **诚实边界**：①结论取决于基准=可交易指数（合法，EW 不可投资高估机会成本）；②2019-26 是 A股价值/红利友好周期，OOS 为单一宏观期（行业中性版缓解但未消除）；③long-only 价值/beta 溢价非对冲 alpha（回撤真实）；④最便宜 PB 含价值陷阱→部署需质量+流动性地板（`value∩quality` 也过基准但更薄：超额 +1.71/OOS +0.16/Sharpe 0.72）。详见[发现文档](2026-06-18-value-vs-tradeable-benchmark-finding.md)。
 
@@ -108,3 +109,4 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 | 15 | quality_growth | quality-growth consensus: high ROE AND high np_yoy (profitable growers) vs index [bench:csi300] [reb20] | +2.203 | 1.045 | 0.60 | daily | — | PASS |
 | 16 | value_flow | value x capital-flow: rvol (volume/sma20) tilt within cheapest-half PB pool — does volume flow filter value traps? [bench:csi300] [reb20] | +4.491 | 2.088 | 1.00 | daily | sign-flip | FALSIFIED |
 | 17 | growth_revyoy_csi1000 | rev_yoy growth robustness: vs csi1000 small-cap index — non-size-beta? [bench:csi1000] [reb20] | +3.327 | 1.670 | 0.67 | daily | — | PASS |
+| 18 | garp_rev | rev-GARP: revenue growth (rev_yoy) within cheapest-half PB pool — synthesize r12+r14 [bench:csi300] [reb20] | +4.760 | 1.749 | 0.87 | daily | — | PASS |

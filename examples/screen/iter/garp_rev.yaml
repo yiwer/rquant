@@ -1,0 +1,11 @@
+# round 18: rev-GARP 综合——PB 最便宜半数池内按营收增速 rev_yoy 选 top-50。
+# 综合两大发现：r12 rev_yoy(最干净、最强 OOS 的成长信号) + r14 GARP(估值纪律增强成长、Sharpe 0.83)。
+# 问：用更干净的营收成长替换 np_yoy 做 GARP，能否比 r14(np_yoy-GARP) 更优/更稳。复用 value_pb + growth_revyoy。
+quality_trees: [examples/trees/screen/value_pb.yaml]
+setup_trees:
+  营收成长: [examples/trees/screen/growth_revyoy.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 1.0, tilt_setups: ["营收成长"], quality_layers: 5 }
+value_frac: 0.5
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }
