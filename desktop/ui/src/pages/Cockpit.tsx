@@ -7,6 +7,7 @@ import RunStatusPanel from "../components/RunStatusPanel";
 import ManualRunButton from "../components/ManualRunButton";
 import { api } from "../api/ipc";
 import { friendlyError } from "../errors";
+import ValueBookCard from "../components/ValueBookCard";
 
 export default function Cockpit() {
   const { overview, loading, error, load } = useCockpit();
@@ -70,6 +71,9 @@ export default function Cockpit() {
         {overview.cards.map((c) => (
           <Col key={c.book} span={8}><BookCard card={c} /></Col>
         ))}
+      </Row>
+      <Row gutter={12} style={{ marginBottom: 12 }}>
+        <Col span={24}><ValueBookCard /></Col>
       </Row>
       <Row gutter={12}>
         <Col span={14}><DiffTable rows={overview.diff} t={overview.diff_t} /></Col>

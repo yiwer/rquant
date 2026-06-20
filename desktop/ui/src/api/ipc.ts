@@ -68,5 +68,9 @@ export const api = {
   analyzeSector: (runId: string) => invoke<import("@bindings/SectorAttribDto").SectorAttribDto>("analyze_sector", { runId }),
   analyzeTwoleg: (valueRunId: string, growthRunId: string, w: number) => invoke<import("@bindings/TwoLegDto").TwoLegDto>("analyze_twoleg", { valueRunId, growthRunId, w }),
   analyzeDeploy: (runId: string) => invoke<import("@bindings/DeployDto").DeployDto>("analyze_deploy", { runId }),
+  // 部署
+  deployBookRead: () => invoke<import("@bindings/DeployBookDto").DeployBookDto>("deploy_book_read"),
+  deployRunMonth: (asOf: string) => invoke<string>("deploy_run_month", { asOf }),
+  deployCommitMonth: (asOf: string) => invoke<void>("deploy_commit_month", { asOf }),
 };
 export type Api = typeof api;
