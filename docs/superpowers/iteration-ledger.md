@@ -100,3 +100,4 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 | 10 | multi_factor_vqg_m | multi-factor composite (value PB + quality ROE + growth np_yoy mean) vs index [bench:csi300] [reb20] | +2.851 | 0.466 | 0.86 | daily | — | PASS |
 | 11 | growth_npyoy |  [bench:csi1000] | +2.557 | 1.577 | 0.69 | daily | — | PASS |
 | 12 | growth_revyoy | revenue growth (rev_yoy): cleaner top-line growth signal vs index [bench:csi300] [reb20] | +3.301 | 1.681 | 0.67 | daily | — | PASS |
+| 13 | quality_gm | gross margin (pricing power/moat): quality axis distinct from ROE, vs index [bench:csi300] [reb20] | +1.721 | 0.561 | 0.52 | daily | — | PASS |

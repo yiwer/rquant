@@ -1,0 +1,15 @@
+# 质量因子：销售毛利率 gross_margin（百分数，如 35=35%）经 sigmoid 单调映射，毛利越高分越高。
+# 高毛利=定价权/护城河，是有别于 ROE(r7，混杠杆/周转)的质量维度。
+# 标准化无关排序（sigmoid 单调），单因子 top-50 即按 gross_margin 排名。gate 仅排除缺/非正。
+meta: { name: quality_gm, forward_window: 20, stances: [long, flat] }
+params: { gm_scale: 30 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.gross_margin > 0", goto: q, label: has_gm }
+    default: { goto: flat, label: flat }
+leaves:
+  q: { stance: long, weight: "sigmoid(fund.gross_margin / gm_scale)" }
+  flat: { stance: flat }

@@ -1,0 +1,10 @@
+# round 13: 高毛利率 gross_margin 质量因子 vs 可交易指数（monthly）。
+# 假设：高销售毛利率=定价权/护城河，是有别于 ROE(r7，混杠杆/周转)的质量维度，能跑赢指数。
+# 关注其 train/OOS 平衡：若像价值偏 train、还是像成长偏 OOS。
+quality_trees: [examples/trees/screen/quality_gm.yaml]
+setup_trees:
+  inert: [examples/trees/screen/momentum_xs.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["inert"], quality_layers: 5 }
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }
