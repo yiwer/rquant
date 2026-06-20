@@ -60,8 +60,11 @@ pub fn ew_return(holdings: &[String], price: &dyn Fn(&str, &str) -> Option<f64>,
     if rets.is_empty() { 0.0 } else { rets.iter().sum::<f64>() / rets.len() as f64 }
 }
 
-pub fn read_state(path: &std::path::Path) -> DeployState {
-    std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+pub fn read_state(path: &std::path::Path) -> Result<DeployState, String> {
+    match std::fs::read_to_string(path) {
+        Err(_) => Ok(DeployState::default()),                 // absent = brand new book
+        Ok(s) => serde_json::from_str(&s).map_err(|e| format!("账本文件损坏: {e}")),  // present-but-unparseable = corrupt
+    }
 }
 pub fn write_state(path: &std::path::Path, st: &DeployState) -> Result<(), String> {
     std::fs::create_dir_all(path.parent().expect("deploy_book has parent")).map_err(|e| e.to_string())?;

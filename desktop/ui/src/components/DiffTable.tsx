@@ -4,9 +4,9 @@ import { actionZh } from "../labels";
 
 const ACTION_COLOR: Record<string, string> = { Buy: "green", Sell: "red", Adjust: "orange", Hold: "default" };
 
-export default function DiffTable({ rows, t }: { rows: DiffRowDto[]; t: string | null }) {
+export default function DiffTable({ rows, t, title }: { rows: DiffRowDto[]; t: string | null; title?: string }) {
   return (
-    <Card size="small" title={`今日组合清单 diff${t ? ` @ ${t}` : ""}`}>
+    <Card size="small" title={title ?? `今日组合清单 diff${t ? ` @ ${t}` : ""}`}>
       <Table
         size="small"
         rowKey="symbol"

@@ -21,8 +21,8 @@ fn load_close(ws: &crate::paths::Workspace, sym: &str) -> HashMap<String, f64> {
     m
 }
 
-// 跑 as-of screen(冻结配置) → top-50 选中 symbols(按 combined 降序)
-fn screen_picks(ws: &crate::paths::Workspace, as_of: &str) -> Result<Vec<String>, String> {
+// 跑 as-of screen(冻结配置) → (top-50 选中 symbols, 实际交易日日期)
+fn screen_picks(ws: &crate::paths::Workspace, as_of: &str) -> Result<(Vec<String>, String), String> {
     let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
     let llm = rquant::cli::build_llm(
         String::new(),
@@ -43,12 +43,14 @@ fn screen_picks(ws: &crate::paths::Workspace, as_of: &str) -> Result<Vec<String>
     let res = rt
         .block_on(rquant::screen::run_screen(&cfg, &llm))
         .map_err(|e| e.to_string())?;
-    Ok(res
+    let actual_date = res.as_of.format("%Y-%m-%d").to_string();
+    let picks = res
         .rows
         .iter()
         .filter(|r| r.selected)
         .map(|r| r.symbol.clone())
-        .collect())
+        .collect();
+    Ok((picks, actual_date))
 }
 
 // 共享:算一个月的预览(选股 + diff + 滚动 NAV),不写
@@ -56,8 +58,11 @@ fn compute_month(
     ws: &crate::paths::Workspace,
     as_of: &str,
 ) -> Result<(DeployMonthDto, crate::deploy_book::DeployState, f64, f64), String> {
-    let st = crate::deploy_book::read_state(&ws.deploy_book_path());
-    let picks = screen_picks(ws, as_of)?;
+    let st = crate::deploy_book::read_state(&ws.deploy_book_path()).map_err(|e| format!("账本文件损坏,拒绝覆盖以免丢失历史(请检查 value.json):{e}"))?;
+    let (picks, actual_date) = screen_picks(ws, as_of)?;
+    if actual_date != as_of {
+        return Err(format!("该日数据未刷新(实际可用最近交易日 {actual_date},去数据工作台抓取):{as_of}"));
+    }
     if picks.is_empty() {
         return Err("该日无选股(数据未刷新或配置异常)".into());
     }
@@ -112,7 +117,10 @@ fn compute_month(
 
 #[tauri::command]
 pub fn deploy_book_read(state: tauri::State<AppState>) -> DeployBookDto {
-    let st = crate::deploy_book::read_state(&state.ws.deploy_book_path());
+    let st = match crate::deploy_book::read_state(&state.ws.deploy_book_path()) {
+        Ok(st) => st,
+        Err(_) => return DeployBookDto { status: "corrupt".into(), nav: None, excess_total: None, last_rebalance: None, holdings: vec![], nav_history: vec![], months: vec![] },
+    };
     let status = if st.months.is_empty() { "empty" } else { "ok" }.to_string();
     let excess_total = st
         .nav_history

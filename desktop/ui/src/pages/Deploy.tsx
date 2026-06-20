@@ -53,6 +53,7 @@ export default function Deploy() {
   const { message } = AntApp.useApp();
   const [asOf, setAsOf] = useState("");
   const [running, setRunning] = useState(false);
+  const [committing, setCommitting] = useState(false);
 
   useEffect(() => { void st.load(); }, []);
 
@@ -85,9 +86,14 @@ export default function Deploy() {
   }
 
   async function confirm() {
-    if (st.preview) {
-      await st.commit(st.preview.as_of);
-      message.success("已调仓落账");
+    if (!st.preview) return;
+    setCommitting(true);
+    try {
+      const ok = await st.commit(st.preview.as_of);
+      if (ok) message.success("已调仓落账");
+      else message.error(st.error ?? "落账失败");
+    } finally {
+      setCommitting(false);
     }
   }
 
@@ -98,7 +104,9 @@ export default function Deploy() {
     <Row gutter={12}>
       <Col span={9}>
         <Card size="small" title="价值选股盘(纸面 · 不下真单)">
-          {b && b.status !== "empty" ? (
+          {b?.status === "corrupt" ? (
+            <span style={{ color: "#dc2626" }}>账本文件损坏,请检查 value.json(不会自动覆盖)</span>
+          ) : b && b.status !== "empty" ? (
             <Row gutter={12}>
               <Col><Statistic title="NAV" value={b.nav?.toFixed(3) ?? "—"} /></Col>
               <Col><Statistic title="累计超额" value={pct(b.excess_total)} valueStyle={{ color: "#16a34a" }} /></Col>
@@ -126,12 +134,14 @@ export default function Deploy() {
               title={`预览 ${pv.as_of}：拟 NAV ${pv.proj_nav.toFixed(3)} · 超额 ${pct(pv.proj_excess)} · 实现 ${pct(pv.realized_ret)}`}
               style={{ marginTop: 8 }}
             >
-              <DiffTable rows={pv.diff} t={pv.as_of} />
+              <DiffTable rows={pv.diff} t={pv.as_of} title={`本月调仓清单 @ ${pv.as_of}`} />
               <Button
                 type="primary"
                 danger
                 block
                 style={{ marginTop: 8 }}
+                loading={committing}
+                disabled={committing}
                 onClick={confirm}
               >
                 确认调仓(落账)

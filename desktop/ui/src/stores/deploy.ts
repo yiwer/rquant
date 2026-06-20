@@ -6,7 +6,7 @@ import { friendlyError } from "../errors";
 interface DeployState {
   api: Api; book: DeployBookDto | null; preview: DeployMonthDto | null; error: string | null;
   load: () => Promise<void>; setPreview: (p: DeployMonthDto | null) => void;
-  commit: (asOf: string) => Promise<void>;
+  commit: (asOf: string) => Promise<boolean>;
 }
 export const useDeploy = create<DeployState>((set, get) => ({
   api: realApi, book: null, preview: null, error: null,
@@ -14,7 +14,7 @@ export const useDeploy = create<DeployState>((set, get) => ({
   setPreview: (preview) => set({ preview }),
   commit: async (asOf) => {
     set({ error: null });
-    try { await get().api.deployCommitMonth(asOf); set({ preview: null }); await get().load(); }
-    catch (e) { set({ error: friendlyError(String(e)).title }); }
+    try { await get().api.deployCommitMonth(asOf); set({ preview: null }); await get().load(); return true; }
+    catch (e) { set({ error: friendlyError(String(e)).title }); return false; }
   },
 }));
