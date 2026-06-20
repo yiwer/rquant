@@ -68,6 +68,7 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 - **部署加固**（round 5，月频+质量/流动性地板）：回撤腰斩 0.10、break-even 514bps、换手 1/3.5；T+1 执行拖累可忽略；容量 ~2.5亿(10%ADV)。逐年：2021-26 连赢 6 年(含全 OOS)、成长年 2019-20 输 → 真价值因子。
 - **行业中性**（round 6，引擎 group-select 已建）：每行业 top-3，**OOS 超额 +0.81 > 全局 +0.51、train/OOS 趋平衡 → 更少 regime 依赖**（坐实"半 sector 押注半选股"中选股是稳健半）；代价 回撤 0.10→0.21、Sharpe 1.13→0.89。
 - **成长是 OOS 最强因子族**（rounds 9/11/12）：净利增速 np_yoy 净OOS +1.57(csi300)/+1.58(csi1000)；**营收增速 rev_yoy 更强更稳——净OOS +1.68(round 12,新 prior-best)、净超额 +3.30、be 614bps、Tier-2[2.55..3.51] 无翻转**(营收难粉饰>净利)。成长系在 2024-26 OOS(小盘/题材年)远超价值系(价值 OOS ~+0.5-0.8)，与价值互补(价值 train 强、成长 OOS 强)。
+- **GARP(合理价格成长,round 14)= 迄今最佳风险调整**：PB 最便宜半数池内按 np_yoy 选 top-50 → 净超额 +3.37、**Sharpe 0.83(成长族最高)**、**train +0.97 / OOS +1.09(双强且均衡)**、回撤 0.40(<纯成长 0.55)、be 418bps、Tier-2[1.88..3.34] 无翻转。估值纪律剔除"高估成长"→ 保住成长强 OOS 的同时补强 train、压低回撤,**直接缓解"OOS 单一 regime"诚实边界**。便宜+成长共识 > 任一单飞。
 
 **诚实边界**：①结论取决于基准=可交易指数（合法，EW 不可投资高估机会成本）；②2019-26 是 A股价值/红利友好周期，OOS 为单一宏观期（行业中性版缓解但未消除）；③long-only 价值/beta 溢价非对冲 alpha（回撤真实）；④最便宜 PB 含价值陷阱→部署需质量+流动性地板（`value∩quality` 也过基准但更薄：超额 +1.71/OOS +0.16/Sharpe 0.72）。详见[发现文档](2026-06-18-value-vs-tradeable-benchmark-finding.md)。
 
@@ -101,3 +102,4 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 | 11 | growth_npyoy |  [bench:csi1000] | +2.557 | 1.577 | 0.69 | daily | — | PASS |
 | 12 | growth_revyoy | revenue growth (rev_yoy): cleaner top-line growth signal vs index [bench:csi300] [reb20] | +3.301 | 1.681 | 0.67 | daily | — | PASS |
 | 13 | quality_gm | gross margin (pricing power/moat): quality axis distinct from ROE, vs index [bench:csi300] [reb20] | +1.721 | 0.561 | 0.52 | daily | — | PASS |
+| 14 | garp | GARP: growth (np_yoy) within cheapest-half PB pool — growth with valuation discipline [bench:csi300] [reb20] | +3.374 | 1.088 | 0.83 | daily | — | PASS |

@@ -1,0 +1,11 @@
+# round 14: GARP（合理价格成长）——PB 最便宜一半股池内按净利增速 np_yoy 选 top-50。
+# 机制：成长(r9/r12 是 OOS 最强)叠加估值纪律，避开"高估成长"风险；有别于纯成长(r9)与纯价值(r4)。
+# value_frac 0.5 = PB 低于中位的价值闸；池内 lambda=1 全力按成长 tilt 排名。复用 value_pb + growth_npyoy 两树。
+quality_trees: [examples/trees/screen/value_pb.yaml]
+setup_trees:
+  成长: [examples/trees/screen/growth_npyoy.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 1.0, tilt_setups: ["成长"], quality_layers: 5 }
+value_frac: 0.5
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }
