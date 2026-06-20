@@ -3,6 +3,7 @@
 
 pub mod analyze_cmds;
 pub mod backtest_run;
+pub mod deploy_book;
 pub mod eval_cmds;
 pub mod factor_cmds;
 pub mod books;

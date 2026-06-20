@@ -72,6 +72,7 @@ impl Workspace {
     pub fn screen_runs_dir(&self) -> PathBuf {
         self.desktop_data_dir().join("screen_runs")
     }
+    pub fn deploy_book_path(&self) -> PathBuf { self.desktop_data_dir().join("deploy_book").join("value.json") }
 }
 
 /// 解析 Python 可执行:优先 env RQUANT_PYTHON,否则 "python"(Windows venv 已在 PATH)。
