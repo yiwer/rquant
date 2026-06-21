@@ -125,3 +125,12 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 | 28 | value_rev_gm_blend_sn | tri-core sector-neutral (top-3 per industry) — risk-adjusted/regime robustness of the champion [bench:csi300] [reb20] [sector-neutral] | +3.306 | 0.982 | 0.94 | daily | — | PASS |
 | 29 | value_rev_gm_blend_deploy | tri-core deploy-hardened: all 3 sleeves floor-gated (profitable + liquid >=50M) — investable-at-capacity champion [bench:csi300] [reb20] | +3.863 | 1.286 | 0.86 | daily | — | PASS |
 | 30 | value_rev_gm_pe_blend | 4-sleeve (PB+PE+rev+margin): boundary test of orthogonality principle — redundant 2nd value metric should dilute vs tri-core [bench:csi300] [reb20] | +5.228 | 1.566 | 0.98 | daily | — | PASS |
+| 31 | i15m_rsi_oversold | 15m EOD RSI14 oversold mean-reversion top50 daily lag-1 no-lookahead multiyear-OOS | -3.551 | -2.115 | -0.87 | intraday | gross-excess<=0,net-OOS<=0,net-sharpe<=0,break-even<40bps | FALSIFIED |
+| 32 | i15m_lowvol | 15m low-vol boll_bw-lowest defensive top50 monthly reb20 lag-1 multiyear-OOS [reb20] | -1.773 | -1.219 | 0.75 | intraday | gross-excess<=0,net-OOS<=0,break-even<40bps | FALSIFIED |
+| 33 | i15m_mom | 15m momentum roc12-highest top50 daily reb1 lag-1 multiyear-OOS direction-map | -3.657 | -1.974 | -1.03 | intraday | gross-excess<=0,net-OOS<=0,net-sharpe<=0,break-even<40bps | FALSIFIED |
+| 34 | i15m_lowvol | 15m low-vol vs csi300 index-relative monthly reb20 [bench:csi300] [reb20] | +1.198 | 0.560 | 0.75 | intraday | sign-flip | FALSIFIED |
+| 35 | i15m_corrpv | 15m price-volume corr_pv20-highest top50 daily lag-1 completeness | -3.538 | -1.782 | -0.93 | intraday | gross-excess<=0,net-OOS<=0,net-sharpe<=0,break-even<40bps | FALSIFIED |
+| 36 | i15m_matrend | 15m MA-trend ma5/ma20-highest top50 daily lag-1 completeness | -3.465 | -1.539 | -0.62 | intraday | gross-excess<=0,net-OOS<=0,net-sharpe<=0,break-even<40bps | FALSIFIED |
+| 37 | vrgm_base | three-core baseline on merged-universe 2021-26 reb20 [bench:csi300] [reb20] | +3.455 | 1.500 | 1.14 | imerge | — | PASS |
+| 38 | vrgm_lowvol4 | three-core + 15m lowvol 4th quality sleeve (orthogonal blend test) [bench:csi300] [reb20] | +2.453 | 1.181 | 1.00 | imerge | — | PASS |
+| 39 | vrgm_trendtilt | three-core + 15m MA-trend setup tilt lambda0.5 (value x trend interaction) [bench:csi300] [reb20] | +2.458 | 1.443 | 0.90 | imerge | sign-flip | FALSIFIED |

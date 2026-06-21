@@ -1,0 +1,14 @@
+# 15m 均线多头(ma5>ma20)：选 15m 短长均线乖离最高 top-50(日内级别多头趋势)，日频。
+# 因子=昨日 15:00 的 15m ma5/ma20 EOD 快照(滞后1日，标准化乖离)。新因子类型(均线趋势)。
+meta: { name: i15m_matrend, forward_window: 1, stances: [long, flat] }
+params: { scale: 0.01 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.ma20 > 0", goto: pick, label: ok }
+    default: { goto: flat, label: na }
+leaves:
+  pick: { stance: long, weight: "sigmoid((fund.ma5 / fund.ma20 - 1) / scale)" }
+  flat: { stance: flat }

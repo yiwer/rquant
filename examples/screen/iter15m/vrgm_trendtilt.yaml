@@ -1,0 +1,12 @@
+# 处理B：三核 quality + 15m 均线多头 作 setup tilt(lambda 0.5)——"便宜+优质+成长 且 15m 趋势向上"。
+# 测 value×trend 交互(最可能有增益的组合：价值买在开始走强时)。
+quality_trees:
+  - examples/trees/screen/value_pb.yaml
+  - examples/trees/screen/growth_revyoy.yaml
+  - examples/trees/screen/quality_gm.yaml
+setup_trees:
+  trend: [examples/trees/screen/i15m_matrend.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.5, tilt_setups: ["trend"], quality_layers: 5 }
+regimes:
+  - { label: "train_21_23", from: 2021-01-04, to: 2023-12-29 }
+  - { label: "OOS_24_26", from: 2024-01-02, to: 2026-06-12 }

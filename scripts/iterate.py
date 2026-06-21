@@ -127,6 +127,9 @@ AXES = {
     "intraday": {"universe": "data/baostock/universe_intraday_day.csv",
                  "frm": "2021-01-01", "to": "2026-06-12", "warmup": 5, "window": 10,
                  "regimes_hint": "train 2021..2023 / OOS 2024..2026"},
+    "imerge": {"universe": "data/baostock/universe_intraday_merged.csv",
+               "frm": "2021-01-01", "to": "2026-06-12", "warmup": 60, "window": 60,
+               "regimes_hint": "train 2021..2023 / OOS 2024..2026 (value+15m merged)"},
 }
 
 

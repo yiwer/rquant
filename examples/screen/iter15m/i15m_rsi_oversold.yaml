@@ -1,0 +1,9 @@
+# 15m loop round 1：15m EOD RSI14 超卖均值回归，top-50 日频(reb1)，lag-1 无前视，多年 train/OOS。
+# universe=universe_intraday_day(kday 日线 + features_15m_eod_lag1 的 31 指标快照)。
+quality_trees: [examples/trees/screen/i15m_rsi_oversold.yaml]
+setup_trees:
+  s: [examples/trees/screen/i15m_rsi_oversold.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["s"], quality_layers: 5 }
+regimes:
+  - { label: "train_21_23", from: 2021-01-04, to: 2023-12-29 }
+  - { label: "OOS_24_26", from: 2024-01-02, to: 2026-06-12 }

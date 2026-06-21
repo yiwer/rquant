@@ -1,0 +1,13 @@
+# 处理A：三核 + 15m 低波动(boll_bw 低) 作第4个 quality sleeve(均值混合)。测正交 blend 是否增益。
+# 先验：15m 因子个体毛负 → 按正交性原理应稀释(对照日频 r10/r15 加弱/相关 sleeve 稀释)。
+quality_trees:
+  - examples/trees/screen/value_pb.yaml
+  - examples/trees/screen/growth_revyoy.yaml
+  - examples/trees/screen/quality_gm.yaml
+  - examples/trees/screen/i15m_lowvol.yaml
+setup_trees:
+  inert: [examples/trees/screen/momentum_xs.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["inert"], quality_layers: 5 }
+regimes:
+  - { label: "train_21_23", from: 2021-01-04, to: 2023-12-29 }
+  - { label: "OOS_24_26", from: 2024-01-02, to: 2026-06-12 }

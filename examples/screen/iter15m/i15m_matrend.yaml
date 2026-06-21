@@ -1,0 +1,8 @@
+# 15m loop round 36：15m 均线多头(ma5/ma20 乖离最高)，日频(reb1)，lag-1，多年 OOS。新因子类型完整性。
+quality_trees: [examples/trees/screen/i15m_matrend.yaml]
+setup_trees:
+  s: [examples/trees/screen/i15m_matrend.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["s"], quality_layers: 5 }
+regimes:
+  - { label: "train_21_23", from: 2021-01-04, to: 2023-12-29 }
+  - { label: "OOS_24_26", from: 2024-01-02, to: 2026-06-12 }

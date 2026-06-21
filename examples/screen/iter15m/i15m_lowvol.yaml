@@ -1,0 +1,8 @@
+# 15m loop round 2：15m 低波动(boll_bw 最低)防御，月频(reb20，低换手)，lag-1，多年 OOS。
+quality_trees: [examples/trees/screen/i15m_lowvol.yaml]
+setup_trees:
+  s: [examples/trees/screen/i15m_lowvol.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["s"], quality_layers: 5 }
+regimes:
+  - { label: "train_21_23", from: 2021-01-04, to: 2023-12-29 }
+  - { label: "OOS_24_26", from: 2024-01-02, to: 2026-06-12 }

@@ -1,0 +1,14 @@
+# 15m 日内低波动(防御)：选 15m 布林带宽 boll_bw 最低 top-50(波动小=防御)，月频(reb20)持有压低换手。
+# 因子=昨日 15:00 的 15m boll_bw EOD 快照(滞后1日)。假设：低波动异象在慢调仓下净存活(波动是持续量)。
+# boll_bw 已标准化(带宽/中轨)，跨股可比。fund.boll_bw=NaN(warmup)→弃权。
+meta: { name: i15m_lowvol, forward_window: 20, stances: [long, flat] }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.boll_bw > 0", goto: pick, label: ok }
+    default: { goto: flat, label: na }
+leaves:
+  pick: { stance: long, weight: "1 / (1 + fund.boll_bw / 0.05)" }
+  flat: { stance: flat }

@@ -1,0 +1,15 @@
+# 15m 日内 RSI14 超卖(均值回归)：选 15m-RSI 最低 top-50，赌次日反弹。
+# 因子=昨日 15:00 的 15m-RSI14 EOD 快照(滞后1交易日，无前视)。fund.rsi14=NaN(warmup)→弃权。
+# 假设：日内级别超卖在次日有横截面反弹 alpha(对应日频 r1 均值回归是唯一有信号的方向)。
+meta: { name: i15m_rsi_oversold, forward_window: 1, stances: [long, flat] }
+params: { scale: 15.0 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.rsi14 > 0", goto: pick, label: ok }
+    default: { goto: flat, label: na }
+leaves:
+  pick: { stance: long, weight: "sigmoid((50 - fund.rsi14) / scale)" }
+  flat: { stance: flat }

@@ -1,0 +1,14 @@
+# 15m 价量相关(corr_pv20)：选 20-bar 价量相关最高 top-50(价量同向=健康吸筹；背离=派发)，日频。
+# 因子=昨日 15:00 的 15m corr_pv20 EOD 快照(滞后1日，范围 -1..1)。新因子类型(价量)，对照纯振荡/动量/波动。
+meta: { name: i15m_corrpv, forward_window: 1, stances: [long, flat] }
+params: { scale: 0.3 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.rsi14 > 0", goto: pick, label: ok }
+    default: { goto: flat, label: na }
+leaves:
+  pick: { stance: long, weight: "sigmoid(fund.corr_pv20 / scale)" }
+  flat: { stance: flat }

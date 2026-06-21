@@ -1,0 +1,14 @@
+# 15m 日内动量(ROC12)：选 15m 12-bar 涨幅最高 top-50(动量延续)，日频。与超卖(r31)反向，映射方向。
+# 因子=昨日 15:00 的 15m roc12 EOD 快照(滞后1日，标准化%，跨股可比)。gate 用 rsi14 在场=有足够历史。
+meta: { name: i15m_mom, forward_window: 1, stances: [long, flat] }
+params: { scale: 0.03 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.rsi14 > 0", goto: pick, label: ok }
+    default: { goto: flat, label: na }
+leaves:
+  pick: { stance: long, weight: "sigmoid(fund.roc12 / scale)" }
+  flat: { stance: flat }
