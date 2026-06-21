@@ -73,6 +73,14 @@
 - **诚实边界**:触及文件=桥层可知输入/产物(非逐股);审计为旁路不入主流程错误路径。已知 Minor(未修):factor `valid_factors` 改名为装饰、eval_certify 审计 id 为秒级(同秒重复可能撞 id)、deploy 预览/落账共用重任务槽(顺序流程下反而是单写者保障)。
 - 设计/计划:`docs/superpowers/{specs/2026-06-20-client-process-audit-design.md, plans/2026-06-20-client-process-audit.md}`。
 
+## 15m 选股（实验，2026-06-21）
+
+选股页第 3 个 tab「15m选股（实验）」，与日线选股并行。**实验性**：基本面是日频的，15m 只能用日内微结构/技术因子，而当年 12 个日内因子全证伪、无验证 edge（见 `2026-06-18-intraday-daily-selection-findings.md`）；数据 sina 15m、2021 起、幸存者偏差 → 无法正经 OOS。故定位为**可配置框架 + 占位**，供后续自行迭代 15m 因子，非已验证策略。
+- **引擎零改动（除一处必要兜底）**：复用 `run_screen`；15m = 新 universe `data/baostock/universe_baostock_15m_feat.csv`（k15m bar + `features_15m` 的 31 个 15m 指标经 `fund.<col>`，脚本 `scripts/build_universe_15m_feat.py`）+ 占位配置 `examples/screen/intraday/15m_placeholder.yaml`（挂示例树 `intraday15m_example`，按 rvol20）。**兜底**：`load_fundamentals_csv` 扩展为接受 datetime key（features_15m 的 `YYYY-MM-DD HH:MM:SS`，同日多行取末柱=尾盘快照）；日频路径行为不变（--workspace 全绿 + 日线冠军回归 50/1073 验证）。
+- **桥层**：`screen_15m_asof` / `screen_15m_configs_list`（镜像日线、复用 `ScreenResultDto`/TaskRegistry）。
+- **前端**：`Intraday15mTab`（镜像 AsofTab，复用 ScreenPickTable/任务 store/SymbolLabel）+ 顶部红字标注实验·无 edge。
+- **范围**：仅 as-of 选股（无 15m 回测 tab）；不动日线/部署。设计/计划：`docs/superpowers/{specs/2026-06-21-intraday-15m-screen-module-design.md, plans/2026-06-21-intraday-15m-screen-module.md}`。
+
 ## 范围边界
 
 本子项(选股&研究台 + 认证&分析 + value 部署)不含:GUI 内编辑配置/树、optimize(WFO 网格)/ portfolio(组合回测)做实(子项 2b)、数据管线监控 UI(子项 3b)、自动月度排程(仅手动按钮)、真实下单/资金(纸面只跟踪 NAV)。
