@@ -151,3 +151,10 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 | 54 | value_paov_l07 | value+PA+sector overlay l07 reb5 [reb5] | -2.102 | -0.842 | 0.08 | paov | gross-excess<=0,net-OOS<=0,break-even<40bps | FALSIFIED |
 | 55 | value_paov_l0 | baseline value-only reb5 vs csi300 [bench:csi300] [reb5] | +1.587 | 0.284 | 0.60 | paov | — | PASS |
 | 56 | value_paov_l03 | value+overlay l03 reb5 vs csi300 [bench:csi300] [reb5] | +0.689 | -0.074 | 0.36 | paov | net-OOS<=0,in-sample-only,break-even<40bps | FALSIFIED |
+| 57 | s1_value_top3 | S1 纯价值三核 集中top-3 vs csi300 [bench:csi300] [reb20] | +6.663 | 1.398 | 0.75 | daily | — | PASS |
+| 58 | s1_value_top10 | S1 纯价值三核 top-10 稳定性参照 vs csi300 [bench:csi300] [reb20] | +7.587 | 1.627 | 1.00 | daily | — | PASS |
+| 59 | s2_pa1h_top3 | S2 价值~30→1hPA强化 top-3 vs csi300 [bench:csi300] [reb5] | +0.983 | -0.118 | 0.37 | pa1hv | net-OOS<=0,in-sample-only,break-even<40bps | FALSIFIED |
+| 60 | s2_pa1h_top10 | S2 价值~30→1hPA强化 top-10 vs csi300 [bench:csi300] [reb5] | +0.737 | -0.168 | 0.31 | pa1hv | net-OOS<=0,in-sample-only,break-even<40bps | FALSIFIED |
+| 61 | s3_sector_top3 | S3 行业强度×价值深度 top-3 vs csi300 [bench:csi300] [reb20] | -0.686 | -0.667 | -0.22 | paov | gross-excess<=0,net-OOS<=0,net-sharpe<=0,break-even<40bps | FALSIFIED |
+| 62 | s3_sector_top10 | S3 行业强度×价值深度 top-10 vs csi300 [bench:csi300] [reb20] | -0.008 | -0.545 | 0.12 | paov | net-OOS<=0,in-sample-only,break-even<40bps | FALSIFIED |
+| 63 | s1_value_top50 | 价值基线 top-50 同轴对照(daily reb20) [bench:csi300] [reb20] | +6.641 | 1.920 | 1.09 | daily | — | PASS |
