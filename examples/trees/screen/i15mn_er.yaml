@@ -1,0 +1,14 @@
+# 15m-native 路径效率(信念)：在【日内上涨】的股里选路径最平滑(er 高=趋势信念强、非震荡)的 top-50，赌平滑上涨延续。
+# 非"动量幅度"(已证伪)，而是"路径几何"——只有 15m 能看到。滞后1日。
+meta: { name: i15mn_er, forward_window: 1, stances: [long, flat] }
+params: { scale: 0.3 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.intraday > 0", goto: pick, label: up }
+    default: { goto: flat, label: na }
+leaves:
+  pick: { stance: long, weight: "sigmoid((fund.er - 0.3) / scale)" }
+  flat: { stance: flat }

@@ -1,0 +1,14 @@
+# 15m-native 午盘强于早盘(吸筹形态)：选 ampm=午盘收益-早盘收益 最高 top-50(早弱午强=机构尾盘吸筹，非散户早盘拉高派发)。
+# 时点行为信号——只有日内能拆出早/午段。滞后1日。gate 用 range_pos 在场=有数据。
+meta: { name: i15mn_ampm, forward_window: 1, stances: [long, flat] }
+params: { scale: 0.02 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.range_pos >= 0", goto: pick, label: ok }
+    default: { goto: flat, label: na }
+leaves:
+  pick: { stance: long, weight: "sigmoid(fund.ampm / scale)" }
+  flat: { stance: flat }

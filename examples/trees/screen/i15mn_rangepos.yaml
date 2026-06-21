@@ -1,0 +1,14 @@
+# 15m-native 收盘强度：选收盘位于日内振幅高位(range_pos 高=收在最高=买盘掌控收盘)的 top-50。
+# 行为：尾盘收强常被视作次日延续信号。滞后1日。fund.range_pos∈[0,1]，NaN→弃权。
+meta: { name: i15mn_rangepos, forward_window: 1, stances: [long, flat] }
+params: { scale: 0.2 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.range_pos >= 0", goto: pick, label: ok }
+    default: { goto: flat, label: na }
+leaves:
+  pick: { stance: long, weight: "sigmoid((fund.range_pos - 0.5) / scale)" }
+  flat: { stance: flat }

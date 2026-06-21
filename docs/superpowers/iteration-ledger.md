@@ -134,3 +134,7 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 | 37 | vrgm_base | three-core baseline on merged-universe 2021-26 reb20 [bench:csi300] [reb20] | +3.455 | 1.500 | 1.14 | imerge | — | PASS |
 | 38 | vrgm_lowvol4 | three-core + 15m lowvol 4th quality sleeve (orthogonal blend test) [bench:csi300] [reb20] | +2.453 | 1.181 | 1.00 | imerge | — | PASS |
 | 39 | vrgm_trendtilt | three-core + 15m MA-trend setup tilt lambda0.5 (value x trend interaction) [bench:csi300] [reb20] | +2.458 | 1.443 | 0.90 | imerge | sign-flip | FALSIFIED |
+| 40 | i15mn_er | 15m-native: path-efficiency conviction (smooth up-trend) top50 daily lag-1 multiyear-OOS | -2.222 | -1.039 | -1.08 | inative | net-OOS<=0,net-sharpe<=0,break-even<40bps | FALSIFIED |
+| 41 | i15mn_rangepos | 15m-native: close strength (close-in-range high) top50 daily lag-1 multiyear-OOS | -2.294 | -1.331 | -1.37 | inative | gross-excess<=0,net-OOS<=0,net-sharpe<=0,break-even<40bps | FALSIFIED |
+| 42 | i15mn_ampm | 15m-native: afternoon>morning accumulation pattern top50 daily lag-1 multiyear-OOS | -2.404 | -1.710 | -1.57 | inative | gross-excess<=0,net-OOS<=0,net-sharpe<=0,break-even<40bps | FALSIFIED |
+| 43 | i15mn_closevwap | 15m-native: close vs intraday VWAP gap top50 daily lag-1 multiyear-OOS | -2.416 | -1.690 | -1.66 | inative | gross-excess<=0,net-OOS<=0,net-sharpe<=0,break-even<40bps | FALSIFIED |
