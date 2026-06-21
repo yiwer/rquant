@@ -37,6 +37,22 @@ def resample_1h(df15):
     return pd.DataFrame(out, columns=["time", "open", "high", "low", "close", "volume"])
 
 
+def eod_lag1(feat):
+    """feat: time(datetime/parseable) + PA_COLS, 1h bars across days.
+    → per-day last 1h bar (that day's EOD 1h-PA), then shift 1 TRADING DAY
+    (date D gets D-1's EOD), drop first day. Returns time(datetime, date-normalized) + PA_COLS."""
+    f = feat.copy()
+    f["time"] = pd.to_datetime(f["time"])
+    f = f.sort_values("time")
+    f["date"] = f["time"].dt.normalize()
+    eod = f.groupby("date").tail(1).sort_values("date").reset_index(drop=True)
+    present_pa_cols = [c for c in PA_COLS if c in eod.columns]
+    eod[present_pa_cols] = eod[present_pa_cols].shift(1)  # lag 1 trading day
+    eod = eod.iloc[1:].copy()
+    eod["time"] = eod["date"]
+    return eod[["time"] + present_pa_cols]
+
+
 def merge_frames(pa, fin):
     """pa: time + pa_*(已滞后)；fin: time + 财务(公告日)。→ pa 为基准 as-of-backward 并财务。"""
     fin_cols = [c for c in FIN_COLS if c in fin.columns]
@@ -53,10 +69,7 @@ def merge_one(sym):
     if len(h) < 60:
         return False
     feat = pa_features(h)                       # time + pa_*
-    feat[PA_COLS] = feat[PA_COLS].shift(1)      # 滞后1根(无前视)
-    feat = feat.iloc[1:].copy()
-    feat["time"] = pd.to_datetime(feat["time"]).dt.normalize()  # 1h 戳 → 当日(date) 供日频 as-of
-    feat = feat.groupby("time").tail(1)        # 每日最后一根 1h 的 PA = 当日 EOD 1h-PA
+    feat = eod_lag1(feat)                       # date D gets D-1's EOD 1h-PA (lag-1-trading-day)
     fin = pd.read_csv(fp); fin["time"] = pd.to_datetime(fin["time"])
     m = merge_frames(feat, fin)
     m["time"] = pd.to_datetime(m["time"]).dt.strftime("%Y-%m-%d")
