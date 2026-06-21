@@ -1,0 +1,11 @@
+# 基线：纯价值三核(lambda 0.5)，universe_pa_sector，周频 reb5。lambda sweep。
+quality_trees:
+  - examples/trees/screen/value_pb.yaml
+  - examples/trees/screen/growth_revyoy.yaml
+  - examples/trees/screen/quality_gm.yaml
+setup_trees:
+  ov: [examples/trees/screen/pa_overlay.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.5, tilt_setups: ["ov"], quality_layers: 5 }
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }

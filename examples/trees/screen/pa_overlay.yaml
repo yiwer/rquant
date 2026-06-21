@@ -1,0 +1,26 @@
+# 短线 overlay setup：板块轮动 + PA 回调/趋势入场。仅上升趋势(pa_dir>0 或 pa_struct≥1)内给正倾斜。
+# thesis：便宜价值股里，优先「所在板块强/热 + 个股上升趋势的回调买点」。
+meta: { name: pa_overlay, forward_window: 5, stances: [long, flat] }
+params:
+  w_secmom: 1.0
+  w_secheat: 0.5
+  w_pull: 1.0
+  w_h12: 1.0
+  w_narrow: 0.5
+  w_sigw: 0.5
+  w_struct: 0.5
+  w_ext: 0.5
+  w_sigc: 0.5
+  ext_scale: 2.0
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.pa_dir > 0 or fund.pa_struct >= 1", goto: score, label: uptrend }
+    default: { goto: flat, label: not_up }
+leaves:
+  score:
+    stance: long
+    weight: "sigmoid( w_secmom*fund.sec_mom20*10 + w_secheat*(fund.sec_breadth - 0.5)*2 + w_pull*fund.pa_pullback*5 + w_h12*(fund.pa_h1 + fund.pa_h2) + w_narrow*(0.05 - fund.pa_chan)*10 + w_sigw*fund.pa_sig_with + w_struct*fund.pa_struct*0.5 - w_ext*fund.pa_ext/ext_scale - w_sigc*fund.pa_sig_cnt )"
+  flat: { stance: flat }
