@@ -1,0 +1,8 @@
+# 15m loop r46（反转测试）：收盘低于日内VWAP(close_vwap_gap 低)，日频 reb1，lag-1，多年 OOS。取反 r43。
+quality_trees: [examples/trees/screen/i15mn_belowvwap.yaml]
+setup_trees:
+  s: [examples/trees/screen/i15mn_belowvwap.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["s"], quality_layers: 5 }
+regimes:
+  - { label: "train_21_23", from: 2021-01-04, to: 2023-12-29 }
+  - { label: "OOS_24_26", from: 2024-01-02, to: 2026-06-12 }

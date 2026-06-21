@@ -1,0 +1,14 @@
+# 反转测试②：RSI 超卖证伪(r31 gross −1.80) → 取反 = 选【高】15m-RSI(超买/强势)，日频。
+# 对照：检验是否"两头都输"(若超买也负 → 取反无效，等权赢过任一极端)。
+meta: { name: i15m_rsi_overbought, forward_window: 1, stances: [long, flat] }
+params: { scale: 15.0 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.rsi14 > 0", goto: pick, label: ok }
+    default: { goto: flat, label: na }
+leaves:
+  pick: { stance: long, weight: "sigmoid((fund.rsi14 - 50) / scale)" }
+  flat: { stance: flat }

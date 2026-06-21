@@ -1,0 +1,8 @@
+# 15m loop r44（反转测试）：高波动(boll_bw 高)，月频 reb20，lag-1，多年 OOS。取反 r32 低波动。
+quality_trees: [examples/trees/screen/i15m_highvol.yaml]
+setup_trees:
+  s: [examples/trees/screen/i15m_highvol.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["s"], quality_layers: 5 }
+regimes:
+  - { label: "train_21_23", from: 2021-01-04, to: 2023-12-29 }
+  - { label: "OOS_24_26", from: 2024-01-02, to: 2026-06-12 }

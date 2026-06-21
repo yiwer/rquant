@@ -138,3 +138,8 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 | 41 | i15mn_rangepos | 15m-native: close strength (close-in-range high) top50 daily lag-1 multiyear-OOS | -2.294 | -1.331 | -1.37 | inative | gross-excess<=0,net-OOS<=0,net-sharpe<=0,break-even<40bps | FALSIFIED |
 | 42 | i15mn_ampm | 15m-native: afternoon>morning accumulation pattern top50 daily lag-1 multiyear-OOS | -2.404 | -1.710 | -1.57 | inative | gross-excess<=0,net-OOS<=0,net-sharpe<=0,break-even<40bps | FALSIFIED |
 | 43 | i15mn_closevwap | 15m-native: close vs intraday VWAP gap top50 daily lag-1 multiyear-OOS | -2.416 | -1.690 | -1.66 | inative | gross-excess<=0,net-OOS<=0,net-sharpe<=0,break-even<40bps | FALSIFIED |
+| 44 | i15m_highvol | INVERSE of r32 low-vol: high boll_bw monthly reb20 [reb20] | -2.120 | -1.320 | 0.35 | intraday | gross-excess<=0,net-OOS<=0,break-even<40bps | FALSIFIED |
+| 45 | i15m_rsi_overbought | INVERSE of r31 oversold: high RSI overbought daily | -2.944 | -0.422 | -0.12 | intraday | net-OOS<=0,net-sharpe<=0,break-even<40bps | FALSIFIED |
+| 46 | i15mn_belowvwap | INVERSE of r43: close below VWAP daily | -2.413 | -1.660 | -1.53 | inative | gross-excess<=0,net-OOS<=0,net-sharpe<=0,break-even<40bps | FALSIFIED |
+| 47 | i15m_rsi_overbought | high-RSI momentum weekly reb5 (cut turnover to rescue net) [reb5] | -1.239 | -0.352 | 0.77 | intraday | net-OOS<=0,break-even<40bps | FALSIFIED |
+| 48 | i15m_rsi_overbought | high-RSI momentum monthly reb20 (lowest turnover) [reb20] | -1.666 | -0.727 | 0.58 | intraday | gross-excess<=0,net-OOS<=0,break-even<40bps | FALSIFIED |

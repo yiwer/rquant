@@ -1,0 +1,13 @@
+# 反转测试①（最佳机会）：低波动证伪(r32 gross −1.55 vs EW) → 取反 = 选【高】15m 波动(boll_bw 高)。
+# 月频(reb20，低换手) → 若用户"稳定负→反过来正"成立，低换手下 net 应随 gross 一起翻正。
+meta: { name: i15m_highvol, forward_window: 20, stances: [long, flat] }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.boll_bw > 0", goto: pick, label: ok }
+    default: { goto: flat, label: na }
+leaves:
+  pick: { stance: long, weight: "fund.boll_bw / (fund.boll_bw + 0.05)" }
+  flat: { stance: flat }

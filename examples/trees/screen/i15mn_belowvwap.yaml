@@ -1,0 +1,14 @@
+# 反转测试③：收盘高于VWAP证伪(r43 gross −2.24，日内强势次日反转) → 取反 = 选收盘【低于】VWAP(弱势)，日频。
+# 高换手案例：检验 gross 是否翻正、但 net 是否仍被换手成本吃掉(成本不对称)。
+meta: { name: i15mn_belowvwap, forward_window: 1, stances: [long, flat] }
+params: { scale: 0.01 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.range_pos >= 0", goto: pick, label: ok }
+    default: { goto: flat, label: na }
+leaves:
+  pick: { stance: long, weight: "sigmoid(-fund.close_vwap_gap / scale)" }
+  flat: { stance: flat }
