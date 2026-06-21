@@ -1,0 +1,14 @@
+# 冻结部署副本（勿改；examples/ 同名树继续迭代不影响此处）。源 = examples/trees/screen/growth_revyoy_deploy.yaml
+# 营收增速 rev_yoy + 盈利地板(roe>0) + 流动性地板(20日均成交额≥5000万)。三核可投资版的成长 sleeve。验证见 docs/superpowers/iteration-ledger.md r26/r29。
+meta: { name: growth_revyoy_deploy_frozen, forward_window: 20, stances: [long, flat] }
+params: { r_scale: 20, liq_n: 20, liq_floor: 50000000 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.bps > 0 and fund.roe > 0 and fund.rev_yoy > -100000 and sma(close * volume, liq_n) >= liq_floor", goto: g, label: ok }
+    default: { goto: flat, label: excluded }
+leaves:
+  g: { stance: long, weight: "sigmoid(fund.rev_yoy / r_scale)" }
+  flat: { stance: flat }

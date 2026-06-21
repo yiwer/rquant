@@ -1,0 +1,10 @@
+# 冻结部署配置（纸面盘第4账本：价值成长质量三核·可投资）。源 = examples/screen/iter/value_rev_gm_blend_deploy.yaml
+# 三树均值(value_pb + 营收成长 rev_yoy + 高毛利 gross_margin)，全 sleeve 盈利(roe>0)+流动性(20日均成交额≥5000万)地板，top-50 月频(reb=20)。
+# 验证(迭代账本 docs/superpowers/iteration-ledger.md)：r26 三核 PASS(净+6.64/OOS+1.92/Sharpe1.09/三桶非规模beta) → r29 可投资版(净+3.86/OOS+1.29/be377/净vs-EW≈平)。
+quality_trees:
+  - deploy/value_pb_deploy_tree_frozen.yaml
+  - deploy/growth_revyoy_deploy_tree_frozen.yaml
+  - deploy/quality_gm_deploy_tree_frozen.yaml
+setup_trees:
+  inert: [deploy/momentum_xs_frozen.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["inert"], quality_layers: 5 }

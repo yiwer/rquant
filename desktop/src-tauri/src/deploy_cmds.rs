@@ -4,7 +4,7 @@ use crate::commands::AppState;
 use crate::dto_deploy::*;
 use std::collections::HashMap;
 
-const DEPLOY_CONFIG: &str = "deploy/value_pb_deploy_frozen.yaml";
+const DEPLOY_CONFIG: &str = "deploy/value_growth_quality_frozen.yaml";
 
 fn load_close(ws: &crate::paths::Workspace, sym: &str) -> HashMap<String, f64> {
     let mut m = HashMap::new();
