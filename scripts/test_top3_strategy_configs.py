@@ -16,9 +16,10 @@ def test_three_configs_top3():
         assert c["merge"]["top"] == 3
         assert len(c["quality_trees"]) == 3       # 三核
     s2 = _load("examples/screen/iter/s2_value_pa1h_top3.yaml")
-    assert s2["value_frac"] == 0.03 and s2["merge"]["lambda"] == 1.5
+    assert s2["value_frac"] == 0.01 and s2["merge"]["lambda"] == 1.5   # 0.01×3052≈30 名最便宜价值短名单
     assert "pa" in s2["merge"]["tilt_setups"]
     s3 = _load("examples/screen/iter/s3_sector_value_top3.yaml")
+    assert s3["merge"]["lambda"] == 1.5
     assert "sec" in s3["merge"]["tilt_setups"]
 
 
