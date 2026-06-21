@@ -43,7 +43,7 @@
 `desktop/src-tauri/src/screen_cmds.rs` 加：
 - `const SCREEN_15M_UNIVERSE = "data/baostock/universe_baostock_15m_feat.csv"`；`SCREEN_15M_CONFIG_DIR = "examples/screen/intraday"`。
 - `screen_15m_configs_list() -> Vec<ScreenConfigDto>`：列 `examples/screen/intraday/*.yaml`（镜像 `screen_configs_list`）。
-- `screen_15m_asof(config, as_of, top) -> Result<String,String>`：镜像 `screen_asof`，但 `universe_path = SCREEN_15M_UNIVERSE`；经 `state.tasks.start("screen_15m", …)` 异步跑 `run_screen` → 复用 `ScreenResultDto`（同日线，零新 DTO）。窗口 window 取适合 15m 的值（默认 60 根 15m ≈ 1.5 日；spec §6 可调）。
+- `screen_15m_asof(config, as_of, top) -> Result<String,String>`：镜像 `screen_asof`，但 `universe_path = SCREEN_15M_UNIVERSE`；经 `state.tasks.start("screen_15m_asof", …)` 异步跑 `run_screen` → 复用 `ScreenResultDto`（同日线，零新 DTO）。窗口 window 取适合 15m 的值（默认 60 根 15m ≈ 1.5 日；spec §6 可调）。
 - 在 `generate_handler!` 注册 2 命令。
 
 ### 1.4 as-of 语义

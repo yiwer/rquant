@@ -39,6 +39,15 @@ test("run15mAsof sets task id from screen15mAsof", async () => {
   await useScreen.getState().run15mAsof("examples/screen/intraday/15m_placeholder.yaml", "2026-06-18", 50);
   expect(useScreen.getState().i15mTaskId).toBe("t15m");
 });
+
+test("run15mAsof tracks task and captures result on done", async () => {
+  useScreen.setState({ api: { ...real, screen15mAsof: async () => "t15m2" }, i15mTaskId: null, i15mResult: null, i15mError: null });
+  useTasks.setState({ tasks: {}, startedAt: {}, inited: true });
+  await useScreen.getState().run15mAsof("examples/screen/intraday/15m_placeholder.yaml", "2026-06-18", 50);
+  expect(useScreen.getState().i15mTaskId).toBe("t15m2");
+  useTasks.getState().ingest({ id: "t15m2", kind: "screen_15m_asof", status: "done", progress: { pct: 1, stage: "选股(15m)", detail: "" }, error: null, result: { config: "examples/screen/intraday/15m_placeholder.yaml", as_of: "2026-06-18", n_universe: 5, top: 50, rows: [] } as any });
+  expect(useScreen.getState().i15mResult?.n_universe).toBe(5);
+});
 test("load15mConfigs fills configs15m", async () => {
   useScreen.setState({ api: { ...real, screen15mConfigsList: async () => [{ path: "p", name: "n", frozen: false, error: null }] } });
   await useScreen.getState().load15mConfigs();

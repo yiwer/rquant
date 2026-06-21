@@ -75,7 +75,7 @@
 
 ## 15m 选股（实验，2026-06-21）
 
-选股页第 3 个 tab「15m选股（实验）」，与日线选股并行。**实验性**：基本面是日频的，15m 只能用日内微结构/技术因子，而当年 12 个日内因子全证伪、无验证 edge（见 `2026-06-18-intraday-daily-selection-findings.md`）；数据 sina 15m、2021 起、幸存者偏差 → 无法正经 OOS。故定位为**可配置框架 + 占位**，供后续自行迭代 15m 因子，非已验证策略。
+选股页第 3 个 tab「15m选股（实验）」，与日线选股并行。**实验性**：基本面是日频的，15m 只能用日内微结构/技术因子，而当年 12 个日内因子全证伪、无验证 edge（见 `superpowers/2026-06-18-intraday-daily-selection-findings.md`）；数据 sina 15m、2021 起、幸存者偏差 → 无法正经 OOS。故定位为**可配置框架 + 占位**，供后续自行迭代 15m 因子，非已验证策略。
 - **引擎零改动（除一处必要兜底）**：复用 `run_screen`；15m = 新 universe `data/baostock/universe_baostock_15m_feat.csv`（k15m bar + `features_15m` 的 31 个 15m 指标经 `fund.<col>`，脚本 `scripts/build_universe_15m_feat.py`）+ 占位配置 `examples/screen/intraday/15m_placeholder.yaml`（挂示例树 `intraday15m_example`，按 rvol20）。**兜底**：`load_fundamentals_csv` 扩展为接受 datetime key（features_15m 的 `YYYY-MM-DD HH:MM:SS`，同日多行取末柱=尾盘快照）；日频路径行为不变（--workspace 全绿 + 日线冠军回归 50/1073 验证）。
 - **桥层**：`screen_15m_asof` / `screen_15m_configs_list`（镜像日线、复用 `ScreenResultDto`/TaskRegistry）。
 - **前端**：`Intraday15mTab`（镜像 AsofTab，复用 ScreenPickTable/任务 store/SymbolLabel）+ 顶部红字标注实验·无 edge。

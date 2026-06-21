@@ -193,6 +193,9 @@ pub fn screen_15m_configs_list(state: tauri::State<AppState>) -> Vec<ScreenConfi
         let is_yaml = p.extension().and_then(|s| s.to_str()).map(|x| x == "yaml" || x == "yml").unwrap_or(false);
         if !is_yaml { continue }
         let rel = p.strip_prefix(state.ws.root()).unwrap_or(&p).to_string_lossy().replace('\\', "/");
+        // Intentionally surfaces every parse error as a broken-config row (unlike screen_configs_list,
+        // which silently drops parse failures in the frozen deploy/ dir). The intraday dir holds only
+        // screen configs, so a broken placeholder should be visible to the user rather than hidden.
         match rquant::screen::config::load_screen_config(&p) {
             Ok(_) => out.push(ScreenConfigDto { path: rel, name: p.file_stem().and_then(|s| s.to_str()).map(String::from), frozen: false, error: None }),
             Err(e) => out.push(ScreenConfigDto { path: rel, name: None, frozen: false, error: Some(format!("配置解析失败: {e}")) }),

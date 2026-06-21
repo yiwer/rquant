@@ -3,6 +3,9 @@
 # 替换/新增 quality_trees 指向你的 15m 因子树即可迭代；当前仅挂一棵示例占位树(按 rvol20 放量)。
 quality_trees: [examples/trees/screen/intraday15m_example.yaml]
 setup_trees:
+  # Tag-only placeholder: with merge.lambda=0.0 this setup contributes zero weight to ranking.
+  # momentum_xs is a daily-tuned tree (its ref(close,20) ≈ 1.3 trading days on 15m bars),
+  # so replace it with a 15m-appropriate setup if you want setup tilt.
   inert: [examples/trees/screen/momentum_xs.yaml]
 merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["inert"], quality_layers: 5 }
 regimes:

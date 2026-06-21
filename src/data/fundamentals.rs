@@ -126,4 +126,15 @@ mod tests {
         let f = wf("time,roe\n2024-08-20,1.0\n2024-04-27,2.0\n");
         assert!(load_fundamentals_csv(f.path()).is_err());
     }
+
+    #[test]
+    fn datetime_key_last_row_wins() {
+        // features_15m format: datetime keys, same-date multi-bar → last bar of day wins.
+        let f = wf("time,rvol20\n2021-01-04 09:45:00,1\n2021-01-04 15:00:00,9\n2021-01-05 15:00:00,3\n");
+        let s = load_fundamentals_csv(f.path()).unwrap();
+        // 2021-01-04: two bars → last bar (15:00) value 9.0 should win.
+        assert_eq!(s.as_of(dt(2021, 1, 4)).get("rvol20").copied(), Some(9.0));
+        // 2021-01-05: single bar → 3.0.
+        assert_eq!(s.as_of(dt(2021, 1, 5)).get("rvol20").copied(), Some(3.0));
+    }
 }
