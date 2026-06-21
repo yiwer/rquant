@@ -145,3 +145,9 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 | 48 | i15m_rsi_overbought | high-RSI momentum monthly reb20 (lowest turnover) [reb20] | -1.666 | -0.727 | 0.58 | intraday | gross-excess<=0,net-OOS<=0,break-even<40bps | FALSIFIED |
 | 49 | ff3_low_alpha | FF3 low-alpha (undervalued) monthly reb20 [reb20] | -1.267 | -0.227 | 0.27 | ff3 | gross-excess<=0,net-OOS<=0,break-even<40bps | FALSIFIED |
 | 50 | ff3_high_alpha | FF3 high-alpha (momentum) monthly reb20 [reb20] | -2.486 | -1.105 | -0.16 | ff3 | gross-excess<=0,net-OOS<=0,net-sharpe<=0,break-even<40bps | FALSIFIED |
+| 51 | value_paov_l0 | baseline value-only reb5 (paov universe) [reb5] | -0.371 | -0.233 | 0.60 | paov | gross-excess<=0,net-OOS<=0,break-even<40bps | FALSIFIED |
+| 52 | value_paov_l03 | value+PA+sector overlay l03 reb5 [reb5] | -1.310 | -0.590 | 0.36 | paov | gross-excess<=0,net-OOS<=0,break-even<40bps | FALSIFIED |
+| 53 | value_paov_l05 | value+PA+sector overlay l05 reb5 [reb5] | -1.885 | -0.711 | 0.17 | paov | gross-excess<=0,net-OOS<=0,break-even<40bps | FALSIFIED |
+| 54 | value_paov_l07 | value+PA+sector overlay l07 reb5 [reb5] | -2.102 | -0.842 | 0.08 | paov | gross-excess<=0,net-OOS<=0,break-even<40bps | FALSIFIED |
+| 55 | value_paov_l0 | baseline value-only reb5 vs csi300 [bench:csi300] [reb5] | +1.587 | 0.284 | 0.60 | paov | — | PASS |
+| 56 | value_paov_l03 | value+overlay l03 reb5 vs csi300 [bench:csi300] [reb5] | +0.689 | -0.074 | 0.36 | paov | net-OOS<=0,in-sample-only,break-even<40bps | FALSIFIED |
