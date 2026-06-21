@@ -47,6 +47,8 @@ export const api = {
   screenConfigsList: () => invoke<import("@bindings/ScreenConfigDto").ScreenConfigDto[]>("screen_configs_list"),
   indexList: () => invoke<string[]>("index_list"),
   screenAsof: (config: string, asOf: string, top: number) => invoke<string>("screen_asof", { config, asOf, top }),
+  screen15mConfigsList: () => invoke<import("@bindings/ScreenConfigDto").ScreenConfigDto[]>("screen_15m_configs_list"),
+  screen15mAsof: (config: string, asOf: string, top: number) => invoke<string>("screen_15m_asof", { config, asOf, top }),
   screenBacktestRun: (config: string, from: string, to: string, top: number, rebalance: number, costBps: number) =>
     invoke<string>("screen_backtest_run", { config, from, to, top, rebalance, costBps }),
   screenRunsList: () => invoke<import("@bindings/ScreenRunMetaDto").ScreenRunMetaDto[]>("screen_runs_list"),

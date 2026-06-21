@@ -2,7 +2,7 @@ import { test, expect, afterEach } from "vitest";
 import { useScreen } from "./screen";
 import { useTasks } from "./tasks";
 const real = useScreen.getState().api;
-afterEach(() => useScreen.setState({ api: real, configs: [], runs: [], report: null, indexRel: null, benchmark: "csi300" }));
+afterEach(() => useScreen.setState({ api: real, configs: [], runs: [], report: null, indexRel: null, benchmark: "csi300", configs15m: [], i15mTaskId: null, i15mResult: null, i15mError: null }));
 
 test("runAsof tracks task and captures result on done", async () => {
   const real = useScreen.getState().api;
@@ -32,4 +32,15 @@ test("setBenchmark refetches index-relative", async () => {
   await useScreen.getState().setBenchmark("scr-1", "csi500");
   expect(lastBench).toBe("csi500");
   expect(useScreen.getState().indexRel?.benchmark).toBe("csi500");
+});
+
+test("run15mAsof sets task id from screen15mAsof", async () => {
+  useScreen.setState({ api: { ...real, screen15mAsof: async () => "t15m" } });
+  await useScreen.getState().run15mAsof("examples/screen/intraday/15m_placeholder.yaml", "2026-06-18", 50);
+  expect(useScreen.getState().i15mTaskId).toBe("t15m");
+});
+test("load15mConfigs fills configs15m", async () => {
+  useScreen.setState({ api: { ...real, screen15mConfigsList: async () => [{ path: "p", name: "n", frozen: false, error: null }] } });
+  await useScreen.getState().load15mConfigs();
+  expect(useScreen.getState().configs15m.length).toBe(1);
 });

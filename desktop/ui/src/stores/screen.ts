@@ -32,6 +32,13 @@ interface ScreenState {
   setBenchmark: (id: string, b: string) => Promise<void>;
   runAsof: (config: string, asOf: string, top: number) => Promise<void>;
   runBacktest: (config: string, from: string, to: string, top: number, rebalance: number, costBps: number) => Promise<void>;
+  // 15m 平行态
+  configs15m: ScreenConfigDto[];
+  i15mTaskId: string | null;
+  i15mResult: ScreenResultDto | null;
+  i15mError: string | null;
+  load15mConfigs: () => Promise<void>;
+  run15mAsof: (config: string, asOf: string, top: number) => Promise<void>;
 }
 
 export const useScreen = create<ScreenState>((set, get) => ({
@@ -39,6 +46,7 @@ export const useScreen = create<ScreenState>((set, get) => ({
   benchmark: "csi300", error: null,
   asofTaskId: null, asofResult: null, asofError: null,
   btTaskId: null, btRunId: null, btError: null,
+  configs15m: [], i15mTaskId: null, i15mResult: null, i15mError: null,
   loadConfigs: async () => {
     try { set({ configs: await get().api.screenConfigsList(), indices: await get().api.indexList() }); }
     catch { /* 启动早期静默 */ }
@@ -99,5 +107,20 @@ export const useScreen = create<ScreenState>((set, get) => ({
     } catch (e) {
       set({ btError: friendlyError(String(e)).title });
     }
+  },
+  load15mConfigs: async () => {
+    try { set({ configs15m: await get().api.screen15mConfigsList() }); } catch { /* 启动早期静默 */ }
+  },
+  run15mAsof: async (config, asOf, top) => {
+    set({ i15mTaskId: null, i15mResult: null, i15mError: null });
+    try {
+      const id = await get().api.screen15mAsof(config, asOf, top);
+      set({ i15mTaskId: id });
+      trackTask(id, {
+        done: (info) => { if (get().i15mTaskId === info.id) set({ i15mResult: (info.result as ScreenResultDto | null) ?? null }); },
+        failed: (info) => { if (get().i15mTaskId === info.id) set({ i15mError: friendlyError(info.error ?? "15m选股失败").title }); },
+        cancelled: (info) => { if (get().i15mTaskId === info.id) set({ i15mError: "已取消" }); },
+      });
+    } catch (e) { set({ i15mError: friendlyError(String(e)).title }); }
   },
 }));
