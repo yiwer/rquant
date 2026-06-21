@@ -1,5 +1,6 @@
 //! 逐股基本面时点序列：行=季报（按公告日升序），as_of(t) 取公告日≤t 的最近一行。
 //! point-in-time 命根：首份财报公告前 → 空（DSL fund.* = NaN 弃权）。
+//! 也接受 features_15m 格式（首列 datetime "YYYY-MM-DD HH:MM:SS"）：同日多行取最后一行（末柱快照）。
 
 use crate::{Error, Result};
 use chrono::{NaiveDate, NaiveDateTime};
@@ -33,7 +34,9 @@ impl FundamentalSeries {
     }
 }
 
-/// 载财务 CSV：首列 time=`%Y-%m-%d`（公告日，须严格升序），其余为数值列；空单元 → NaN。
+/// 载基本面/因子 CSV：首列 time=`%Y-%m-%d` 或 `%Y-%m-%d %H:%M:%S`，其余为数值列；空单元 → NaN。
+/// - 季报格式（date-only key，须严格升序）：标准点时序列。
+/// - 日内因子格式（datetime key，每日多行）：同日多行取末行（末柱快照）；日间须升序。
 pub fn load_fundamentals_csv(path: &Path) -> Result<FundamentalSeries> {
     let mut rdr = csv::Reader::from_path(path)?;
     let headers = rdr.headers()?.clone();
@@ -45,20 +48,38 @@ pub fn load_fundamentals_csv(path: &Path) -> Result<FundamentalSeries> {
     let mut cols: BTreeMap<String, Vec<f64>> = col_names.iter().map(|c| (c.clone(), Vec::new())).collect();
     for rec in rdr.records() {
         let rec = rec?;
-        let d = NaiveDate::parse_from_str(rec[0].trim(), "%Y-%m-%d")
-            .map_err(|e| Error::Data(format!("fundamentals bad date '{}': {e}", &rec[0])))?;
-        if let Some(last) = dates.last()
-            && d <= *last
-        {
-            return Err(Error::Data(format!("fundamentals time not strictly increasing at {d}")));
-        }
-        dates.push(d);
+        let raw = rec[0].trim();
+        // Accept both date-only ("YYYY-MM-DD") and datetime ("YYYY-MM-DD HH:MM:SS") keys.
+        let d = NaiveDate::parse_from_str(raw, "%Y-%m-%d")
+            .or_else(|_| NaiveDate::parse_from_str(raw.get(..10).unwrap_or(raw), "%Y-%m-%d"))
+            .map_err(|e| Error::Data(format!("fundamentals bad date '{}': {e}", raw)))?;
+        // Parse values for this row.
+        let mut row_vals: Vec<f64> = Vec::with_capacity(col_names.len());
         for (i, c) in col_names.iter().enumerate() {
             let cell = rec.get(i + 1).unwrap_or("").trim();
             let val = if cell.is_empty() { f64::NAN } else {
                 cell.parse::<f64>().map_err(|e| Error::Data(format!("fundamentals bad number '{cell}': {e}")))?
             };
-            cols.get_mut(c).unwrap().push(val);
+            let _ = c; // suppress unused warning; indexed below
+            row_vals.push(val);
+        }
+        if dates.last() == Some(&d) {
+            // Same date as previous row (intraday multi-bar): overwrite last row (last-bar-of-day wins).
+            let last_idx = dates.len() - 1;
+            for (i, c) in col_names.iter().enumerate() {
+                cols.get_mut(c).unwrap()[last_idx] = row_vals[i];
+            }
+        } else {
+            // New date: must be strictly after last date.
+            if let Some(last) = dates.last()
+                && d < *last
+            {
+                return Err(Error::Data(format!("fundamentals time not strictly increasing at {d}")));
+            }
+            dates.push(d);
+            for (i, c) in col_names.iter().enumerate() {
+                cols.get_mut(c).unwrap().push(row_vals[i]);
+            }
         }
     }
     Ok(FundamentalSeries { announce_dates: dates, cols })
