@@ -29,6 +29,7 @@ def merge_frames(pa, sec, fin):
 
 
 def merge_one(sym):
+    os.makedirs(OUT, exist_ok=True)
     pp = os.path.join(PA, f"{sym}.csv"); sp = os.path.join(SEC, f"{sym}.csv")
     fp = os.path.join(FUND, f"{sym}.csv")
     if not (os.path.exists(pp) and os.path.exists(fp)):
