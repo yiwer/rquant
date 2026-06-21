@@ -1,0 +1,8 @@
+# r49：FF3 alpha 反转（alpha 最低=被低估→买），日线 universe_ff3，月频 reb20，2018-23/OOS24-26。
+quality_trees: [examples/trees/screen/ff3_low_alpha.yaml]
+setup_trees:
+  inert: [examples/trees/screen/momentum_xs.yaml]
+merge: { q_floor: 0.0, top: 50, lambda: 0.0, tilt_setups: ["inert"], quality_layers: 5 }
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }

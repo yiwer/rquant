@@ -1,0 +1,13 @@
+# 对照（取反思维）：选 FF3 alpha 最【高】top-50（跑赢自身因子模型的真 outperformer/动量），月频 reb20。
+meta: { name: ff3_high_alpha, forward_window: 20, stances: [long, flat] }
+params: { a_scale: 0.002 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.bps > 0", goto: pick, label: ok }
+    default: { goto: flat, label: na }
+leaves:
+  pick: { stance: long, weight: "sigmoid(fund.ff3_alpha / a_scale)" }
+  flat: { stance: flat }

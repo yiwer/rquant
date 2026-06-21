@@ -143,3 +143,5 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 | 46 | i15mn_belowvwap | INVERSE of r43: close below VWAP daily | -2.413 | -1.660 | -1.53 | inative | gross-excess<=0,net-OOS<=0,net-sharpe<=0,break-even<40bps | FALSIFIED |
 | 47 | i15m_rsi_overbought | high-RSI momentum weekly reb5 (cut turnover to rescue net) [reb5] | -1.239 | -0.352 | 0.77 | intraday | net-OOS<=0,break-even<40bps | FALSIFIED |
 | 48 | i15m_rsi_overbought | high-RSI momentum monthly reb20 (lowest turnover) [reb20] | -1.666 | -0.727 | 0.58 | intraday | gross-excess<=0,net-OOS<=0,break-even<40bps | FALSIFIED |
+| 49 | ff3_low_alpha | FF3 low-alpha (undervalued) monthly reb20 [reb20] | -1.267 | -0.227 | 0.27 | ff3 | gross-excess<=0,net-OOS<=0,break-even<40bps | FALSIFIED |
+| 50 | ff3_high_alpha | FF3 high-alpha (momentum) monthly reb20 [reb20] | -2.486 | -1.105 | -0.16 | ff3 | gross-excess<=0,net-OOS<=0,net-sharpe<=0,break-even<40bps | FALSIFIED |

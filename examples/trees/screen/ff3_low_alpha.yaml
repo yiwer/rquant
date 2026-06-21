@@ -1,0 +1,14 @@
+# FF3 多因子 alpha（用户策略#2）：每股对 FF3(市场/SMB/HML) 滚动120日回归取截距 alpha。
+# 用户逻辑：alpha<0 = 给定因子暴露下"该涨没涨"=被低估 → 买。选 alpha 最低 top-50，月频 reb20。
+meta: { name: ff3_low_alpha, forward_window: 20, stances: [long, flat] }
+params: { a_scale: 0.002 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.bps > 0", goto: pick, label: ok }
+    default: { goto: flat, label: na }
+leaves:
+  pick: { stance: long, weight: "sigmoid(-fund.ff3_alpha / a_scale)" }
+  flat: { stance: flat }
