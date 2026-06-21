@@ -1,0 +1,13 @@
+# 部署加固版 ROE 质量：盈利+流动性地板内按 ROE sigmoid 打分(同 value_pb_deploy 闸)。可投资 top-N 用。
+meta: { name: roe_xs_deploy, forward_window: 20, stances: [long, flat] }
+params: { roe_scale: 20, liq_n: 20, liq_floor: 50000000 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.bps > 0 and fund.roe > 0 and sma(close * volume, liq_n) >= liq_floor", goto: q, label: ok }
+    default: { goto: flat, label: excluded }
+leaves:
+  q: { stance: long, weight: "sigmoid(fund.roe / roe_scale)" }
+  flat: { stance: flat }

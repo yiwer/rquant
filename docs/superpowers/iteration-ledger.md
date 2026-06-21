@@ -160,3 +160,31 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 | 63 | s1_value_top50 | 价值基线 top-50 同轴对照(daily reb20) [bench:csi300] [reb20] | +6.641 | 1.920 | 1.09 | daily | — | PASS |
 | 64 | deploy_top3 | 价值尖兵·地板闸(可投资) top-3 [bench:csi300] [reb20] | +1.804 | 0.275 | 0.47 | daily | — | PASS |
 | 65 | deploy_top5 | 价值尖兵·地板闸(可投资) top-5 参照 [bench:csi300] [reb20] | +3.027 | 0.564 | 0.60 | daily | — | PASS |
+| 66 | scout_value | fire1 scout 深价值PB top-3 [bench:csi300] [reb20] | +2.191 | -0.113 | 0.63 | daily | net-OOS<=0,in-sample-only | FALSIFIED |
+| 67 | scout_pe | fire1 scout 价值PE top-3 [bench:csi300] [reb20] | +1.430 | 0.141 | 0.55 | daily | — | PASS |
+| 68 | scout_roe | fire1 scout 高ROE质量 top-3 [bench:csi300] [reb20] | +0.729 | -0.520 | 0.24 | daily | net-OOS<=0,in-sample-only | FALSIFIED |
+| 69 | scout_growth | fire1 scout 高营收成长 top-3 [bench:csi300] [reb20] | +2.443 | 0.430 | 0.46 | daily | — | PASS |
+| 70 | scout_garp | fire1 scout GARP top-3 [bench:csi300] [reb20] | +7.085 | 0.797 | 0.71 | daily | — | PASS |
+| 71 | scout_vg2 | fire1 scout 价值成长双核 top-3 [bench:csi300] [reb20] | +7.048 | 1.041 | 0.78 | daily | — | PASS |
+| 72 | scout_mf | fire1 scout 多因子VQG top-3 [bench:csi300] [reb20] | +10.457 | 1.833 | 0.96 | daily | — | PASS |
+| 73 | scout_momentum | fire1 scout 动量龙头 top-3 [bench:csi300] [reb20] | -1.187 | 0.333 | -0.35 | daily | gross-excess<=0,net-sharpe<=0,break-even<40bps | FALSIFIED |
+| 74 | mf_dep3 | fire2 多因子VQG地板闸 top-3 [bench:csi300] [reb20] | +7.293 | 1.833 | 0.82 | daily | — | PASS |
+| 75 | mf_dep2 | fire2 多因子VQG地板闸 top-2 [bench:csi300] [reb20] | +2.270 | 0.020 | 0.50 | daily | — | PASS |
+| 76 | vg2_dep3 | fire2 价值成长双核地板闸 top-3 [bench:csi300] [reb20] | +1.417 | 0.143 | 0.44 | daily | — | PASS |
+| 77 | vg2_dep2 | fire2 价值成长双核地板闸 top-2 [bench:csi300] [reb20] | +1.210 | 0.308 | 0.35 | daily | — | PASS |
+| 78 | vgq_dep2 | fire2 价值成长质量三核地板闸 top-2 [bench:csi300] [reb20] | +2.433 | 0.066 | 0.49 | daily | — | PASS |
+| 79 | garp_dep3 | fire2 GARP地板闸 top-3 [bench:csi300] [reb20] | +0.557 | 0.650 | 0.21 | daily | — | PASS |
+| 80 | garp_dep2 | fire2 GARP地板闸 top-2 [bench:csi300] [reb20] | +0.945 | 0.945 | 0.23 | daily | — | PASS |
+| 81 | abl_v3 | fire3 ablation 纯价值PB地板 top-3 [bench:csi300] [reb20] | +0.398 | 0.181 | 0.36 | daily | — | PASS |
+| 82 | abl_vr3 | fire3 ablation 价值+ROE top-3 [bench:csi300] [reb20] | +0.568 | 0.016 | 0.34 | daily | — | PASS |
+| 83 | abl_vn3 | fire3 ablation 价值+净利增速 top-3 [bench:csi300] [reb20] | +6.191 | 0.786 | 0.96 | daily | — | PASS |
+| 84 | mf_dep3_r10 | fire3 多因子VQG地板 top-3 reb10 [bench:csi300] [reb10] | +5.295 | 0.753 | 0.79 | daily | — | PASS |
+| 85 | mf_dep3_r60 | fire3 多因子VQG地板 top-3 reb60 [bench:csi300] [reb60] | +2.714 | 0.848 | 0.34 | daily | — | PASS |
+| 86 | vn3_r10 | fire4 价值+净利 top-3 reb10 [bench:csi300] [reb10] | +4.982 | 0.443 | 0.89 | daily | — | PASS |
+| 87 | vn3_r60 | fire4 价值+净利 top-3 reb60 [bench:csi300] [reb60] | +5.390 | 0.003 | 0.64 | daily | — | PASS |
+| 88 | vn2 | fire4 价值+净利 top-2 [bench:csi300] [reb20] | +3.154 | 0.344 | 0.67 | daily | — | PASS |
+| 89 | vng3 | fire4 价值+净利+毛利 top-3 [bench:csi300] [reb20] | +2.242 | 0.703 | 0.53 | daily | — | PASS |
+| 90 | vng2 | fire4 价值+净利+毛利 top-2 [bench:csi300] [reb20] | +1.094 | 0.460 | 0.31 | daily | — | PASS |
+| 91 | nov_lowvol | fire5 低波动防御 top-3 [bench:csi300] [reb20] | +0.488 | 0.167 | 0.17 | daily | — | PASS |
+| 92 | nov_rev | fire5 反转 top-3 [bench:csi300] [reb20] | -0.648 | 0.583 | -0.12 | daily | gross-excess<=0,net-sharpe<=0,break-even<40bps | FALSIFIED |
+| 93 | nov_boll | fire5 布林均值回归 top-3 [bench:csi300] [reb20] | -0.766 | 0.049 | -0.24 | daily | gross-excess<=0,net-sharpe<=0,break-even<40bps | FALSIFIED |

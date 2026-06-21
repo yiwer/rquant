@@ -1,0 +1,11 @@
+# loop fire-2：价值成长双核 可投资版(fire-1 raw r71 +1.04 的地板闸版)。
+# 两树均值 = 价值PB + 营收成长，全 sleeve 盈利(roe>0)+流动性(20日均额≥5000万)地板 → top-N 可投资。
+quality_trees:
+  - examples/trees/screen/value_pb_deploy.yaml
+  - examples/trees/screen/growth_revyoy_deploy.yaml
+setup_trees:
+  inert: [examples/trees/screen/momentum_xs.yaml]
+merge: { q_floor: 0.0, top: 3, lambda: 0.0, tilt_setups: ["inert"], quality_layers: 5 }
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }
