@@ -139,6 +139,9 @@ AXES = {
     "paov": {"universe": "data/baostock/universe_pa_sector.csv",
              "frm": "2018-01-01", "to": "2026-06-12", "warmup": 60, "window": 60,
              "regimes_hint": "train 2018..2023 / OOS 2024..2026 (value + PA + sector overlay)"},
+    "pa1hv": {"universe": "data/baostock/universe_pa1h_value.csv",
+              "frm": "2021-01-01", "to": "2026-06-12", "warmup": 60, "window": 60,
+              "regimes_hint": "train 2021..2023 / OOS 2024..2026 (value + 1h-PA, S2)"},
 }
 
 
