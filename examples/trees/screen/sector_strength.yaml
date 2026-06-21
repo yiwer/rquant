@@ -1,0 +1,13 @@
+# S3 setup：板块强度（sec_mom20 越高分越高），深度加权价值。
+meta: { name: sector_strength, forward_window: 20, stances: [long, flat] }
+params: { sec_scale: 0.1 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.bps > 0", goto: s, label: ok }
+    default: { goto: flat, label: na }
+leaves:
+  s: { stance: long, weight: "sigmoid(fund.sec_mom20 / sec_scale)" }
+  flat: { stance: flat }

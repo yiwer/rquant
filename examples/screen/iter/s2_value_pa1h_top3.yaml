@@ -1,0 +1,12 @@
+# 策略2：价值最便宜~30(value_frac) → 1h-PA 强化排序 → top-3。universe=universe_pa1h_value，周频 reb5。
+quality_trees:
+  - examples/trees/screen/value_pb.yaml
+  - examples/trees/screen/growth_revyoy.yaml
+  - examples/trees/screen/quality_gm.yaml
+setup_trees:
+  pa: [examples/trees/screen/pa1h_overlay.yaml]
+merge: { q_floor: 0.0, top: 3, lambda: 1.5, tilt_setups: ["pa"], quality_layers: 5 }
+value_frac: 0.03
+regimes:
+  - { label: "train_21_23", from: 2021-01-04, to: 2023-12-29 }
+  - { label: "OOS_24_26", from: 2024-01-02, to: 2026-06-12 }

@@ -1,0 +1,11 @@
+# 策略3：价值×板块强度 深度加权 → top-3。universe=universe_pa_sector，月频 reb20。
+quality_trees:
+  - examples/trees/screen/value_pb.yaml
+  - examples/trees/screen/growth_revyoy.yaml
+  - examples/trees/screen/quality_gm.yaml
+setup_trees:
+  sec: [examples/trees/screen/sector_strength.yaml]
+merge: { q_floor: 0.0, top: 3, lambda: 1.5, tilt_setups: ["sec"], quality_layers: 5 }
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }
