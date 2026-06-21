@@ -136,6 +136,9 @@ AXES = {
     "ff3": {"universe": "data/baostock/universe_ff3.csv",
             "frm": "2018-01-01", "to": "2026-06-12", "warmup": 60, "window": 60,
             "regimes_hint": "train 2018..2023 / OOS 2024..2026 (FF3 alpha, daily)"},
+    "paov": {"universe": "data/baostock/universe_pa_sector.csv",
+             "frm": "2018-01-01", "to": "2026-06-12", "warmup": 60, "window": 60,
+             "regimes_hint": "train 2018..2023 / OOS 2024..2026 (value + PA + sector overlay)"},
 }
 
 
