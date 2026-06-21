@@ -14,6 +14,8 @@ POLL = 90        # 查询间隔秒
 STALL = 360      # 每个 STALL 窗口评估一次增长
 MIN_GROWTH = 4   # STALL 窗口内新增 < 此 → 判停滞/限频爬行并重启（健康 ~40s/股→360s 约+9；<4=异常）
 MAX_RESTARTS = 500
+BACKOFF_BASE = 300   # 无进展(登录失败/配额)首次退避秒
+BACKOFF_CAP = 1800   # 退避上限(30min)；baostock 配额按日重置，半小时内自动续抓
 
 
 def count():
@@ -22,12 +24,14 @@ def count():
 
 def main():
     restarts = 0
+    consec_fail = 0   # 连续无进展次数（驱动指数退避）
     while restarts < MAX_RESTARTS:
+        start_count = count()
         f = open(LOG, "a", encoding="utf-8")
-        f.write(f"\n[watchdog] === start fetch (restart #{restarts}) count={count()} ===\n"); f.flush()
+        f.write(f"\n[watchdog] === start fetch (restart #{restarts}) count={start_count} ===\n"); f.flush()
         p = subprocess.Popen([sys.executable, os.path.join(REPO, "scripts", "fetch_baostock.py")],
                              stdout=f, stderr=subprocess.STDOUT, cwd=REPO)
-        win_count, win_time = count(), time.time()
+        win_count, win_time = start_count, time.time()
         reason = None
         while True:
             time.sleep(POLL)
@@ -40,18 +44,28 @@ def main():
                 if c - win_count < MIN_GROWTH:
                     p.kill(); reason = f"slow(+{c - win_count}/{int(STALL)}s)"; break
                 win_count, win_time = c, now
-        f.write(f"[watchdog] subprocess {reason} at count={count()}\n"); f.close()
+        end_count = count()
+        f.write(f"[watchdog] subprocess {reason} at count={end_count}\n"); f.close()
         if reason == "exited":
             tail = open(LOG, encoding="utf-8", errors="replace").read()[-800:]
             if "DONE ok=" in tail:
-                print(f"[watchdog] fetch DONE, count={count()}", flush=True)
+                print(f"[watchdog] fetch DONE, count={end_count}", flush=True)
                 break
-            restarts += 1
-            print(f"[watchdog] exited w/o DONE → restart #{restarts}", flush=True)
+        restarts += 1
+        # 退避：本轮有进展→立即续抓(健康)；无进展(登录失败/配额/秒退)→指数退避，
+        # 避免狂重启撞 baostock 配额。配额按日重置，退避上限(30min)内会自动续上。
+        if end_count > start_count:
+            consec_fail = 0
+            backoff = 3
         else:
-            restarts += 1
-            print(f"[watchdog] STALL at {count()} → restart #{restarts}", flush=True)
-        time.sleep(3)
+            consec_fail += 1
+            backoff = min(BACKOFF_CAP, BACKOFF_BASE * (2 ** (consec_fail - 1)))
+        msg = (f"[watchdog] {reason} (+{end_count - start_count}) → restart #{restarts}, "
+               f"backoff {backoff}s (consec_fail={consec_fail})")
+        print(msg, flush=True)
+        with open(LOG, "a", encoding="utf-8") as lf:
+            lf.write(msg + "\n")
+        time.sleep(backoff)
     print(f"[watchdog] END count={count()} restarts={restarts}", flush=True)
 
 
