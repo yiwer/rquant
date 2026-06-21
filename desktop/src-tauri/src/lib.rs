@@ -109,6 +109,8 @@ pub fn run() {
             screen_cmds::screen_configs_list,
             screen_cmds::index_list,
             screen_cmds::screen_asof,
+            screen_cmds::screen_15m_asof,
+            screen_cmds::screen_15m_configs_list,
             screen_cmds::screen_backtest_run,
             screen_cmds::screen_runs_list,
             screen_cmds::screen_run_report,

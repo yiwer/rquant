@@ -181,6 +181,63 @@ pub fn screen_run_report(state: tauri::State<AppState>, id: String) -> Result<Sc
     })
 }
 
+const SCREEN_15M_UNIVERSE: &str = "data/baostock/universe_baostock_15m_feat.csv";
+
+#[tauri::command]
+pub fn screen_15m_configs_list(state: tauri::State<AppState>) -> Vec<ScreenConfigDto> {
+    let dir = state.ws.root().join("examples/screen/intraday");
+    let mut out = Vec::new();
+    let Ok(rd) = std::fs::read_dir(&dir) else { return out };
+    for e in rd.flatten() {
+        let p = e.path();
+        let is_yaml = p.extension().and_then(|s| s.to_str()).map(|x| x == "yaml" || x == "yml").unwrap_or(false);
+        if !is_yaml { continue }
+        let rel = p.strip_prefix(state.ws.root()).unwrap_or(&p).to_string_lossy().replace('\\', "/");
+        match rquant::screen::config::load_screen_config(&p) {
+            Ok(_) => out.push(ScreenConfigDto { path: rel, name: p.file_stem().and_then(|s| s.to_str()).map(String::from), frozen: false, error: None }),
+            Err(e) => out.push(ScreenConfigDto { path: rel, name: None, frozen: false, error: Some(format!("配置解析失败: {e}")) }),
+        }
+    }
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    out
+}
+
+#[tauri::command]
+pub fn screen_15m_asof(state: tauri::State<AppState>, config: String, as_of: String, top: u32) -> Result<String, String> {
+    let ws = state.ws.clone();
+    state.tasks.start("screen_15m_asof", true, move |ctx| {
+        if !as_of.is_empty() {
+            chrono::NaiveDate::parse_from_str(&as_of, "%Y-%m-%d").map_err(|_| format!("日期格式应为 YYYY-MM-DD: {as_of}"))?;
+        }
+        let universe_path = ws.root().join(SCREEN_15M_UNIVERSE);
+        let config_path = ws.root().join(&config);
+        ctx.note_params(serde_json::json!({"config": &config, "as_of": &as_of, "top": top, "axis": "15m"}));
+        ctx.note_file(&universe_path.to_string_lossy().into_owned());
+        ctx.note_file(&config_path.to_string_lossy().into_owned());
+        log::info!("screen_15m_asof: config={config} as_of={as_of} top={top}");
+        ctx.progress(0.1, "加载", &config);
+        let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+        let llm = rquant::cli::build_llm(String::new(), String::new(), ws.root().join(".rquant-cache").join("llm")).map_err(|e| e.to_string())?;
+        let cfg = rquant::screen::ScreenRunConfig {
+            config_path, universe_path,
+            as_of: chrono::NaiveDate::parse_from_str(&as_of, "%Y-%m-%d").ok(),
+            top: Some(top as usize), window: 60, out_path: None,
+            membership_path: None, sectors_path: None,
+        };
+        ctx.progress(0.4, "选股(15m)", "");
+        let res = rt.block_on(rquant::screen::run_screen(&cfg, &llm)).map_err(|e| e.to_string())?;
+        ctx.note_summary(&format!("15m universe {} top {}", res.n_universe, res.top));
+        let rows = res.rows.iter().map(|r| ScreenPickDto {
+            rank: r.rank, symbol: r.symbol.clone(),
+            quality_score: r.quality_score, speculative_score: r.speculative_score, combined_score: r.combined_score,
+            tags: r.tags.clone(), selected: r.selected,
+            reasons: r.reasons.iter().map(|x| ScreenReasonDto { tree: x.tree.clone(), leaf: x.leaf.clone(), score: x.score }).collect(),
+        }).collect();
+        let dto = ScreenResultDto { config, as_of: res.as_of.format("%Y-%m-%d").to_string(), n_universe: res.n_universe, top: res.top, rows };
+        serde_json::to_value(dto).map_err(|e| e.to_string())
+    })
+}
+
 #[tauri::command]
 pub fn screen_index_relative(state: tauri::State<AppState>, id: String, benchmark: String) -> Result<IndexRelativeDto, String> {
     let net = crate::screen_runs::read_report(&state.ws, &id, "net")?;
