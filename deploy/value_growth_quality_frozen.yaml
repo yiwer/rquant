@@ -1,6 +1,8 @@
 # 冻结部署配置（纸面盘第4账本：价值成长质量三核·可投资）。源 = examples/screen/iter/value_rev_gm_blend_deploy.yaml
-# 三树均值(value_pb + 营收成长 rev_yoy + 高毛利 gross_margin)，全 sleeve 盈利(roe>0)+流动性(20日均成交额≥5000万)地板，top-50 月频(reb=20)。
-# 验证(迭代账本 docs/superpowers/iteration-ledger.md)：r26 三核 PASS(净+6.64/OOS+1.92/Sharpe1.09/三桶非规模beta) → r29 可投资版(净+3.86/OOS+1.29/be377/净vs-EW≈平)。
+# 三树均值(value_pb + 营收成长 rev_yoy + 高毛利 gross_margin)，全 sleeve 盈利(roe>0)+流动性(20日均成交额≥5000万)地板，top-3 月频(reb=20)。
+# 验证(迭代账本 docs/superpowers/iteration-ledger.md)：r26 三核 PASS(净+6.64/OOS+1.92/Sharpe1.09/三桶非规模beta) → r29 可投资版 top-50(净+3.86/OOS+1.29/be377/净vs-EW≈平)。
+# 2026-06-22 改集中口径 top-3(用户资金/手续约束,仅能持~3只)：地板闸 top-3 净+1.80/OOS+0.27/Sharpe0.47/be241bps PASS、tier2 无翻转(账本 deploy_top3)。
+#   诚实边界：薄但正、扣费后仍赢(真实成本«241bps)；3 只票统计脆弱+高波动(maxDD~37%),原始无闸 top-3 的 +1.40 靠不可成交小盘故不可投资。若能放到 5 只:OOS+0.56/Sharpe0.60 明显更稳。
 quality_trees:
   - deploy/value_pb_deploy_tree_frozen.yaml
   - deploy/growth_revyoy_deploy_tree_frozen.yaml

@@ -30,7 +30,7 @@ fn load_close(ws: &crate::paths::Workspace, sym: &str) -> HashMap<String, f64> {
     m
 }
 
-// 跑 as-of screen(冻结配置) → (top-50 选中 symbols, 实际交易日日期)
+// 跑 as-of screen(冻结配置) → (top-3 选中 symbols, 实际交易日日期)；top-3=用户资金/手续约束的集中口径(2026-06-22)
 fn screen_picks(ws: &crate::paths::Workspace, as_of: &str) -> Result<(Vec<String>, String), String> {
     let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
     let llm = rquant::cli::build_llm(
@@ -43,7 +43,7 @@ fn screen_picks(ws: &crate::paths::Workspace, as_of: &str) -> Result<(Vec<String
         config_path: ws.root().join(DEPLOY_CONFIG),
         universe_path: ws.root().join("data/baostock/universe_baostock_day.csv"),
         as_of: chrono::NaiveDate::parse_from_str(as_of, "%Y-%m-%d").ok(),
-        top: Some(50),
+        top: Some(3),
         window: 260,
         out_path: None,
         membership_path: None,

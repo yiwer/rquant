@@ -158,3 +158,5 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 | 61 | s3_sector_top3 | S3 行业强度×价值深度 top-3 vs csi300 [bench:csi300] [reb20] | -0.686 | -0.667 | -0.22 | paov | gross-excess<=0,net-OOS<=0,net-sharpe<=0,break-even<40bps | FALSIFIED |
 | 62 | s3_sector_top10 | S3 行业强度×价值深度 top-10 vs csi300 [bench:csi300] [reb20] | -0.008 | -0.545 | 0.12 | paov | net-OOS<=0,in-sample-only,break-even<40bps | FALSIFIED |
 | 63 | s1_value_top50 | 价值基线 top-50 同轴对照(daily reb20) [bench:csi300] [reb20] | +6.641 | 1.920 | 1.09 | daily | — | PASS |
+| 64 | deploy_top3 | 价值尖兵·地板闸(可投资) top-3 [bench:csi300] [reb20] | +1.804 | 0.275 | 0.47 | daily | — | PASS |
+| 65 | deploy_top5 | 价值尖兵·地板闸(可投资) top-5 参照 [bench:csi300] [reb20] | +3.027 | 0.564 | 0.60 | daily | — | PASS |
