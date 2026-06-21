@@ -2,16 +2,18 @@
 # 15m 因子经 fund.<col> 取 features_15m 列：ret/amplitude/ma5..ma60/ema12/ema26/volma5/volma20/
 #   macd_dif|macd_dea|macd_hist/rsi14/boll_mid|boll_up|boll_dn|boll_pctb|boll_bw/atr14/
 #   kdj_k|kdj_d|kdj_j/cci14/wr14/obv/vwap20/roc12/rvol20/corr_pv20。
-# 本例：按相对成交量 rvol20 排序(放量高分)。gate 仅排除缺数据。
+# 注意：rvol20 是「20 根实现波动率」(log 收益滚动 std)，并非相对成交量；obv 为累计量。
+# 本例：按【相对成交量】= 近端量能 volma5 / 长端量能 volma20（>1=近期放量）排序，越放量分越高。
+#   （仅占位示例，无验证 edge；多年回测已证伪所有 15m 单因子，详见 docs 2026-06-21-intraday-15m-multiyear-findings.md。）
 meta: { name: intraday15m_example, forward_window: 1, stances: [long, flat] }
-params: { rv_scale: 0.5 }
+params: { rv_scale: 0.3 }
 root: gate
 nodes:
   gate:
     type: quant
     branches:
-      - { when: "fund.rvol20 > 0", goto: g, label: ok }
+      - { when: "fund.volma20 > 0", goto: g, label: ok }
     default: { goto: flat, label: flat }
 leaves:
-  g: { stance: long, weight: "sigmoid((fund.rvol20 - 1) / rv_scale)" }
+  g: { stance: long, weight: "sigmoid((fund.volma5 / fund.volma20 - 1) / rv_scale)" }
   flat: { stance: flat }

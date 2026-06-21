@@ -1,6 +1,6 @@
 # 15m 选股·占位可配置框架（实验；因子无验证 edge）。universe=data/baostock/universe_baostock_15m_feat.csv。
 # 因子经 fund.<col> 取 features_15m 的 31 个 15m 指标(见示例树注释)。
-# 替换/新增 quality_trees 指向你的 15m 因子树即可迭代；当前仅挂一棵示例占位树(按 rvol20 放量)。
+# 替换/新增 quality_trees 指向你的 15m 因子树即可迭代；当前仅挂一棵示例占位树(按相对成交量 volma5/volma20 放量)。
 quality_trees: [examples/trees/screen/intraday15m_example.yaml]
 setup_trees:
   # Tag-only placeholder: with merge.lambda=0.0 this setup contributes zero weight to ranking.
