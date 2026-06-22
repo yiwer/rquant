@@ -192,3 +192,5 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 | 95 | vng3_r60 | fire6 价值+净利+毛利 reb60 [bench:csi300] [reb60] | +1.540 | 0.808 | 0.49 | daily | — | PASS |
 | 96 | v4_r20 | fire6 四因子 reb20 [bench:csi300] [reb20] | +2.121 | 1.802 | 0.47 | daily | — | PASS |
 | 97 | v4_r60 | fire6 四因子 reb60 [bench:csi300] [reb60] | +0.528 | 0.690 | 0.28 | daily | — | PASS |
+| 98 | vn3_pit | fire7 价值+净利 top-3 去幸存者 [bench:csi300] [reb20] | +8.462 | 2.680 | 1.02 | daily | — | PASS |
+| 99 | vng3_pit | fire7 价值+净利+毛利 top-3 去幸存者 [bench:csi300] [reb20] | +1.921 | 0.435 | 0.51 | daily | — | PASS |
