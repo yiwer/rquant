@@ -1,6 +1,7 @@
 import { Card, Table, Tag } from "antd";
 import type { DiffRowDto } from "@bindings/DiffRowDto";
 import { actionZh } from "../labels";
+import { stockName } from "../data/stocks";
 
 const ACTION_COLOR: Record<string, string> = { Buy: "green", Sell: "red", Adjust: "orange", Hold: "default" };
 
@@ -15,6 +16,7 @@ export default function DiffTable({ rows, t, title }: { rows: DiffRowDto[]; t: s
         locale={{ emptyText: "暂无持仓目标（持仓组合未运行）" }}
         columns={[
           { title: "标的", dataIndex: "symbol" },
+          { title: "名称", dataIndex: "symbol", key: "name", render: (s: string) => stockName(s) },
           {
             title: "动作",
             dataIndex: "action",

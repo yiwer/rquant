@@ -1,24 +1,35 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { test, expect } from "vitest";
 import ScreenPickTable from "./ScreenPickTable";
 import type { ScreenResultDto } from "@bindings/ScreenResultDto";
 
-const R: ScreenResultDto = { config: "value_pb_base.yaml", as_of: "2026-06-12", n_universe: 1073, top: 50, rows: [
-  { rank: 1, symbol: "sh601398", quality_score: 0.91, speculative_score: 0.05, combined_score: 0.91, tags: ["质量"], selected: true, reasons: [{ tree: "value_pb", leaf: "L2", score: 0.9 }] },
-  { rank: 2, symbol: "sh600000", quality_score: 0.80, speculative_score: 0.02, combined_score: 0.80, tags: ["价值"], selected: false, reasons: [] },
+const mk = (rank: number, symbol: string, selected: boolean) => ({
+  rank, symbol, quality_score: 0.9, speculative_score: 0.05, combined_score: 0.9 - rank * 0.01,
+  tags: ["质量"], selected, reasons: [],
+});
+const R: ScreenResultDto = { config: "c.yaml", as_of: "2026-06-12", n_universe: 1073, top: 50, rows: [
+  mk(1, "sh601398", true),  // 工商银行 (not ST, selected)
+  mk(2, "sh600759", true),  // ST洲际 (ST, selected → should be filtered by default)
+  mk(3, "sh600000", false), // 浦发银行 (not selected)
 ] };
-test("renders ranked picks with scores", () => {
+
+test("renders selected picks with 中文名称, hides unselected", () => {
   render(<ScreenPickTable result={R} />);
   expect(screen.getByText("sh601398")).toBeInTheDocument();
-  expect(screen.getAllByText("0.91").length).toBeGreaterThan(0);
-  expect(screen.getByText("质量")).toBeInTheDocument();
+  expect(screen.getByText("工商银行")).toBeInTheDocument();          // name column
+  expect(screen.queryByText("sh600000")).not.toBeInTheDocument();   // unselected → 数量 fix
 });
-test("shows 中文名称 from the bundled name map", () => {
+
+test("ST/*ST excluded by default", () => {
   render(<ScreenPickTable result={R} />);
-  expect(screen.getByText("工商银行")).toBeInTheDocument(); // sh601398 → name column
+  expect(screen.queryByText("sh600759")).not.toBeInTheDocument();   // ST洲际 filtered out
+  expect(screen.getByText(/已剔除 1 只 ST/)).toBeInTheDocument();
 });
-test("only selected picks shown so 数量(top-N) takes effect", () => {
+
+test("toggling the ST switch off shows ST again", () => {
   render(<ScreenPickTable result={R} />);
-  expect(screen.queryByText("sh600000")).not.toBeInTheDocument(); // selected:false → filtered out
+  expect(screen.queryByText("sh600759")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("switch"));
+  expect(screen.getByText("sh600759")).toBeInTheDocument();
 });
