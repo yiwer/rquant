@@ -763,6 +763,7 @@ rquant screen [OPTIONS] --universe <UNIVERSE>
 | `--soft` | bool | `false` | 软遍历打分（回测）；as-of 用硬模式取确定叶名作理由 |
 | `--out <PATH>` | PathBuf | 可选 | 写 JSON（as-of=`ScreenResult` / 回测=`ScreenBacktestReport`）|
 | `--membership <PATH>` | PathBuf | 可选 | 点时 universe 成员 CSV（`date,symbol` long 格式，每月末一组）。指定后每次调仓只纳入该 t 生效（最近 ≤t 再平衡日）的成员——survivorship-free 宽截面验证用。缺省=不过滤（用全 universe）。 |
+| `--st-symbols <PATH>` | PathBuf | 可选 | ST/*ST 名单 CSV（首列 `symbol`，含表头）。指定后这些高风险股在**打分前**剔除，top-N 自动回补到非 ST（投资不选 ST 的口径）。配套 `data/baostock/st_symbols.csv`（`scripts/build_stock_names.py` 按当前在册名生成，~221 只）。注意回测档用当前 ST 快照（轻度滞后）；as-of/部署即时准确。缺省=不剔除。桌面纸面盘恒定开启此剔除。 |
 | `--llm-model` / `--llm-base-url` / `--llm-cache-dir` | — | — | 同其他子命令（种子树纯量化，留作扩展）|
 
 ### 集成配置格式（`--config`）
