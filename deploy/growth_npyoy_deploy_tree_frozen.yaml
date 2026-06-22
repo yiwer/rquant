@@ -1,0 +1,14 @@
+# 冻结部署副本（勿改；examples/ 同名树继续迭代不影响此处）。源 = examples/trees/screen/growth_npyoy_deploy.yaml
+# 净利增速 np_yoy + 盈利地板(roe>0) + 流动性地板(20日均成交额≥5000万)。2026-06-22 loop 冠军「价值+净利增速」的成长 sleeve（净利增速 > 营收增速 见 r66-93 / findings 2026-06-22-top3-loop）。
+meta: { name: growth_npyoy_deploy_frozen, forward_window: 20, stances: [long, flat] }
+params: { g_scale: 30, liq_n: 20, liq_floor: 50000000 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.bps > 0 and fund.roe > 0 and fund.np_yoy > -100000 and sma(close * volume, liq_n) >= liq_floor", goto: g, label: ok }
+    default: { goto: flat, label: excluded }
+leaves:
+  g: { stance: long, weight: "sigmoid(fund.np_yoy / g_scale)" }
+  flat: { stance: flat }
