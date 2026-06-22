@@ -216,3 +216,9 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 | 119 | f12_L_macd | fire12 MACD top-3 [bench:csi300] [reb20] | +5.939 | -0.667 | 0.30 | daily | net-OOS<=0,in-sample-only | FALSIFIED |
 | 120 | f12_L_brk | fire12 突破 top-3 [bench:csi300] [reb20] | +2.422 | 3.224 | 0.33 | daily | — | PASS |
 | 121 | f12_L_pullbk | fire12 回调买入 top-3 [bench:csi300] [reb20] | +2.394 | 0.031 | 0.43 | daily | sign-flip | FALSIFIED |
+| 122 | L_mulpbn_f | fire13 L_mulpbn top-3 full [bench:csi300] [reb20] | +4.927 | 0.595 | 0.89 | daily | — | PASS |
+| 123 | L_mulpbn_pit | fire13 L_mulpbn top-3 PIT [bench:csi300] [reb20] | +8.024 | 1.969 | 0.97 | daily | — | PASS |
+| 124 | L_mulroepb_f | fire13 L_mulroepb top-3 full [bench:csi300] [reb20] | +0.556 | -0.293 | 0.38 | daily | net-OOS<=0,in-sample-only | FALSIFIED |
+| 125 | L_mulroepb_pit | fire13 L_mulroepb top-3 PIT [bench:csi300] [reb20] | +0.509 | -0.325 | 0.36 | daily | net-OOS<=0,in-sample-only | FALSIFIED |
+| 126 | L_peg_f | fire13 L_peg top-3 full [bench:csi300] [reb20] | +1.137 | 0.355 | 0.35 | daily | — | PASS |
+| 127 | L_peg_pit | fire13 L_peg top-3 PIT [bench:csi300] [reb20] | +0.802 | 0.064 | 0.27 | daily | — | PASS |

@@ -1,0 +1,7 @@
+# loop fire-13 新交互因子：PEG盈利收益率×净利
+quality_trees: [examples/trees/screen/peg_ey_npy.yaml]
+setup_trees: { inert: [examples/trees/screen/momentum_xs.yaml] }
+merge: { q_floor: 0.0, top: 3, lambda: 0.0, tilt_setups: ["inert"], quality_layers: 5 }
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }

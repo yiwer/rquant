@@ -1,0 +1,13 @@
+# loop fire-13 新因子：质量×价值 乘性交互(高ROE AND 便宜)，地板闸。
+meta: { name: mul_roe_pb, forward_window: 20, stances: [long, flat] }
+params: { roe_scale: 20, liq_n: 20, liq_floor: 50000000 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.bps > 0 and fund.roe > 0 and sma(close * volume, liq_n) >= liq_floor", goto: x, label: ok }
+    default: { goto: flat, label: excluded }
+leaves:
+  x: { stance: long, weight: "sigmoid(fund.roe / roe_scale) * (1 / (1 + close / fund.bps))" }
+  flat: { stance: flat }

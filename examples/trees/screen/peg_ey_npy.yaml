@@ -1,0 +1,13 @@
+# loop fire-13 新因子：PEG式 盈利收益率×净利增速(便宜的成长)，地板闸。
+meta: { name: peg_ey_npy, forward_window: 20, stances: [long, flat] }
+params: { g_scale: 30, liq_n: 20, liq_floor: 50000000 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.eps > 0 and fund.roe > 0 and fund.np_yoy > -100000 and sma(close * volume, liq_n) >= liq_floor", goto: x, label: ok }
+    default: { goto: flat, label: excluded }
+leaves:
+  x: { stance: long, weight: "(fund.eps / close) * sigmoid(fund.np_yoy / g_scale)" }
+  flat: { stance: flat }
