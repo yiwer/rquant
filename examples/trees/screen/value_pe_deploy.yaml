@@ -1,0 +1,13 @@
+# 部署加固版 PE 价值：盈利+流动性地板内按 PE 便宜度 1/(1+close/eps) 打分。可投资 top-N。
+meta: { name: value_pe_deploy, forward_window: 20, stances: [long, flat] }
+params: { liq_n: 20, liq_floor: 50000000 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.eps > 0 and fund.roe > 0 and sma(close * volume, liq_n) >= liq_floor", goto: cheap, label: ok }
+    default: { goto: flat, label: excluded }
+leaves:
+  cheap: { stance: long, weight: "1 / (1 + close / fund.eps)" }
+  flat: { stance: flat }

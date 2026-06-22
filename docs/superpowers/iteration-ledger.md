@@ -201,3 +201,7 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 | 104 | qg3_r10 | fire9 质量+成长 top-3 reb10 [bench:csi300] [reb10] | +4.726 | 0.826 | 0.71 | daily | — | PASS |
 | 105 | qg3_r60 | fire9 质量+成长 top-3 reb60 [bench:csi300] [reb60] | +3.050 | 0.462 | 0.58 | daily | — | PASS |
 | 106 | qg2 | fire9 质量+成长 top-2 [bench:csi300] [reb20] | +1.684 | -0.085 | 0.36 | daily | net-OOS<=0,in-sample-only | FALSIFIED |
+| 107 | pen3 | fire10 PE净利双核 top-3 full [bench:csi300] [reb20] | +4.116 | 0.971 | 0.63 | daily | — | PASS |
+| 108 | pen3_pit | fire10 PE净利双核 top-3 PIT [bench:csi300] [reb20] | +3.939 | 1.373 | 0.59 | daily | — | PASS |
+| 109 | vnl3 | fire10 价值净利防御 top-3 full [bench:csi300] [reb20] | +0.553 | -0.108 | 0.34 | daily | net-OOS<=0,in-sample-only | FALSIFIED |
+| 110 | vnl3_pit | fire10 价值净利防御 top-3 PIT [bench:csi300] [reb20] | +0.589 | -0.190 | 0.36 | daily | net-OOS<=0,in-sample-only | FALSIFIED |

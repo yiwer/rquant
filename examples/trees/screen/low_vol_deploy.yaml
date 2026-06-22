@@ -1,0 +1,13 @@
+# 部署加固版低波动：盈利+流动性地板内按 低波动 1/(1+std(close)*scale/close) 打分。防御腿。
+meta: { name: low_vol_deploy, forward_window: 20, stances: [long, flat] }
+params: { vol_n: 20, vol_scale: 20, liq_n: 20, liq_floor: 50000000 }
+root: gate
+nodes:
+  gate:
+    type: quant
+    branches:
+      - { when: "fund.bps > 0 and fund.roe > 0 and sma(close * volume, liq_n) >= liq_floor and std(close, vol_n) > 0", goto: lo, label: ok }
+    default: { goto: flat, label: excluded }
+leaves:
+  lo: { stance: long, weight: "1 / (1 + std(close, vol_n) * vol_scale / close)" }
+  flat: { stance: flat }
