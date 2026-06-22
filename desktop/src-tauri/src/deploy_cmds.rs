@@ -39,6 +39,15 @@ fn screen_picks(ws: &crate::paths::Workspace, as_of: &str) -> Result<(Vec<String
         ws.root().join(".rquant-cache").join("llm"),
     )
     .map_err(|e| e.to_string())?;
+    // 纸面盘恒定剔除 ST/*ST 高风险股(用户口径:投资不选 ST)——引擎级,选股前剔除使 top-3 回补到非 ST。
+    // 名单缺失(未跑 scripts/build_stock_names.py)时退化为不过滤并告警,避免部署硬失败。
+    let st_path = ws.root().join("data/baostock/st_symbols.csv");
+    let st_symbols_path = if st_path.exists() {
+        Some(st_path)
+    } else {
+        log::warn!("deploy screen_picks: 缺 st_symbols.csv,本月未做 ST 过滤(请跑 scripts/build_stock_names.py): {}", st_path.display());
+        None
+    };
     let cfg = rquant::screen::ScreenRunConfig {
         config_path: ws.root().join(DEPLOY_CONFIG),
         universe_path: ws.root().join("data/baostock/universe_baostock_day.csv"),
@@ -48,6 +57,7 @@ fn screen_picks(ws: &crate::paths::Workspace, as_of: &str) -> Result<(Vec<String
         out_path: None,
         membership_path: None,
         sectors_path: None,
+        st_symbols_path,
     };
     let res = rt
         .block_on(rquant::screen::run_screen(&cfg, &llm))

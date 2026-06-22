@@ -75,6 +75,7 @@ pub fn screen_asof(state: tauri::State<AppState>, config: String, as_of: String,
             as_of: chrono::NaiveDate::parse_from_str(&as_of, "%Y-%m-%d").ok(),
             top: Some(top as usize), window: 260, out_path: None,
             membership_path: None, sectors_path: None,
+            st_symbols_path: None, // 选股榜 ST 过滤在前端按引擎全量排名回补(见 ScreenPickTable)
         };
         ctx.progress(0.4, "选股", "");
         let res = rt.block_on(rquant::screen::run_screen(&cfg, &llm)).map_err(|e| e.to_string())?;
@@ -120,6 +121,7 @@ pub fn screen_backtest_run(state: tauri::State<AppState>, config: String, from: 
             rebalance: rebalance as usize, top: Some(top as usize),
             warmup: 260, window: 260, cost_bps: cost, soft: false,
             out_path: None, membership_path: None, sectors_path: None,
+            st_symbols_path: None, // 回测档不强制剔 ST(对照口径);部署/CLI 才恒定剔除
         };
         let id = crate::screen_runs::new_id();
         ctx.progress(0.2, "毛档", "cost=0");
@@ -226,6 +228,7 @@ pub fn screen_15m_asof(state: tauri::State<AppState>, config: String, as_of: Str
             as_of: chrono::NaiveDate::parse_from_str(&as_of, "%Y-%m-%d").ok(),
             top: Some(top as usize), window: 60, out_path: None,
             membership_path: None, sectors_path: None,
+            st_symbols_path: None, // 同 screen_asof:ST 过滤在前端回补
         };
         ctx.progress(0.4, "选股(15m)", "");
         let res = rt.block_on(rquant::screen::run_screen(&cfg, &llm)).map_err(|e| e.to_string())?;

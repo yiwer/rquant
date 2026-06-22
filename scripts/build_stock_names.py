@@ -34,7 +34,14 @@ def main():
         w = csv.writer(f); w.writerow(["symbol", "name"])
         for k, v in sorted(m.items()):
             w.writerow([k, v])
-    print(f"wrote {len(m)} names -> desktop/ui/src/data/stockNames.json + data/baostock/stock_names.csv")
+    # ST/*ST 高风险股列表（按名称判定，含 ST/*ST/SST/退市风险标记）。引擎 --exclude-st 加载此表。
+    st = {k: v for k, v in m.items() if "ST" in v.upper()}
+    with open(os.path.join(REPO, "data/baostock/st_symbols.csv"), "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f); w.writerow(["symbol", "name"])
+        for k, v in sorted(st.items()):
+            w.writerow([k, v])
+    print(f"wrote {len(m)} names -> desktop/ui/src/data/stockNames.json + data/baostock/stock_names.csv; "
+          f"{len(st)} ST -> data/baostock/st_symbols.csv")
 
 
 if __name__ == "__main__":

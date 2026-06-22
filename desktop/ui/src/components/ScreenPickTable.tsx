@@ -15,17 +15,22 @@ export default function ScreenPickTable({ result }: { result: ScreenResultDto })
     { title: "投机分", dataIndex: "speculative_score", width: 80, render: (v: number) => v.toFixed(2) },
     { title: "标签", dataIndex: "tags", render: (t: string[]) => t.map((x) => <Tag key={x}>{x}</Tag>) },
   ];
-  // 选股榜 = 当日入选(top-N)标的：只显示 selected（使「数量」即时生效，引擎返回全 universe 行仅标记 top-N）。
-  // ST 开关：默认过滤掉入选中的 ST/*ST 高风险股（投资不选 ST）；关掉则显示引擎原始 top-N。
-  let picks = result.rows.filter((r) => r.selected);
-  const stRemoved = excludeSt ? picks.filter((r) => isST(r.symbol)).length : 0;
-  if (excludeSt) { picks = picks.filter((r) => !isST(r.symbol)); }
+  // 引擎返回全 universe 行（按综合分排名，top-N 标 selected）。
+  // 关 ST：显示引擎原始 top-N（selected），使「数量」即时生效。
+  // 开 ST：从全量排名剔除 ST 后取前 top 名 —— 回补，使集中口径仍是 N 只非 ST。
+  //   无横截面闸的配置（含已部署的价值净利双核）下，与引擎级「选股前剔除 ST」完全一致。
+  const selected = result.rows.filter((r) => r.selected);
+  const stRemoved = excludeSt ? selected.filter((r) => isST(r.symbol)).length : 0;
+  const picks = excludeSt
+    ? [...result.rows].sort((a, b) => a.rank - b.rank).filter((r) => !isST(r.symbol)).slice(0, result.top)
+    : selected;
   return (
     <>
       <div style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
         <Switch size="small" checked={excludeSt} onChange={setExcludeSt} />
         <span style={{ fontSize: 12 }}>
-          过滤 ST/*ST 高风险股 · 显示 {picks.length} 只{stRemoved > 0 ? `（已剔除 ${stRemoved} 只 ST）` : ""}
+          过滤 ST/*ST 高风险股 · 显示 {picks.length} 只
+          {stRemoved > 0 ? `（剔除 ${stRemoved} 只 ST，回补至 top-${result.top}）` : ""}
         </span>
       </div>
       <Table<ScreenPickDto>

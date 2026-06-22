@@ -39,6 +39,24 @@ pub fn load_sector_map(path: &std::path::Path) -> Result<std::collections::HashM
     Ok(m)
 }
 
+/// 读 symbol 名单 CSV（首列 symbol，跳表头/空行）→集合。供 --exclude-st 排除高风险股(data/baostock/st_symbols.csv)。
+pub fn load_symbol_set(path: &std::path::Path) -> Result<std::collections::HashSet<String>> {
+    let text = std::fs::read_to_string(path)?;
+    let mut set = std::collections::HashSet::new();
+    for (i, line) in text.lines().enumerate() {
+        if i == 0 || line.trim().is_empty() {
+            continue;
+        }
+        if let Some(sym) = line.split(',').next() {
+            let sym = sym.trim();
+            if !sym.is_empty() {
+                set.insert(sym.to_string());
+            }
+        }
+    }
+    Ok(set)
+}
+
 /// 单棵树命中理由。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScreenReason {
@@ -82,6 +100,8 @@ pub struct ScreenRunConfig {
     pub membership_path: Option<PathBuf>,
     /// symbol→行业 CSV；配 config.merge.per_sector=Some(k) 时行业中性选股（每行业 top-k）。None → 全局。
     pub sectors_path: Option<PathBuf>,
+    /// ST/*ST 名单 CSV（symbol 列）；Some 时从候选剔除这些高风险股(选股前剔除→top-N 自动回补非ST)。None → 不剔除。
+    pub st_symbols_path: Option<PathBuf>,
 }
 
 fn dir(s: Stance) -> f64 {
@@ -165,6 +185,7 @@ pub async fn run_screen(cfg: &ScreenRunConfig, llm: &LlmEvaluator) -> Result<Scr
     let t = pick_as_of(&timeline, cfg.as_of)?;
     let membership = cfg.membership_path.as_ref()
         .map(|p| crate::data::membership::Membership::load_csv(p)).transpose()?;
+    let st_set = cfg.st_symbols_path.as_ref().map(|p| load_symbol_set(p)).transpose()?;
     let aux: BTreeMap<String, AuxTable> = BTreeMap::new();
     let mp = MergeParams {
         theta_fire: sc.merge.theta_fire,
@@ -184,6 +205,11 @@ pub async fn run_screen(cfg: &ScreenRunConfig, llm: &LlmEvaluator) -> Result<Scr
             match m.effective_at(t) {
                 Some(set) if set.contains(&e.symbol) => {}
                 _ => continue, // 非当期成员（或早于首期）→ 跳过
+            }
+        }
+        if let Some(st) = &st_set {
+            if st.contains(&e.symbol) {
+                continue; // ST/*ST 高风险股 → 选股前剔除（top-N 自动回补非 ST）
             }
         }
         let mut reasons: Vec<ScreenReason> = Vec::new();
@@ -352,6 +378,7 @@ leaves:
             out_path: None,
             membership_path: None,
             sectors_path: None,
+            st_symbols_path: None,
         };
         let res = run_screen(&run, &LlmEvaluator::Disabled).await.unwrap();
         assert_eq!(res.n_universe, 2);
@@ -361,5 +388,38 @@ leaves:
         assert!(up.tags.contains(&"动量延续".to_string()));
         assert!(!dn.selected, "falling symbol should not be selected");
         assert_eq!(up.rank, 1);
+    }
+
+    #[tokio::test]
+    async fn screen_exclude_st_drops_listed_symbols() {
+        let q = write_tmp(".yaml", QUALITY_SIMPLE);
+        let m = write_tmp(".yaml", MOM_SIMPLE);
+        let cfg_yaml = format!(
+            "quality_trees: [{}]\nsetup_trees:\n  动量延续: [{}]\nmerge: {{ q_floor: 0.5, top: 1 }}\n",
+            q.path().to_str().unwrap().replace('\\', "/"),
+            m.path().to_str().unwrap().replace('\\', "/"),
+        );
+        let cfg_f = write_tmp(".yaml", &cfg_yaml);
+        // 两只同样上行（均合格）的标的：无 ST 时 top-1 取 UP（同分按 symbol 升序）；
+        // UP 被 ST 剔除后，唯一合格候选 UP2 回补 top-1 槽。
+        let f_up = write_bars(true);
+        let f_up2 = write_bars(true);
+        let mut univ = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+        writeln!(univ, "symbol,primary\nUP,{}\nUP2,{}",
+            f_up.path().to_str().unwrap(), f_up2.path().to_str().unwrap()).unwrap();
+        univ.flush().unwrap();
+        let st = write_tmp(".csv", "symbol,name\nUP,*ST示例\n");
+        let run = ScreenRunConfig {
+            config_path: cfg_f.path().to_path_buf(),
+            universe_path: univ.path().to_path_buf(),
+            as_of: None, top: None, window: 10, out_path: None,
+            membership_path: None, sectors_path: None,
+            st_symbols_path: Some(st.path().to_path_buf()),
+        };
+        let res = run_screen(&run, &LlmEvaluator::Disabled).await.unwrap();
+        assert_eq!(res.n_universe, 2, "UP 仍计入 universe 总数（加载后才剔除）");
+        assert!(res.rows.iter().all(|r| r.symbol != "UP"), "ST symbol UP must be excluded from rows");
+        let up2 = res.rows.iter().find(|r| r.symbol == "UP2").unwrap();
+        assert!(up2.selected, "non-ST UP2 should backfill the top-1 slot after UP excluded");
     }
 }

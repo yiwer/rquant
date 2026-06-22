@@ -98,6 +98,9 @@ pub struct ScreenBacktestConfig {
     pub membership_path: Option<PathBuf>,
     /// symbol→行业 CSV；配 config.merge.per_sector=Some(k) 时行业中性选股（每行业 top-k）。None → 全局。
     pub sectors_path: Option<PathBuf>,
+    /// ST/*ST 名单 CSV（symbol 列）；Some 时每次调仓从候选剔除这些高风险股。None → 不剔除。
+    /// 注：名单为当前快照，回测期内按当前 ST 状态剔除（轻微 staleness；as-of/部署口径准确）。
+    pub st_symbols_path: Option<PathBuf>,
 }
 
 /// 单标的、单调仓点的多树合并结果（内部 helper）。
@@ -193,6 +196,7 @@ pub async fn run_screen_backtest(
         .map(|p| crate::data::membership::Membership::load_csv(p)).transpose()?;
     let sectors = cfg.sectors_path.as_ref()
         .map(|p| crate::screen::load_sector_map(p)).transpose()?.unwrap_or_default();
+    let st_set = cfg.st_symbols_path.as_ref().map(|p| crate::screen::load_symbol_set(p)).transpose()?;
     let aux: BTreeMap<String, AuxTable> = BTreeMap::new();
 
     let full = build_timeline(&primaries);
@@ -239,6 +243,11 @@ pub async fn run_screen_backtest(
                 match m.effective_at(t_rb) {
                     Some(set) if set.contains(&e.symbol) => {}
                     _ => continue, // 非当期成员（或早于首期）→ 跳过
+                }
+            }
+            if let Some(st) = &st_set {
+                if st.contains(&e.symbol) {
+                    continue; // ST/*ST 高风险股 → 选股前剔除
                 }
             }
             if let Some(ev) = eval_symbol(
@@ -497,6 +506,7 @@ leaves: { l: { stance: long, weight: 1.0 }, f: { stance: flat } }
             from: None, to: None, rebalance: 4, top: None, warmup: 5, window: 10, cost_bps: 10.0, soft: false, out_path: None,
             membership_path: None,
             sectors_path: None,
+            st_symbols_path: None,
         };
         let r = run_screen_backtest(&cfg, &LlmEvaluator::Disabled).await.unwrap();
         let mom = r.tag_attribution.iter().find(|a| a.tag == "动量延续").expect("动量延续 attribution present");
@@ -525,6 +535,7 @@ leaves: { l: { stance: long, weight: 1.0 }, f: { stance: flat } }
             from: None, to: None, rebalance: 4, top: None, warmup: 5, window: 10, cost_bps: 10.0, soft: false, out_path: None,
             membership_path: None,
             sectors_path: None,
+            st_symbols_path: None,
         };
         let r = run_screen_backtest(&cfg, &LlmEvaluator::Disabled).await.unwrap();
         let slice = r.regime_slices.iter().find(|s| s.label == "full").expect("regime slice present");
@@ -556,6 +567,7 @@ leaves: { l: { stance: long, weight: 1.0 }, f: { stance: flat } }
             out_path: None,
             membership_path: None,
             sectors_path: None,
+            st_symbols_path: None,
         };
         let r = run_screen_backtest(&cfg, &LlmEvaluator::Disabled).await.unwrap();
         assert!(r.n_rebalances >= 2);
@@ -587,6 +599,7 @@ leaves: { l: { stance: long, weight: 1.0 }, f: { stance: flat } }
             from: None, to: None, rebalance: 4, top: None, warmup: 5, window: 10, cost_bps: 10.0, soft: false, out_path: None,
             membership_path: None,
             sectors_path: None,
+            st_symbols_path: None,
         };
         let r = run_screen_backtest(&cfg, &LlmEvaluator::Disabled).await.unwrap();
         assert!(!r.quality_layers.is_empty(), "quality layers should be computed");
@@ -623,6 +636,7 @@ leaves: { l: { stance: long, weight: "1 / (1 + close/fund.bps)" }, f: { stance: 
             from: None, to: None, rebalance: 4, top: None, warmup: 5, window: 10, cost_bps: 0.0, soft: false, out_path: None,
             membership_path: None,
             sectors_path: None,
+            st_symbols_path: None,
         };
         let r = run_screen_backtest(&cfg, &LlmEvaluator::Disabled).await.unwrap();
         assert!(r.avg_members > 0.0, "value tree using fund.bps must score (fundamentals threaded)");
@@ -660,6 +674,7 @@ leaves: { l: { stance: long, weight: "sigmoid((close/ref(close,2) - 1) * 50)" },
             from: None, to: None, rebalance: 4, top: None, warmup: 5, window: 10, cost_bps: 0.0, soft: false, out_path: None,
             membership_path: None,
             sectors_path: None,
+            st_symbols_path: None,
         };
         let r = run_screen_backtest(&cfg, &LlmEvaluator::Disabled).await.unwrap();
         for h in &r.holdings {
@@ -689,6 +704,7 @@ leaves: { l: { stance: long, weight: "sigmoid((close/ref(close,2) - 1) * 50)" },
             from: None, to: None, rebalance: 4, top: None, warmup: 5, window: 10, cost_bps: 0.0, soft: false, out_path: None,
             membership_path: Some(mem.path().to_path_buf()),
             sectors_path: None,
+            st_symbols_path: None,
         };
         let r = run_screen_backtest(&cfg, &LlmEvaluator::Disabled).await.unwrap();
         for h in &r.holdings {
