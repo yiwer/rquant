@@ -210,3 +210,9 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 | 113 | f11_L_treg | fire11 价值+趋势regime top-3 [bench:csi300] [reb20] | +4.392 | -0.144 | 0.79 | daily | net-OOS<=0,in-sample-only | FALSIFIED |
 | 114 | f11_L_pepb | fire11 PE+PB双价值 top-3 [bench:csi300] [reb20] | +1.374 | 0.051 | 0.61 | daily | — | PASS |
 | 115 | f11_L_tsval | fire11 时序自比价值 top-3 [bench:csi300] [reb20] | -0.270 | -0.473 | NA | daily | gross-excess<=0,net-OOS<=0,in-sample-only,break-even<40bps | FALSIFIED |
+| 116 | f12_L_pbroe | fire12 价值PB+ROE top-3 [bench:csi300] [reb20] | +2.087 | -0.192 | 0.69 | daily | net-OOS<=0,in-sample-only | FALSIFIED |
+| 117 | f12_L_qv1 | fire12 质量综合v1 top-3 [bench:csi300] [reb20] | +2.420 | 0.860 | 0.54 | daily | — | PASS |
+| 118 | f12_L_vltrend | fire12 价值+长趋势 top-3 [bench:csi300] [reb20] | -0.270 | -0.473 | NA | daily | gross-excess<=0,net-OOS<=0,in-sample-only,break-even<40bps | FALSIFIED |
+| 119 | f12_L_macd | fire12 MACD top-3 [bench:csi300] [reb20] | +5.939 | -0.667 | 0.30 | daily | net-OOS<=0,in-sample-only | FALSIFIED |
+| 120 | f12_L_brk | fire12 突破 top-3 [bench:csi300] [reb20] | +2.422 | 3.224 | 0.33 | daily | — | PASS |
+| 121 | f12_L_pullbk | fire12 回调买入 top-3 [bench:csi300] [reb20] | +2.394 | 0.031 | 0.43 | daily | sign-flip | FALSIFIED |
