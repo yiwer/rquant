@@ -205,3 +205,8 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 | 108 | pen3_pit | fire10 PE净利双核 top-3 PIT [bench:csi300] [reb20] | +3.939 | 1.373 | 0.59 | daily | — | PASS |
 | 109 | vnl3 | fire10 价值净利防御 top-3 full [bench:csi300] [reb20] | +0.553 | -0.108 | 0.34 | daily | net-OOS<=0,in-sample-only | FALSIFIED |
 | 110 | vnl3_pit | fire10 价值净利防御 top-3 PIT [bench:csi300] [reb20] | +0.589 | -0.190 | 0.36 | daily | net-OOS<=0,in-sample-only | FALSIFIED |
+| 111 | f11_L_52wh | fire11 价值+创新高强势 top-3 [bench:csi300] [reb20] | +0.832 | -0.540 | 0.41 | daily | net-OOS<=0,in-sample-only | FALSIFIED |
+| 112 | f11_L_volc | fire11 价值+波动收缩 top-3 [bench:csi300] [reb20] | +1.169 | -0.122 | 0.49 | daily | net-OOS<=0,in-sample-only | FALSIFIED |
+| 113 | f11_L_treg | fire11 价值+趋势regime top-3 [bench:csi300] [reb20] | +4.392 | -0.144 | 0.79 | daily | net-OOS<=0,in-sample-only | FALSIFIED |
+| 114 | f11_L_pepb | fire11 PE+PB双价值 top-3 [bench:csi300] [reb20] | +1.374 | 0.051 | 0.61 | daily | — | PASS |
+| 115 | f11_L_tsval | fire11 时序自比价值 top-3 [bench:csi300] [reb20] | -0.270 | -0.473 | NA | daily | gross-excess<=0,net-OOS<=0,in-sample-only,break-even<40bps | FALSIFIED |
