@@ -222,3 +222,5 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 | 125 | L_mulroepb_pit | fire13 L_mulroepb top-3 PIT [bench:csi300] [reb20] | +0.509 | -0.325 | 0.36 | daily | net-OOS<=0,in-sample-only | FALSIFIED |
 | 126 | L_peg_f | fire13 L_peg top-3 full [bench:csi300] [reb20] | +1.137 | 0.355 | 0.35 | daily | — | PASS |
 | 127 | L_peg_pit | fire13 L_peg top-3 PIT [bench:csi300] [reb20] | +0.802 | 0.064 | 0.27 | daily | — | PASS |
+| 128 | garpdep_f | fire14 两段式GARP top-3 full [bench:csi300] [reb20] | +0.548 | 1.039 | 0.25 | daily | — | PASS |
+| 129 | garpdep_pit | fire14 两段式GARP top-3 PIT [bench:csi300] [reb20] | +0.842 | 1.189 | 0.27 | daily | — | PASS |

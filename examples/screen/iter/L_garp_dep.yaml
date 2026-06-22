@@ -1,0 +1,9 @@
+# loop fire-14: 两段式 GARP 可投资 = 价值PB便宜半数(value_frac0.5)内按净利增速排名 top-3，地板闸。vs 软加性(冠军)。
+quality_trees: [examples/trees/screen/value_pb_deploy.yaml]
+setup_trees:
+  成长: [examples/trees/screen/growth_npyoy_deploy.yaml]
+merge: { q_floor: 0.0, top: 3, lambda: 1.0, tilt_setups: ["成长"], quality_layers: 5 }
+value_frac: 0.5
+regimes:
+  - { label: "train", from: 2018-01-02, to: 2023-12-29 }
+  - { label: "2024-26_OOS", from: 2024-01-02, to: 2026-06-12 }
