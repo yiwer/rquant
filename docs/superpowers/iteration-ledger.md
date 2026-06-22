@@ -194,3 +194,10 @@ A股 top 流动股、2018-2026、横截面日频选股上，以下角度**均已
 | 97 | v4_r60 | fire6 四因子 reb60 [bench:csi300] [reb60] | +0.528 | 0.690 | 0.28 | daily | — | PASS |
 | 98 | vn3_pit | fire7 价值+净利 top-3 去幸存者 [bench:csi300] [reb20] | +8.462 | 2.680 | 1.02 | daily | — | PASS |
 | 99 | vng3_pit | fire7 价值+净利+毛利 top-3 去幸存者 [bench:csi300] [reb20] | +1.921 | 0.435 | 0.51 | daily | — | PASS |
+| 100 | qg3 | fire8 质量+成长(无价值) top-3 [bench:csi300] [reb20] | +5.168 | 0.931 | 0.70 | daily | — | PASS |
+| 101 | ng3 | fire8 成长+毛利(无价值) top-3 [bench:csi300] [reb20] | -0.649 | -0.482 | -0.17 | daily | gross-excess<=0,net-OOS<=0,net-sharpe<=0,break-even<40bps | FALSIFIED |
+| 102 | vq3 | fire8 价值+毛利(无成长) top-3 [bench:csi300] [reb20] | +3.047 | 0.687 | 0.63 | daily | — | PASS |
+| 103 | qg3_pit | fire9 质量+成长 去幸存者PIT top-3 [bench:csi300] [reb20] | +3.021 | 0.509 | 0.48 | daily | — | PASS |
+| 104 | qg3_r10 | fire9 质量+成长 top-3 reb10 [bench:csi300] [reb10] | +4.726 | 0.826 | 0.71 | daily | — | PASS |
+| 105 | qg3_r60 | fire9 质量+成长 top-3 reb60 [bench:csi300] [reb60] | +3.050 | 0.462 | 0.58 | daily | — | PASS |
+| 106 | qg2 | fire9 质量+成长 top-2 [bench:csi300] [reb20] | +1.684 | -0.085 | 0.36 | daily | net-OOS<=0,in-sample-only | FALSIFIED |
