@@ -20,8 +20,8 @@ def test_factor_cols_count_and_order():
     # Existing ordering invariants
     assert bm.FACTOR_COLS[0] == "f_bm"
     assert bm.FACTOR_COLS[1] == "f_npyoy"
-    # Total 55 factors (40 previous + 15 new orthogonal financial factors)
-    assert len(bm.FACTOR_COLS) == 55
+    # Total 63 factors (55 previous + 8 new PV microstructure factors)
+    assert len(bm.FACTOR_COLS) == 63
     # Hard-gate names still present
     assert "f_roe" in bm.FACTOR_COLS
     assert "f_logamt" in bm.FACTOR_COLS
@@ -40,6 +40,9 @@ def test_factor_cols_count_and_order():
     # New orthogonal financial factors at indices 40-54
     assert bm.FACTOR_COLS[40] == "f_cfo"
     assert bm.FACTOR_COLS[54] == "f_arturn"
+    # New PV microstructure factors at indices 55-62
+    assert bm.FACTOR_COLS[55] == "f_udvol"
+    assert bm.FACTOR_COLS[62] == "f_vwapdev"
 
 
 def _make_uptrend_fixture(n=280):
@@ -177,14 +180,15 @@ def test_pa_factors_merge_when_sec_provided():
 # ---- Tests for the 3 new price factors (f_maxret20, f_skew60, f_relstr60) ----
 
 def test_new_price_factor_cols_count():
-    """FACTOR_COLS has 55 entries; f_bm@0 and f_npyoy@1 unchanged; last == f_arturn."""
-    assert len(bm.FACTOR_COLS) == 55
+    """FACTOR_COLS has 63 entries; f_bm@0 and f_npyoy@1 unchanged; last == f_vwapdev."""
+    assert len(bm.FACTOR_COLS) == 63
     assert bm.FACTOR_COLS[0] == "f_bm"
     assert bm.FACTOR_COLS[1] == "f_npyoy"
     assert bm.FACTOR_COLS[37] == "f_maxret20"
     assert bm.FACTOR_COLS[38] == "f_skew60"
     assert bm.FACTOR_COLS[39] == "f_relstr60"
-    assert bm.FACTOR_COLS[-1] == "f_arturn"
+    assert bm.FACTOR_COLS[54] == "f_arturn"
+    assert bm.FACTOR_COLS[-1] == "f_vwapdev"
 
 
 def test_new_price_factors_on_uptrend_no_index():
@@ -272,11 +276,12 @@ def _make_fin_fixture(dates):
 
 
 def test_fin_factor_cols_count_and_names():
-    """FACTOR_COLS has 55 entries; f_bm@0, f_npyoy@1 unchanged; last == f_arturn."""
-    assert len(bm.FACTOR_COLS) == 55, f"Expected 55, got {len(bm.FACTOR_COLS)}"
+    """FACTOR_COLS has 63 entries; f_bm@0, f_npyoy@1 unchanged; f_arturn@54; last == f_vwapdev."""
+    assert len(bm.FACTOR_COLS) == 63, f"Expected 63, got {len(bm.FACTOR_COLS)}"
     assert bm.FACTOR_COLS[0] == "f_bm"
     assert bm.FACTOR_COLS[1] == "f_npyoy"
-    assert bm.FACTOR_COLS[-1] == "f_arturn"
+    assert bm.FACTOR_COLS[54] == "f_arturn"
+    assert bm.FACTOR_COLS[-1] == "f_vwapdev"
     # All 15 new factor names present
     expected_new = [
         "f_cfo", "f_cfonp", "f_cforev", "f_debt", "f_roic", "f_roa",
@@ -339,3 +344,104 @@ def test_fin_none_gives_nan():
         assert fname in out.columns, f"{fname} column missing from output"
         assert np.isnan(row[fname]), \
             f"{fname} should be NaN when fin=None, got {row[fname]}"
+
+
+# ---- Tests for the 8 new price-volume microstructure factors (indices 55-62) ----
+
+def test_pv_factor_cols_count_and_order():
+    """FACTOR_COLS now has 63 entries; f_bm@0/f_npyoy@1 unchanged; last == f_vwapdev."""
+    assert len(bm.FACTOR_COLS) == 63, f"Expected 63, got {len(bm.FACTOR_COLS)}"
+    assert bm.FACTOR_COLS[0] == "f_bm"
+    assert bm.FACTOR_COLS[1] == "f_npyoy"
+    assert bm.FACTOR_COLS[-1] == "f_vwapdev"
+    # New PV factors at indices 55-62
+    expected_pv = [
+        "f_udvol", "f_obv_slope", "f_cmf20", "f_clv",
+        "f_pvcorr", "f_mfi14", "f_body", "f_vwapdev",
+    ]
+    for i, fname in enumerate(expected_pv):
+        assert bm.FACTOR_COLS[55 + i] == fname, \
+            f"Index {55+i}: expected {fname}, got {bm.FACTOR_COLS[55+i]}"
+
+
+def test_pv_factors_on_uptrend():
+    """8 new PV factors are present and finite at a mid-row on the uptrend fixture."""
+    kday, fund, dates, close = _make_uptrend_fixture(n=280)
+    out = bm.compute_symbol_factors(kday, fund, None)
+
+    # Pick row 200 — well past largest rolling window (20d)
+    mid = dates[200]
+    row = out.loc[mid]
+
+    pv_cols = ["f_udvol", "f_obv_slope", "f_cmf20", "f_clv",
+               "f_pvcorr", "f_mfi14", "f_body", "f_vwapdev"]
+    for col in pv_cols:
+        assert col in out.columns, f"{col} column missing"
+
+    # f_clv: CLV = ((c-lo)-(hi-c))/(hi-lo); for uptrend hi=c*1.01, lo=c*0.99
+    # numerator = (c-c*0.99)-(c*1.01-c) = 0.01c - 0.01c = 0; expected 0.0
+    # rolling mean of 0 = 0; allow small float tolerance
+    assert np.isfinite(row["f_clv"]), f"f_clv not finite: {row['f_clv']}"
+    assert -1.0 <= row["f_clv"] <= 1.0, f"f_clv={row['f_clv']} out of [-1,1]"
+
+    # f_mfi14: must be in [0, 100]
+    assert np.isfinite(row["f_mfi14"]), f"f_mfi14 not finite: {row['f_mfi14']}"
+    assert 0.0 <= row["f_mfi14"] <= 100.0, f"f_mfi14={row['f_mfi14']} out of [0,100]"
+
+    # f_body: candle body/range in [0, 1]
+    assert np.isfinite(row["f_body"]), f"f_body not finite: {row['f_body']}"
+    assert 0.0 <= row["f_body"] <= 1.0, f"f_body={row['f_body']} out of [0,1]"
+
+    # f_vwapdev: close deviation from VWAP — on an uptrend with amount=close*volume
+    # this is a well-defined ratio; just check it is finite
+    assert np.isfinite(row["f_vwapdev"]), f"f_vwapdev not finite: {row['f_vwapdev']}"
+
+
+def test_pv_udvol_up_domination():
+    """f_udvol > 0 when up-day volumes clearly dominate down-day volumes."""
+    n = 60
+    dates = pd.bdate_range("2021-01-01", periods=n).strftime("%Y-%m-%d")
+    # Alternating: 4 up-days (high volume) then 1 down-day (low volume)
+    close_vals = np.ones(n)
+    volume_vals = np.ones(n) * 100.0    # baseline
+    for i in range(n):
+        if i % 5 == 4:
+            # down day, low volume
+            close_vals[i] = close_vals[i - 1] * 0.999
+            volume_vals[i] = 10.0
+        else:
+            # up day, high volume
+            close_vals[i] = close_vals[i - 1] * 1.001 if i > 0 else 1.0
+            volume_vals[i] = 500.0
+
+    close = pd.Series(close_vals)
+    volume = pd.Series(volume_vals)
+    high = close * 1.005
+    low = close * 0.995
+    amount = close * volume
+
+    kday = pd.DataFrame({
+        "time": dates,
+        "open": close,
+        "high": high,
+        "low": low,
+        "close": close,
+        "volume": volume,
+        "amount": amount,
+        "turn": 0.5,
+        "pctChg": close.pct_change() * 100,
+    })
+    fund = pd.DataFrame({
+        "time": [dates[0]],
+        "roe": [10.0], "np_yoy": [20.0], "rev_yoy": [5.0],
+        "gross_margin": [30.0], "eps": [1.0], "bps": [4.0],
+    })
+
+    out = bm.compute_symbol_factors(kday, fund, None)
+
+    # At a late row (index 50, well past 20-day window) f_udvol should be > 0
+    late_date = dates[50]
+    f_udvol_val = out.loc[late_date, "f_udvol"]
+    assert np.isfinite(f_udvol_val), f"f_udvol not finite at late row: {f_udvol_val}"
+    assert f_udvol_val > 0, \
+        f"f_udvol expected >0 when up-day volumes dominate, got {f_udvol_val}"

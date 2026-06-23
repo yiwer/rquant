@@ -60,6 +60,15 @@ FACTOR_COLS = [
     "f_aturn",      # asset turnover
     "f_iturn",      # inventory turnover (NaN for banks etc.)
     "f_arturn",     # accounts receivable turnover
+    # --- new 8 price-volume microstructure factors (indices 55-62) ---
+    "f_udvol",      # up/down volume ratio (log, 20d)
+    "f_obv_slope",  # normalized OBV change over 20d
+    "f_cmf20",      # Chaikin Money Flow (20d)
+    "f_clv",        # mean Close Location Value over 20d
+    "f_pvcorr",     # 20d corr(return, volume change)
+    "f_mfi14",      # Money Flow Index (14d)
+    "f_body",       # mean candle body/range over 20d
+    "f_vwapdev",    # deviation from 20d VWAP
 ]
 
 
@@ -313,6 +322,48 @@ def compute_symbol_factors(kday, fund, sec, index_close=None, fin=None):
     else:
         for _, fname in _FIN_SRC_MAP:
             out[fname] = np.nan
+
+    # ---- Price-volume microstructure factors (indices 55-62) ----
+    # ret already defined above as c.pct_change()
+    hl_range = (h - lo).replace(0, np.nan)   # guard high==low bars
+
+    # f_udvol: log ratio of up-day volume sum vs down-day volume sum (20d)
+    v_up = v.where(ret > 0, 0.0)
+    v_dn = v.where(ret < 0, 0.0)
+    out["f_udvol"] = np.log(
+        (v_up.rolling(20).sum() + 1) / (v_dn.rolling(20).sum() + 1)
+    ).values
+
+    # f_obv_slope: normalized OBV change over 20d
+    obv = (np.sign(ret).fillna(0) * v).cumsum()
+    out["f_obv_slope"] = ((obv - obv.shift(20)) / (v.rolling(20).sum() + 1)).values
+
+    # f_cmf20: Chaikin Money Flow (20d)
+    mfm = ((c - lo) - (h - c)) / hl_range   # money flow multiplier; NaN when high==low
+    mfv = mfm * v
+    out["f_cmf20"] = (mfv.rolling(20).sum() / (v.rolling(20).sum() + 1)).values
+
+    # f_clv: mean Close Location Value over 20d
+    clv = ((c - lo) - (h - c)) / hl_range   # same formula as mfm; NaN when high==low
+    out["f_clv"] = clv.rolling(20).mean().values
+
+    # f_pvcorr: 20d rolling correlation between daily return and volume change
+    out["f_pvcorr"] = ret.rolling(20).corr(v.pct_change()).values
+
+    # f_mfi14: Money Flow Index (14d Wilder-style rolling)
+    tp = (h + lo + c) / 3
+    rmf = tp * v
+    pos_mf = rmf.where(tp > tp.shift(1), 0.0)
+    neg_mf = rmf.where(tp < tp.shift(1), 0.0)
+    mr = pos_mf.rolling(14).sum() / (neg_mf.rolling(14).sum() + 1e-9)
+    out["f_mfi14"] = (100 - 100 / (1 + mr)).values
+
+    # f_body: mean candle body/range over 20d
+    out["f_body"] = ((c - df["open"].astype(float)).abs() / hl_range).rolling(20).mean().values
+
+    # f_vwapdev: deviation from 20d VWAP (using amount = price*volume proxy)
+    vwap20 = df["amount"].astype(float).rolling(20).sum() / (v.rolling(20).sum() + 1)
+    out["f_vwapdev"] = ((c - vwap20) / vwap20).values
 
     # ---- Forward return label ----
     out["fwd_ret_5d"] = (c.shift(-HOLD) / c - 1).values
