@@ -25,6 +25,7 @@ def backtest(panel, w, top_n, cost_bps, st_set):
     nav, prev, navs = 1.0, set(), []
     dates = sorted(panel["date"].unique())
     total_turn = 0.0  # accumulated turnover across all rebalances
+    period_rets = []  # net per-period returns (used for Sharpe)
     for d in dates:
         g = _eligible(panel[panel["date"] == d].dropna(subset=["fwd_ret_5d"]), st_set)
         if len(g) < top_n:
@@ -36,15 +37,17 @@ def backtest(panel, w, top_n, cost_bps, st_set):
         cur = set(pick["symbol"])
         turn = len(cur ^ prev) / max(len(cur) + len(prev), 1)    # 对称差比（双边）
         total_turn += turn  # accumulate per-rebalance turnover
-        nav *= (1.0 + ret - cost_bps / 1e4 * turn)
+        ret_net = ret - cost_bps / 1e4 * turn
+        period_rets.append(ret_net)
+        nav *= (1.0 + ret_net)
         navs.append({"t": d, "nav": nav, "picks": list(cur)})
         prev = cur
     total = navs[-1]["nav"] - 1.0 if navs else 0.0
     peak = -1e9; mdd = 0.0
     for h in navs:
         peak = max(peak, h["nav"]); mdd = max(mdd, 1 - h["nav"] / peak)
-    rets = np.diff([1.0] + [h["nav"] for h in navs])
-    sharpe = float(np.mean(rets) / np.std(rets) * np.sqrt(48)) if len(rets) > 1 and np.std(rets) > 0 else None
+    pr = np.array(period_rets)
+    sharpe = float(np.mean(pr) / np.std(pr) * np.sqrt(48)) if len(pr) > 1 and np.std(pr) > 0 else None
     return {"holdings": navs, "regime_slices": [{"label": L, "from": a, "to": b} for L, a, b in [TRAIN, OOS]],
             "risk": {"sharpe": sharpe}, "total_return": total, "max_drawdown": mdd,
             "turnover": total_turn, "n_rebalances": len(navs), "excess_return": 0.0}
@@ -64,7 +67,8 @@ def eval_weights(panel, w, label, st_set):
 def main():
     panel = pd.read_csv(PANEL, dtype={"symbol": str})
     st_set = set(pd.read_csv(ST)["symbol"]) if os.path.exists(ST) else set()
-    learned = json.load(open(os.path.join(OUT_DIR, "weights.json"), encoding="utf-8"))["weights"]
+    with open(os.path.join(OUT_DIR, "weights.json"), encoding="utf-8") as f:
+        learned = json.load(f)["weights"]
     w_learned = np.array([learned[f] for f in FACTOR_COLS])
     w_equal = np.zeros(len(FACTOR_COLS)); w_equal[0] = 1.0; w_equal[1] = 1.0   # 等权基线=价值+净利
     r_eq = eval_weights(panel, w_equal, "equal(value+npyoy)", st_set)
