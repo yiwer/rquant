@@ -69,6 +69,11 @@ FACTOR_COLS = [
     "f_mfi14",      # Money Flow Index (14d)
     "f_body",       # mean candle body/range over 20d
     "f_vwapdev",    # deviation from 20d VWAP
+    # --- new 4 systematic-risk / beta-family factors (indices 63-66) ---
+    "f_beta",       # 60-day rolling market beta vs CSI300
+    "f_ivol",       # 60-day idiosyncratic volatility (resid std)
+    "f_resmom",     # 60-day idiosyncratic (residual) momentum
+    "f_coskew",     # 60-day coskewness with market
 ]
 
 
@@ -364,6 +369,39 @@ def compute_symbol_factors(kday, fund, sec, index_close=None, fin=None):
     # f_vwapdev: deviation from 20d VWAP (using amount = price*volume proxy)
     vwap20 = df["amount"].astype(float).rolling(20).sum() / (v.rolling(20).sum() + 1)
     out["f_vwapdev"] = ((c - vwap20) / vwap20).values
+
+    # ---- Systematic-risk / beta-family factors (indices 63-66) ----
+    # Reuse the same aligned market series as f_relstr60.
+    if index_close is not None:
+        date_col = out["date"].astype(str).str[:10]
+        idx_aligned = date_col.map(index_close).astype(float).ffill()
+        mret = idx_aligned.pct_change()
+
+        # f_beta: 60-day rolling market beta
+        cov60 = ret.rolling(60).cov(mret)
+        var60 = mret.rolling(60).var()
+        f_beta = cov60 / var60
+        out["f_beta"] = f_beta.values
+
+        # f_ivol: 60-day idiosyncratic volatility (residual std)
+        resid = ret - f_beta * mret
+        out["f_ivol"] = resid.rolling(60).std().values
+
+        # f_resmom: 60-day idiosyncratic (residual) momentum
+        out["f_resmom"] = resid.rolling(60).sum().values
+
+        # f_coskew: 60-day coskewness with market
+        ret_dm = ret - ret.rolling(60).mean()
+        mret_dm = mret - mret.rolling(60).mean()
+        out["f_coskew"] = (
+            (ret_dm * mret_dm ** 2).rolling(60).mean()
+            / (ret.rolling(60).std() * mret.rolling(60).var() + 1e-12)
+        ).values
+    else:
+        out["f_beta"] = np.nan
+        out["f_ivol"] = np.nan
+        out["f_resmom"] = np.nan
+        out["f_coskew"] = np.nan
 
     # ---- Forward return label ----
     out["fwd_ret_5d"] = (c.shift(-HOLD) / c - 1).values

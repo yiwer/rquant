@@ -20,8 +20,8 @@ def test_factor_cols_count_and_order():
     # Existing ordering invariants
     assert bm.FACTOR_COLS[0] == "f_bm"
     assert bm.FACTOR_COLS[1] == "f_npyoy"
-    # Total 63 factors (55 previous + 8 new PV microstructure factors)
-    assert len(bm.FACTOR_COLS) == 63
+    # Total 67 factors (63 previous + 4 new systematic-risk factors)
+    assert len(bm.FACTOR_COLS) == 67
     # Hard-gate names still present
     assert "f_roe" in bm.FACTOR_COLS
     assert "f_logamt" in bm.FACTOR_COLS
@@ -180,15 +180,15 @@ def test_pa_factors_merge_when_sec_provided():
 # ---- Tests for the 3 new price factors (f_maxret20, f_skew60, f_relstr60) ----
 
 def test_new_price_factor_cols_count():
-    """FACTOR_COLS has 63 entries; f_bm@0 and f_npyoy@1 unchanged; last == f_vwapdev."""
-    assert len(bm.FACTOR_COLS) == 63
+    """FACTOR_COLS has 67 entries; f_bm@0 and f_npyoy@1 unchanged; last == f_coskew."""
+    assert len(bm.FACTOR_COLS) == 67
     assert bm.FACTOR_COLS[0] == "f_bm"
     assert bm.FACTOR_COLS[1] == "f_npyoy"
     assert bm.FACTOR_COLS[37] == "f_maxret20"
     assert bm.FACTOR_COLS[38] == "f_skew60"
     assert bm.FACTOR_COLS[39] == "f_relstr60"
     assert bm.FACTOR_COLS[54] == "f_arturn"
-    assert bm.FACTOR_COLS[-1] == "f_vwapdev"
+    assert bm.FACTOR_COLS[-1] == "f_coskew"
 
 
 def test_new_price_factors_on_uptrend_no_index():
@@ -276,12 +276,12 @@ def _make_fin_fixture(dates):
 
 
 def test_fin_factor_cols_count_and_names():
-    """FACTOR_COLS has 63 entries; f_bm@0, f_npyoy@1 unchanged; f_arturn@54; last == f_vwapdev."""
-    assert len(bm.FACTOR_COLS) == 63, f"Expected 63, got {len(bm.FACTOR_COLS)}"
+    """FACTOR_COLS has 67 entries; f_bm@0, f_npyoy@1 unchanged; f_arturn@54; last == f_coskew."""
+    assert len(bm.FACTOR_COLS) == 67, f"Expected 67, got {len(bm.FACTOR_COLS)}"
     assert bm.FACTOR_COLS[0] == "f_bm"
     assert bm.FACTOR_COLS[1] == "f_npyoy"
     assert bm.FACTOR_COLS[54] == "f_arturn"
-    assert bm.FACTOR_COLS[-1] == "f_vwapdev"
+    assert bm.FACTOR_COLS[-1] == "f_coskew"
     # All 15 new factor names present
     expected_new = [
         "f_cfo", "f_cfonp", "f_cforev", "f_debt", "f_roic", "f_roa",
@@ -349,11 +349,11 @@ def test_fin_none_gives_nan():
 # ---- Tests for the 8 new price-volume microstructure factors (indices 55-62) ----
 
 def test_pv_factor_cols_count_and_order():
-    """FACTOR_COLS now has 63 entries; f_bm@0/f_npyoy@1 unchanged; last == f_vwapdev."""
-    assert len(bm.FACTOR_COLS) == 63, f"Expected 63, got {len(bm.FACTOR_COLS)}"
+    """FACTOR_COLS now has 67 entries; f_bm@0/f_npyoy@1 unchanged; last == f_coskew."""
+    assert len(bm.FACTOR_COLS) == 67, f"Expected 67, got {len(bm.FACTOR_COLS)}"
     assert bm.FACTOR_COLS[0] == "f_bm"
     assert bm.FACTOR_COLS[1] == "f_npyoy"
-    assert bm.FACTOR_COLS[-1] == "f_vwapdev"
+    assert bm.FACTOR_COLS[-1] == "f_coskew"
     # New PV factors at indices 55-62
     expected_pv = [
         "f_udvol", "f_obv_slope", "f_cmf20", "f_clv",
@@ -445,3 +445,52 @@ def test_pv_udvol_up_domination():
     assert np.isfinite(f_udvol_val), f"f_udvol not finite at late row: {f_udvol_val}"
     assert f_udvol_val > 0, \
         f"f_udvol expected >0 when up-day volumes dominate, got {f_udvol_val}"
+
+
+# ---- Tests for the 4 new systematic-risk / beta-family factors (indices 63-66) ----
+
+def test_risk_factor_cols_count_and_order():
+    """FACTOR_COLS now has 67 entries; f_bm@0/f_npyoy@1 unchanged; last == 'f_coskew'."""
+    assert len(bm.FACTOR_COLS) == 67, f"Expected 67, got {len(bm.FACTOR_COLS)}"
+    assert bm.FACTOR_COLS[0] == "f_bm"
+    assert bm.FACTOR_COLS[1] == "f_npyoy"
+    assert bm.FACTOR_COLS[63] == "f_beta"
+    assert bm.FACTOR_COLS[64] == "f_ivol"
+    assert bm.FACTOR_COLS[65] == "f_resmom"
+    assert bm.FACTOR_COLS[66] == "f_coskew"
+    assert bm.FACTOR_COLS[-1] == "f_coskew"
+
+
+def test_risk_factors_finite_with_index():
+    """f_beta, f_ivol, f_resmom, f_coskew are present and finite at a late row
+    when a synthetic index_close is provided (mirrors the f_relstr60 fixture)."""
+    kday, fund, dates, close = _make_uptrend_fixture(n=280)
+
+    # Synthetic CSI300 close — also an uptrend but at a different rate so beta != 1.
+    n = len(dates)
+    idx_prices = np.linspace(4000.0, 5000.0, n)
+    index_close = pd.Series(idx_prices, index=list(dates))
+
+    out = bm.compute_symbol_factors(kday, fund, None, index_close=index_close)
+
+    # Row 200 — well past the 60-bar warm-up window
+    mid = dates[200]
+    row = out.loc[mid]
+
+    risk_cols = ["f_beta", "f_ivol", "f_resmom", "f_coskew"]
+    for col in risk_cols:
+        assert col in out.columns, f"{col} column missing from output"
+        assert np.isfinite(row[col]), \
+            f"{col} not finite at post-warmup row: {row[col]}"
+
+
+def test_risk_factors_nan_when_no_index():
+    """f_beta, f_ivol, f_resmom, f_coskew are all NaN when index_close=None."""
+    kday, fund, dates, _ = _make_uptrend_fixture(n=280)
+    out = bm.compute_symbol_factors(kday, fund, None, index_close=None)
+
+    risk_cols = ["f_beta", "f_ivol", "f_resmom", "f_coskew"]
+    for col in risk_cols:
+        assert col in out.columns, f"{col} column missing from output"
+        assert out[col].isna().all(), \
+            f"{col} should be all-NaN when index_close=None, but has non-NaN values"
