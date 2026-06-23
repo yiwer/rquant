@@ -20,8 +20,8 @@ def test_factor_cols_count_and_order():
     # Existing ordering invariants
     assert bm.FACTOR_COLS[0] == "f_bm"
     assert bm.FACTOR_COLS[1] == "f_npyoy"
-    # Total 37 factors (13 original + 24 new)
-    assert len(bm.FACTOR_COLS) == 37
+    # Total 40 factors (13 original + 24 batch-2 + 3 price factors)
+    assert len(bm.FACTOR_COLS) == 40
     # Hard-gate names still present
     assert "f_roe" in bm.FACTOR_COLS
     assert "f_logamt" in bm.FACTOR_COLS
@@ -33,6 +33,10 @@ def test_factor_cols_count_and_order():
     assert "f_ep" in bm.FACTOR_COLS
     assert "f_padir" in bm.FACTOR_COLS
     assert "f_secheat" in bm.FACTOR_COLS
+    # New price factors at indices 37-39
+    assert bm.FACTOR_COLS[37] == "f_maxret20"
+    assert bm.FACTOR_COLS[38] == "f_skew60"
+    assert bm.FACTOR_COLS[39] == "f_relstr60"
 
 
 def _make_uptrend_fixture(n=280):
@@ -165,3 +169,68 @@ def test_pa_factors_merge_when_sec_provided():
     assert np.isclose(row["f_sectrend"], 0.8, rtol=1e-5)
     assert np.isclose(row["f_secbreadth"], 0.6, rtol=1e-5)
     assert np.isclose(row["f_secheat"], 0.4, rtol=1e-5)
+
+
+# ---- Tests for the 3 new price factors (f_maxret20, f_skew60, f_relstr60) ----
+
+def test_new_price_factor_cols_count():
+    """FACTOR_COLS has 40 entries; f_bm@0 and f_npyoy@1 unchanged."""
+    assert len(bm.FACTOR_COLS) == 40
+    assert bm.FACTOR_COLS[0] == "f_bm"
+    assert bm.FACTOR_COLS[1] == "f_npyoy"
+    assert bm.FACTOR_COLS[37] == "f_maxret20"
+    assert bm.FACTOR_COLS[38] == "f_skew60"
+    assert bm.FACTOR_COLS[39] == "f_relstr60"
+
+
+def test_new_price_factors_on_uptrend_no_index():
+    """f_maxret20 finite & >0 at mid; f_skew60 computable (may be NaN early);
+    f_relstr60 is NaN when index_close not provided."""
+    kday, fund, dates, close = _make_uptrend_fixture(n=280)
+    # Call WITHOUT index_close (default None)
+    out = bm.compute_symbol_factors(kday, fund, None)
+
+    mid = dates[200]   # well past both 20-day and 60-day windows
+    row = out.loc[mid]
+
+    # f_maxret20: uptrend has positive daily returns -> rolling max > 0
+    assert np.isfinite(row["f_maxret20"]), f"f_maxret20 not finite at mid: {row['f_maxret20']}"
+    assert row["f_maxret20"] > 0, f"f_maxret20 expected >0 on uptrend, got {row['f_maxret20']}"
+
+    # f_skew60: may be finite or NaN depending on the row, but the column must exist
+    # At mid (row 200, well past window 60) it should be computable (not necessarily non-NaN
+    # when variance is near-zero on linspace, but the column must be present).
+    assert "f_skew60" in out.columns, "f_skew60 column missing"
+
+    # f_relstr60: must be NaN when index_close=None
+    assert np.isnan(row["f_relstr60"]), \
+        f"f_relstr60 should be NaN when no index provided, got {row['f_relstr60']}"
+    # All rows should be NaN
+    assert out["f_relstr60"].isna().all(), "f_relstr60 should be all-NaN when index_close=None"
+
+
+def test_relstr60_with_synthetic_index():
+    """f_relstr60 ≈ symbol_60d_ret − idx_60d_ret when a synthetic index_close is passed."""
+    kday, fund, dates, close = _make_uptrend_fixture(n=280)
+
+    # Build a synthetic CSI300 close: flat at 4000 for most, then rises last 60 bars
+    # so the index 60-day return is non-trivial and differs from the symbol.
+    n = len(dates)
+    idx_prices = np.linspace(4000.0, 5000.0, n)     # CSI300 also rises, but slower rate
+    index_close = pd.Series(idx_prices, index=list(dates))
+
+    out = bm.compute_symbol_factors(kday, fund, None, index_close=index_close)
+
+    # Use mid row at index 200 (well past 60-bar window)
+    mid_i = 200
+    mid_date = dates[mid_i]
+    row = out.loc[mid_date]
+
+    # Manually compute expected values
+    sym_ret60 = float(close.iloc[mid_i]) / float(close.iloc[mid_i - 60]) - 1
+    idx_ret60 = idx_prices[mid_i] / idx_prices[mid_i - 60] - 1
+    expected = sym_ret60 - idx_ret60
+
+    assert np.isfinite(row["f_relstr60"]), f"f_relstr60 should be finite at mid, got {row['f_relstr60']}"
+    assert np.isclose(row["f_relstr60"], expected, rtol=1e-5), \
+        f"f_relstr60={row['f_relstr60']}, expected={expected}"

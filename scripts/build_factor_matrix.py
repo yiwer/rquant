@@ -1,4 +1,4 @@
-"""导出周频因子面板：37 精选因子 + 未来5日收益。PIT + membership 点时掩码。
+"""导出周频因子面板：40 精选因子 + 未来5日收益。PIT + membership 点时掩码。
 产出 data/factor_panel/factors.csv（行=(date,symbol)）。
 --no-membership 模式跳过成分掩码，写 data/factor_panel/factors_full.csv。"""
 import sys
@@ -39,6 +39,10 @@ FACTOR_COLS = [
     # sector/PA signals
     "f_padir", "f_pastruct", "f_paregime", "f_papull",
     "f_sectrend", "f_secbreadth", "f_secheat",
+    # --- new 3 price factors (indices 37-39) ---
+    "f_maxret20",   # 20-day rolling max daily return (lottery/MAX anomaly)
+    "f_skew60",     # 60-day rolling skewness of daily returns
+    "f_relstr60",   # 60-day relative strength vs CSI300 (beta-stripped momentum)
 ]
 
 
@@ -69,7 +73,7 @@ def atr14(high, low, close, n=14):
     return atr
 
 
-def compute_symbol_factors(kday, fund, sec):
+def compute_symbol_factors(kday, fund, sec, index_close=None):
     """Compute per-day factors + 5-day forward return for one symbol.
 
     Args:
@@ -79,6 +83,9 @@ def compute_symbol_factors(kday, fund, sec):
         sec:  DataFrame with columns date, sec_mom20 (and optionally pa_dir,
               pa_struct, pa_regime, pa_pullback, sec_trend, sec_breadth, sec_heat),
               or None.
+        index_close: optional pd.Series mapping date string (YYYY-MM-DD) -> float,
+              representing the CSI300 daily close. Used to compute f_relstr60.
+              When None, f_relstr60 is all-NaN.
     """
     # Sort by time first so all positional .values assignments are guaranteed aligned,
     # regardless of whether the caller supplied an already-sorted frame.
@@ -214,6 +221,29 @@ def compute_symbol_factors(kday, fund, sec):
     # ---- Fundamental: earnings yield ----
     out["f_ep"] = (fmap["eps"].values / c.values)
 
+    # ---- New price factors (indices 37-39) ----
+    r = c.pct_change()
+
+    # f_maxret20: 20-day rolling max of daily return (lottery/MAX anomaly)
+    out["f_maxret20"] = r.rolling(20).max().values
+
+    # f_skew60: 60-day rolling skewness of daily returns
+    out["f_skew60"] = r.rolling(60).skew().values
+
+    # f_relstr60: relative strength vs CSI300 over 60 days (beta-stripped momentum)
+    # PIT: only uses past data (shift(60) looks 60 days back; no future leakage)
+    if index_close is not None:
+        # Align CSI300 close to this symbol's date axis via map (forward-fill: ffill after map)
+        date_col = out["date"].astype(str).str[:10]
+        idx_aligned = date_col.map(index_close)
+        # Forward-fill gaps (e.g. minor calendar mismatches) within symbol's date range
+        idx_aligned = idx_aligned.astype(float).ffill()
+        sym_ret60 = c / c.shift(60) - 1
+        idx_ret60 = idx_aligned / idx_aligned.shift(60) - 1
+        out["f_relstr60"] = (sym_ret60 - idx_ret60).values
+    else:
+        out["f_relstr60"] = np.nan
+
     # ---- Forward return label ----
     out["fwd_ret_5d"] = (c.shift(-HOLD) / c - 1).values
 
@@ -240,9 +270,29 @@ def mask_by_membership(panel_df, members_at):
     return panel_df[keep]
 
 
+def _load_index_close(csv_path):
+    """Load CSI300 daily close from data/baostock/index/csi300.csv.
+
+    Expected columns: time (YYYY-MM-DD HH:MM:SS or YYYY-MM-DD), close.
+    Returns pd.Series mapping date string YYYY-MM-DD -> float close, or None if file missing.
+    """
+    if not os.path.exists(csv_path):
+        return None
+    df = pd.read_csv(csv_path)
+    df["date"] = df["time"].astype(str).str[:10]
+    df["close"] = df["close"].astype(float)
+    # Keep last entry per date (in case of duplicates)
+    df = df.sort_values("date").drop_duplicates("date", keep="last")
+    return df.set_index("date")["close"]
+
+
 def main(apply_membership=True, out_path=OUT):
     os.makedirs(OUT_DIR, exist_ok=True)
     roster = pd.read_csv(ROSTER)["symbol"].tolist()
+
+    # Load CSI300 index close once for f_relstr60
+    csi300_path = os.path.join(REPO, "data", "baostock", "index", "csi300.csv")
+    index_close = _load_index_close(csi300_path)
 
     # Only load membership data when the mask is actually needed.
     if apply_membership:
@@ -280,7 +330,7 @@ def main(apply_membership=True, out_path=OUT):
                 ["time", "sec_mom20", "pa_dir", "pa_struct", "pa_regime",
                  "pa_pullback", "sec_trend", "sec_breadth", "sec_heat"]
             ].rename(columns={"time": "date"})
-        fac = compute_symbol_factors(kday, fund, sec)
+        fac = compute_symbol_factors(kday, fund, sec, index_close=index_close)
         frames[sym] = fac
         all_dates.update(fac.index)
 
