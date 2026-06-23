@@ -15,6 +15,7 @@ FIN_EXTRA = os.path.join(REPO, "data", "financials_extra")
 SEC = os.path.join(REPO, "data", "baostock", "pa_sector_merged")
 ROSTER = os.path.join(REPO, "data", "baostock", "universe_baostock_day.csv")
 MEMBERSHIP = os.path.join(REPO, "data", "membership_top2000.csv")
+MGN_DIR = os.path.join(REPO, "data", "margin")
 OUT_DIR = os.path.join(REPO, "data", "factor_panel")
 OUT = os.path.join(OUT_DIR, "factors.csv")
 HOLD = 5            # 周频持有期（交易日）
@@ -74,6 +75,12 @@ FACTOR_COLS = [
     "f_ivol",       # 60-day idiosyncratic volatility (resid std)
     "f_resmom",     # 60-day idiosyncratic (residual) momentum
     "f_coskew",     # 60-day coskewness with market
+    # --- new 5 margin-trading factors (indices 67-71) ---
+    "f_rzye_chg5",  # 5-day pct change in margin balance (融资余额)
+    "f_rzye_chg20", # 20-day pct change in margin balance
+    "f_rzye_norm",  # margin balance / 20d mean turnover amount (leverage level)
+    "f_rzmre_amt",  # margin-buy amount / day's turnover amount
+    "f_rqyl_chg20", # 20-day pct change in short-sell inventory (融券余量)
 ]
 
 
@@ -104,7 +111,7 @@ def atr14(high, low, close, n=14):
     return atr
 
 
-def compute_symbol_factors(kday, fund, sec, index_close=None, fin=None):
+def compute_symbol_factors(kday, fund, sec, index_close=None, fin=None, mgn=None):
     """Compute per-day factors + 5-day forward return for one symbol.
 
     Args:
@@ -123,6 +130,11 @@ def compute_symbol_factors(kday, fund, sec, index_close=None, fin=None):
               quick_ratio, cash_ratio, equity_mult, asset_turn, inv_turn, ar_turn.
               Merged backward (≤ trading date) for strict PIT correctness.
               When None, all 15 f_* financial factors are NaN.
+        mgn:  optional DataFrame from data/margin/<sym>.csv with columns
+              time (YYYY-MM-DD), rzye (融资余额), rzmre (融资买入额), rqyl (融券余量).
+              Daily, sparse before stock becomes margin-eligible. Lagged 1 trading day
+              before merging to avoid same-day lookahead (PIT).
+              When None, all 5 f_margin factors are NaN.
     """
     # Sort by time first so all positional .values assignments are guaranteed aligned,
     # regardless of whether the caller supplied an already-sorted frame.
@@ -403,6 +415,76 @@ def compute_symbol_factors(kday, fund, sec, index_close=None, fin=None):
         out["f_resmom"] = np.nan
         out["f_coskew"] = np.nan
 
+    # ---- Margin-trading factors (indices 67-71): PIT lag-1 merge_asof ----
+    if mgn is not None and len(mgn) > 0:
+        mg = mgn.copy()
+        mg = mg.sort_values("time").reset_index(drop=True)
+        mg["rzye"]  = pd.to_numeric(mg["rzye"],  errors="coerce").astype(float)
+        mg["rzmre"] = pd.to_numeric(mg["rzmre"], errors="coerce").astype(float)
+        mg["rqyl"]  = pd.to_numeric(mg["rqyl"],  errors="coerce").astype(float)
+
+        # Compute change factors ON the margin axis (before shifting)
+        rzye  = mg["rzye"]
+        rzmre = mg["rzmre"]
+        rqyl  = mg["rqyl"]
+
+        mg["_chg5"]   = rzye.pct_change(5)
+        mg["_chg20"]  = rzye.pct_change(20)
+        # rqyl may be 0: safe pct_change avoids inf
+        mg["_rqchg20"] = (rqyl - rqyl.shift(20)) / (rqyl.shift(20).abs() + 1.0)
+
+        # PIT lag: shift all series (including raw rzye/rzmre) forward by 1 row
+        # so margin[D] becomes available only at D+1 on the margin axis.
+        mg["_chg5"]    = mg["_chg5"].shift(1)
+        mg["_chg20"]   = mg["_chg20"].shift(1)
+        mg["_rqchg20"] = mg["_rqchg20"].shift(1)
+        mg["_rzye_lag"]  = mg["rzye"].shift(1)
+        mg["_rzmre_lag"] = mg["rzmre"].shift(1)
+
+        # Build datetime keys and merge_asof backward onto the trading-date axis
+        mg["time_dt"] = pd.to_datetime(mg["time"].astype(str).str[:10])
+        mg = mg.sort_values("time_dt")
+
+        kday_dt = pd.DataFrame({
+            "time_dt": pd.to_datetime(out["date"].astype(str).str[:10])
+        }).sort_values("time_dt")
+
+        mgn_cols = ["_chg5", "_chg20", "_rqchg20", "_rzye_lag", "_rzmre_lag"]
+        mg_sub = mg[["time_dt"] + mgn_cols].copy()
+        mgn_merged = pd.merge_asof(kday_dt, mg_sub, on="time_dt", direction="backward")
+
+        # Re-align to original out row order via date string
+        mgn_merged["_date_str"] = mgn_merged["time_dt"].dt.strftime("%Y-%m-%d")
+        mgn_indexed = mgn_merged.set_index("_date_str")
+        out_dates = out["date"].astype(str).str[:10]
+
+        rzye_lag  = pd.Series(mgn_indexed.loc[out_dates.values, "_rzye_lag"].values,
+                               index=out.index, dtype=float)
+        rzmre_lag = pd.Series(mgn_indexed.loc[out_dates.values, "_rzmre_lag"].values,
+                               index=out.index, dtype=float)
+
+        out["f_rzye_chg5"]  = mgn_indexed.loc[out_dates.values, "_chg5"].values
+        out["f_rzye_chg20"] = mgn_indexed.loc[out_dates.values, "_chg20"].values
+        out["f_rqyl_chg20"] = mgn_indexed.loc[out_dates.values, "_rqchg20"].values
+
+        # Post-merge ratio factors (need kday amount column)
+        kday_amount = df["amount"].astype(float)
+        amt20_mean = kday_amount.rolling(20).mean()
+
+        # f_rzmre_amt: margin-buy as fraction of that day's turnover amount
+        amt_safe = kday_amount.where(kday_amount > 0)
+        out["f_rzmre_amt"] = (rzmre_lag.values / amt_safe.values)
+
+        # f_rzye_norm: normalized leverage level (margin balance / 20d mean amount)
+        denom_safe = amt20_mean.where(amt20_mean > 0)
+        out["f_rzye_norm"] = (rzye_lag.values / denom_safe.values)
+    else:
+        out["f_rzye_chg5"]  = np.nan
+        out["f_rzye_chg20"] = np.nan
+        out["f_rzye_norm"]  = np.nan
+        out["f_rzmre_amt"]  = np.nan
+        out["f_rqyl_chg20"] = np.nan
+
     # ---- Forward return label ----
     out["fwd_ret_5d"] = (c.shift(-HOLD) / c - 1).values
 
@@ -493,7 +575,11 @@ def main(apply_membership=True, out_path=OUT):
         fp_extra = os.path.join(FIN_EXTRA, f"{sym}.csv")
         if os.path.exists(fp_extra):
             fin = pd.read_csv(fp_extra)
-        fac = compute_symbol_factors(kday, fund, sec, index_close=index_close, fin=fin)
+        mgn = None
+        mgn_path = os.path.join(MGN_DIR, f"{sym}.csv")
+        if os.path.exists(mgn_path):
+            mgn = pd.read_csv(mgn_path)
+        fac = compute_symbol_factors(kday, fund, sec, index_close=index_close, fin=fin, mgn=mgn)
         frames[sym] = fac
         all_dates.update(fac.index)
 

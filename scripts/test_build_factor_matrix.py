@@ -20,8 +20,8 @@ def test_factor_cols_count_and_order():
     # Existing ordering invariants
     assert bm.FACTOR_COLS[0] == "f_bm"
     assert bm.FACTOR_COLS[1] == "f_npyoy"
-    # Total 67 factors (63 previous + 4 new systematic-risk factors)
-    assert len(bm.FACTOR_COLS) == 67
+    # Total 72 factors (67 previous + 5 new margin-trading factors)
+    assert len(bm.FACTOR_COLS) == 72
     # Hard-gate names still present
     assert "f_roe" in bm.FACTOR_COLS
     assert "f_logamt" in bm.FACTOR_COLS
@@ -43,6 +43,13 @@ def test_factor_cols_count_and_order():
     # New PV microstructure factors at indices 55-62
     assert bm.FACTOR_COLS[55] == "f_udvol"
     assert bm.FACTOR_COLS[62] == "f_vwapdev"
+    # Margin factors at indices 67-71
+    assert bm.FACTOR_COLS[67] == "f_rzye_chg5"
+    assert bm.FACTOR_COLS[68] == "f_rzye_chg20"
+    assert bm.FACTOR_COLS[69] == "f_rzye_norm"
+    assert bm.FACTOR_COLS[70] == "f_rzmre_amt"
+    assert bm.FACTOR_COLS[71] == "f_rqyl_chg20"
+    assert bm.FACTOR_COLS[-1] == "f_rqyl_chg20"
 
 
 def _make_uptrend_fixture(n=280):
@@ -180,15 +187,15 @@ def test_pa_factors_merge_when_sec_provided():
 # ---- Tests for the 3 new price factors (f_maxret20, f_skew60, f_relstr60) ----
 
 def test_new_price_factor_cols_count():
-    """FACTOR_COLS has 67 entries; f_bm@0 and f_npyoy@1 unchanged; last == f_coskew."""
-    assert len(bm.FACTOR_COLS) == 67
+    """FACTOR_COLS has 72 entries; f_bm@0 and f_npyoy@1 unchanged; last == f_rqyl_chg20."""
+    assert len(bm.FACTOR_COLS) == 72
     assert bm.FACTOR_COLS[0] == "f_bm"
     assert bm.FACTOR_COLS[1] == "f_npyoy"
     assert bm.FACTOR_COLS[37] == "f_maxret20"
     assert bm.FACTOR_COLS[38] == "f_skew60"
     assert bm.FACTOR_COLS[39] == "f_relstr60"
     assert bm.FACTOR_COLS[54] == "f_arturn"
-    assert bm.FACTOR_COLS[-1] == "f_coskew"
+    assert bm.FACTOR_COLS[-1] == "f_rqyl_chg20"
 
 
 def test_new_price_factors_on_uptrend_no_index():
@@ -276,12 +283,12 @@ def _make_fin_fixture(dates):
 
 
 def test_fin_factor_cols_count_and_names():
-    """FACTOR_COLS has 67 entries; f_bm@0, f_npyoy@1 unchanged; f_arturn@54; last == f_coskew."""
-    assert len(bm.FACTOR_COLS) == 67, f"Expected 67, got {len(bm.FACTOR_COLS)}"
+    """FACTOR_COLS has 72 entries; f_bm@0, f_npyoy@1 unchanged; f_arturn@54; last == f_rqyl_chg20."""
+    assert len(bm.FACTOR_COLS) == 72, f"Expected 72, got {len(bm.FACTOR_COLS)}"
     assert bm.FACTOR_COLS[0] == "f_bm"
     assert bm.FACTOR_COLS[1] == "f_npyoy"
     assert bm.FACTOR_COLS[54] == "f_arturn"
-    assert bm.FACTOR_COLS[-1] == "f_coskew"
+    assert bm.FACTOR_COLS[-1] == "f_rqyl_chg20"
     # All 15 new factor names present
     expected_new = [
         "f_cfo", "f_cfonp", "f_cforev", "f_debt", "f_roic", "f_roa",
@@ -349,11 +356,11 @@ def test_fin_none_gives_nan():
 # ---- Tests for the 8 new price-volume microstructure factors (indices 55-62) ----
 
 def test_pv_factor_cols_count_and_order():
-    """FACTOR_COLS now has 67 entries; f_bm@0/f_npyoy@1 unchanged; last == f_coskew."""
-    assert len(bm.FACTOR_COLS) == 67, f"Expected 67, got {len(bm.FACTOR_COLS)}"
+    """FACTOR_COLS now has 72 entries; f_bm@0/f_npyoy@1 unchanged; last == f_rqyl_chg20."""
+    assert len(bm.FACTOR_COLS) == 72, f"Expected 72, got {len(bm.FACTOR_COLS)}"
     assert bm.FACTOR_COLS[0] == "f_bm"
     assert bm.FACTOR_COLS[1] == "f_npyoy"
-    assert bm.FACTOR_COLS[-1] == "f_coskew"
+    assert bm.FACTOR_COLS[-1] == "f_rqyl_chg20"
     # New PV factors at indices 55-62
     expected_pv = [
         "f_udvol", "f_obv_slope", "f_cmf20", "f_clv",
@@ -450,15 +457,15 @@ def test_pv_udvol_up_domination():
 # ---- Tests for the 4 new systematic-risk / beta-family factors (indices 63-66) ----
 
 def test_risk_factor_cols_count_and_order():
-    """FACTOR_COLS now has 67 entries; f_bm@0/f_npyoy@1 unchanged; last == 'f_coskew'."""
-    assert len(bm.FACTOR_COLS) == 67, f"Expected 67, got {len(bm.FACTOR_COLS)}"
+    """FACTOR_COLS now has 72 entries; f_bm@0/f_npyoy@1 unchanged; last == 'f_rqyl_chg20'."""
+    assert len(bm.FACTOR_COLS) == 72, f"Expected 72, got {len(bm.FACTOR_COLS)}"
     assert bm.FACTOR_COLS[0] == "f_bm"
     assert bm.FACTOR_COLS[1] == "f_npyoy"
     assert bm.FACTOR_COLS[63] == "f_beta"
     assert bm.FACTOR_COLS[64] == "f_ivol"
     assert bm.FACTOR_COLS[65] == "f_resmom"
     assert bm.FACTOR_COLS[66] == "f_coskew"
-    assert bm.FACTOR_COLS[-1] == "f_coskew"
+    assert bm.FACTOR_COLS[-1] == "f_rqyl_chg20"
 
 
 def test_risk_factors_finite_with_index():
@@ -494,3 +501,103 @@ def test_risk_factors_nan_when_no_index():
         assert col in out.columns, f"{col} column missing from output"
         assert out[col].isna().all(), \
             f"{col} should be all-NaN when index_close=None, but has non-NaN values"
+
+
+# ---- Tests for the 5 new margin-trading factors (indices 67-71) ----
+
+def test_margin_factor_cols_count_and_order():
+    """FACTOR_COLS has 72 entries; f_bm@0/f_npyoy@1 unchanged; last == 'f_rqyl_chg20'."""
+    assert len(bm.FACTOR_COLS) == 72, f"Expected 72, got {len(bm.FACTOR_COLS)}"
+    assert bm.FACTOR_COLS[0] == "f_bm"
+    assert bm.FACTOR_COLS[1] == "f_npyoy"
+    assert bm.FACTOR_COLS[67] == "f_rzye_chg5"
+    assert bm.FACTOR_COLS[68] == "f_rzye_chg20"
+    assert bm.FACTOR_COLS[69] == "f_rzye_norm"
+    assert bm.FACTOR_COLS[70] == "f_rzmre_amt"
+    assert bm.FACTOR_COLS[71] == "f_rqyl_chg20"
+    assert bm.FACTOR_COLS[-1] == "f_rqyl_chg20"
+
+
+def _make_mgn_fixture(dates, n_mgn=60, rzye_start=1e8, rzye_end=2e8):
+    """Synthetic margin DataFrame: rising rzye over the last n_mgn dates.
+
+    Returns (mgn, mgn_dates) where mgn_dates are the last n_mgn trading dates
+    from the kday fixture.  rzye rises linearly rzye_start -> rzye_end.
+    rzmre is 1% of rzye per day. rqyl is 0 (tests safe pct_change guard).
+    """
+    mgn_dates = list(dates[-n_mgn:])
+    rzye_vals = np.linspace(rzye_start, rzye_end, n_mgn)
+    rzmre_vals = rzye_vals * 0.01
+    rqyl_vals = np.zeros(n_mgn)
+    mgn = pd.DataFrame({
+        "time":  mgn_dates,
+        "rzye":  rzye_vals,
+        "rzmre": rzmre_vals,
+        "rqyl":  rqyl_vals,
+    })
+    return mgn, mgn_dates
+
+
+def test_margin_factors_finite_and_positive_on_rising_rzye():
+    """f_rzye_chg20 > 0 and finite at a late row when rzye is rising.
+
+    PIT check: the last margin date's same-day value must NOT be used on that
+    same trading day — the lag-1 shift means the last margin date's value only
+    propagates to the NEXT trading day, so on the last margin date itself the
+    factor must reflect the *prior* margin row, not the same-day one.
+    """
+    kday, fund, dates, close = _make_uptrend_fixture(n=280)
+    n_mgn = 60
+    mgn, mgn_dates = _make_mgn_fixture(dates, n_mgn=n_mgn,
+                                        rzye_start=1e8, rzye_end=2e8)
+
+    out = bm.compute_symbol_factors(kday, fund, None, mgn=mgn)
+
+    # Pick a row well inside the margin coverage (not the last date — see PIT test below)
+    # We need at least 20 lagged margin rows available, so use mgn_dates[-25].
+    check_date = mgn_dates[-25]
+    row = out.loc[check_date]
+
+    assert np.isfinite(row["f_rzye_chg20"]), \
+        f"f_rzye_chg20 not finite at check_date: {row['f_rzye_chg20']}"
+    assert row["f_rzye_chg20"] > 0, \
+        f"f_rzye_chg20 expected >0 for rising rzye, got {row['f_rzye_chg20']}"
+
+    # PIT correctness: on the LAST margin date, the lag-1 shift means only
+    # the PRIOR day's margin is visible (not same-day). Verify by comparing
+    # what same-day vs prior-day rzye_chg20 would be.
+    last_mgn_date = mgn_dates[-1]       # last date in margin series
+    row_last = out.loc[last_mgn_date]
+
+    # The last margin row (index -1 in mgn) has rzye = rzye_end.
+    # After shift(1), on the last margin date we see the SECOND-TO-LAST margin row's
+    # chg20 value, NOT the last row's.  On that second-to-last row:
+    #   rzye_lag  = mgn["rzye"].iloc[-2]   (visible after lag)
+    #   rzye_20back = mgn["rzye"].iloc[-2-20] = mgn["rzye"].iloc[-22]
+    #   expected_chg20 = rzye_lag / rzye_20back - 1
+    rzye_arr = mgn["rzye"].values
+    rzye_lag_val = float(rzye_arr[-2])          # second-to-last, visible after shift
+    rzye_20back  = float(rzye_arr[-2 - 20])     # 20 rows before that
+    expected_chg20 = rzye_lag_val / rzye_20back - 1
+
+    assert np.isfinite(row_last["f_rzye_chg20"]), \
+        f"f_rzye_chg20 NaN on last margin date: {row_last['f_rzye_chg20']}"
+    assert np.isclose(row_last["f_rzye_chg20"], expected_chg20, rtol=1e-5), \
+        (f"PIT failure: f_rzye_chg20 on last margin date = {row_last['f_rzye_chg20']}, "
+         f"expected prior-day value {expected_chg20} (not same-day)")
+
+
+def test_margin_none_gives_nan():
+    """mgn=None → all 5 margin factor columns are NaN."""
+    kday, fund, dates, _ = _make_uptrend_fixture(n=140)
+    out = bm.compute_symbol_factors(kday, fund, None, mgn=None)
+    mid = dates[100]
+    row = out.loc[mid]
+    mgn_factors = [
+        "f_rzye_chg5", "f_rzye_chg20", "f_rzye_norm",
+        "f_rzmre_amt", "f_rqyl_chg20",
+    ]
+    for fname in mgn_factors:
+        assert fname in out.columns, f"{fname} column missing from output"
+        assert np.isnan(row[fname]), \
+            f"{fname} should be NaN when mgn=None, got {row[fname]}"
