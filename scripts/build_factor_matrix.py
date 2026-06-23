@@ -1,4 +1,4 @@
-"""导出周频因子面板：40 精选因子 + 未来5日收益。PIT + membership 点时掩码。
+"""导出周频因子面板：55 精选因子 + 未来5日收益。PIT + membership 点时掩码。
 产出 data/factor_panel/factors.csv（行=(date,symbol)）。
 --no-membership 模式跳过成分掩码，写 data/factor_panel/factors_full.csv。"""
 import sys
@@ -11,6 +11,7 @@ import pandas as pd
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 KDAY = os.path.join(REPO, "data", "baostock", "kday")
 FUND = os.path.join(REPO, "data", "fundamentals")
+FIN_EXTRA = os.path.join(REPO, "data", "financials_extra")
 SEC = os.path.join(REPO, "data", "baostock", "pa_sector_merged")
 ROSTER = os.path.join(REPO, "data", "baostock", "universe_baostock_day.csv")
 MEMBERSHIP = os.path.join(REPO, "data", "membership_top2000.csv")
@@ -43,6 +44,22 @@ FACTOR_COLS = [
     "f_maxret20",   # 20-day rolling max daily return (lottery/MAX anomaly)
     "f_skew60",     # 60-day rolling skewness of daily returns
     "f_relstr60",   # 60-day relative strength vs CSI300 (beta-stripped momentum)
+    # --- new 15 orthogonal financial factors (indices 40-54) ---
+    "f_cfo",        # operating cash flow
+    "f_cfonp",      # cfo / net profit
+    "f_cforev",     # cfo / revenue
+    "f_debt",       # debt ratio
+    "f_roic",       # return on invested capital
+    "f_roa",        # return on assets
+    "f_netmargin",  # net margin
+    "f_opmargin",   # operating margin
+    "f_curr",       # current ratio
+    "f_quick",      # quick ratio
+    "f_cashratio",  # cash ratio
+    "f_eqmult",     # equity multiplier
+    "f_aturn",      # asset turnover
+    "f_iturn",      # inventory turnover (NaN for banks etc.)
+    "f_arturn",     # accounts receivable turnover
 ]
 
 
@@ -73,7 +90,7 @@ def atr14(high, low, close, n=14):
     return atr
 
 
-def compute_symbol_factors(kday, fund, sec, index_close=None):
+def compute_symbol_factors(kday, fund, sec, index_close=None, fin=None):
     """Compute per-day factors + 5-day forward return for one symbol.
 
     Args:
@@ -86,6 +103,12 @@ def compute_symbol_factors(kday, fund, sec, index_close=None):
         index_close: optional pd.Series mapping date string (YYYY-MM-DD) -> float,
               representing the CSI300 daily close. Used to compute f_relstr60.
               When None, f_relstr60 is all-NaN.
+        fin:  optional DataFrame from data/financials_extra/<sym>.csv with columns
+              time (disclosure date, YYYY-MM-DD), cfo, cfo_to_np, cfo_to_rev,
+              debt_ratio, roic, roa, net_margin, op_margin, current_ratio,
+              quick_ratio, cash_ratio, equity_mult, asset_turn, inv_turn, ar_turn.
+              Merged backward (≤ trading date) for strict PIT correctness.
+              When None, all 15 f_* financial factors are NaN.
     """
     # Sort by time first so all positional .values assignments are guaranteed aligned,
     # regardless of whether the caller supplied an already-sorted frame.
@@ -244,6 +267,53 @@ def compute_symbol_factors(kday, fund, sec, index_close=None):
     else:
         out["f_relstr60"] = np.nan
 
+    # ---- Extra financial factors (indices 40-54): PIT merge_asof on disclosure date ----
+    _FIN_SRC_MAP = [
+        ("cfo",           "f_cfo"),
+        ("cfo_to_np",     "f_cfonp"),
+        ("cfo_to_rev",    "f_cforev"),
+        ("debt_ratio",    "f_debt"),
+        ("roic",          "f_roic"),
+        ("roa",           "f_roa"),
+        ("net_margin",    "f_netmargin"),
+        ("op_margin",     "f_opmargin"),
+        ("current_ratio", "f_curr"),
+        ("quick_ratio",   "f_quick"),
+        ("cash_ratio",    "f_cashratio"),
+        ("equity_mult",   "f_eqmult"),
+        ("asset_turn",    "f_aturn"),
+        ("inv_turn",      "f_iturn"),
+        ("ar_turn",       "f_arturn"),
+    ]
+    if fin is not None and len(fin) > 0:
+        fe = fin.copy()
+        # Coerce all financial columns to float (blanks become NaN)
+        for src, _ in _FIN_SRC_MAP:
+            if src in fe.columns:
+                fe[src] = pd.to_numeric(fe[src], errors="coerce")
+        fe["time_dt"] = pd.to_datetime(fe["time"].astype(str).str[:10])
+        fe = fe.sort_values("time_dt")
+        # Build key frame aligned to the kday trading-date axis
+        kday_dt = pd.DataFrame({"time_dt": pd.to_datetime(out["date"].astype(str).str[:10])})
+        kday_dt = kday_dt.sort_values("time_dt")
+        fin_cols = [c2 for c2, _ in _FIN_SRC_MAP if c2 in fe.columns]
+        fe_sub = fe[["time_dt"] + fin_cols].copy()
+        merged = pd.merge_asof(kday_dt, fe_sub, on="time_dt", direction="backward")
+        # merged is aligned positionally with kday_dt (same sort order as out["date"])
+        # Re-index back to the original out row order via date string join
+        merged["_date_str"] = merged["time_dt"].dt.strftime("%Y-%m-%d")
+        out_dates = out["date"].astype(str).str[:10]
+        # Map each output date to its merged financial values (one-to-one after sort)
+        fin_indexed = merged.set_index("_date_str")
+        for src, fname in _FIN_SRC_MAP:
+            if src in fin_indexed.columns:
+                out[fname] = fin_indexed.loc[out_dates.values, src].values
+            else:
+                out[fname] = np.nan
+    else:
+        for _, fname in _FIN_SRC_MAP:
+            out[fname] = np.nan
+
     # ---- Forward return label ----
     out["fwd_ret_5d"] = (c.shift(-HOLD) / c - 1).values
 
@@ -330,7 +400,11 @@ def main(apply_membership=True, out_path=OUT):
                 ["time", "sec_mom20", "pa_dir", "pa_struct", "pa_regime",
                  "pa_pullback", "sec_trend", "sec_breadth", "sec_heat"]
             ].rename(columns={"time": "date"})
-        fac = compute_symbol_factors(kday, fund, sec, index_close=index_close)
+        fin = None
+        fp_extra = os.path.join(FIN_EXTRA, f"{sym}.csv")
+        if os.path.exists(fp_extra):
+            fin = pd.read_csv(fp_extra)
+        fac = compute_symbol_factors(kday, fund, sec, index_close=index_close, fin=fin)
         frames[sym] = fac
         all_dates.update(fac.index)
 
@@ -360,7 +434,7 @@ def main(apply_membership=True, out_path=OUT):
 
     panel.to_csv(out_path, index=False, encoding="utf-8")
     print(
-        f"wrote {len(panel)} rows x {len(FACTOR_COLS)} factors -> {out_path}"
+        f"wrote {len(panel)} rows x {len(FACTOR_COLS)} factors ({len(FACTOR_COLS)} cols) -> {out_path}"
         f"  (dates {panel['date'].min()}..{panel['date'].max()})"
     )
 

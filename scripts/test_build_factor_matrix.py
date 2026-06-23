@@ -20,8 +20,8 @@ def test_factor_cols_count_and_order():
     # Existing ordering invariants
     assert bm.FACTOR_COLS[0] == "f_bm"
     assert bm.FACTOR_COLS[1] == "f_npyoy"
-    # Total 40 factors (13 original + 24 batch-2 + 3 price factors)
-    assert len(bm.FACTOR_COLS) == 40
+    # Total 55 factors (40 previous + 15 new orthogonal financial factors)
+    assert len(bm.FACTOR_COLS) == 55
     # Hard-gate names still present
     assert "f_roe" in bm.FACTOR_COLS
     assert "f_logamt" in bm.FACTOR_COLS
@@ -37,6 +37,9 @@ def test_factor_cols_count_and_order():
     assert bm.FACTOR_COLS[37] == "f_maxret20"
     assert bm.FACTOR_COLS[38] == "f_skew60"
     assert bm.FACTOR_COLS[39] == "f_relstr60"
+    # New orthogonal financial factors at indices 40-54
+    assert bm.FACTOR_COLS[40] == "f_cfo"
+    assert bm.FACTOR_COLS[54] == "f_arturn"
 
 
 def _make_uptrend_fixture(n=280):
@@ -174,13 +177,14 @@ def test_pa_factors_merge_when_sec_provided():
 # ---- Tests for the 3 new price factors (f_maxret20, f_skew60, f_relstr60) ----
 
 def test_new_price_factor_cols_count():
-    """FACTOR_COLS has 40 entries; f_bm@0 and f_npyoy@1 unchanged."""
-    assert len(bm.FACTOR_COLS) == 40
+    """FACTOR_COLS has 55 entries; f_bm@0 and f_npyoy@1 unchanged; last == f_arturn."""
+    assert len(bm.FACTOR_COLS) == 55
     assert bm.FACTOR_COLS[0] == "f_bm"
     assert bm.FACTOR_COLS[1] == "f_npyoy"
     assert bm.FACTOR_COLS[37] == "f_maxret20"
     assert bm.FACTOR_COLS[38] == "f_skew60"
     assert bm.FACTOR_COLS[39] == "f_relstr60"
+    assert bm.FACTOR_COLS[-1] == "f_arturn"
 
 
 def test_new_price_factors_on_uptrend_no_index():
@@ -234,3 +238,104 @@ def test_relstr60_with_synthetic_index():
     assert np.isfinite(row["f_relstr60"]), f"f_relstr60 should be finite at mid, got {row['f_relstr60']}"
     assert np.isclose(row["f_relstr60"], expected, rtol=1e-5), \
         f"f_relstr60={row['f_relstr60']}, expected={expected}"
+
+
+# ---- Tests for the 15 new orthogonal financial factors ----
+
+def _make_fin_fixture(dates):
+    """Synthetic financials_extra DataFrame with 2 disclosure dates.
+
+    disclosure_1 = dates[10]  (day 10)
+    disclosure_2 = dates[50]  (day 50)
+    """
+    disc1 = dates[10]
+    disc2 = dates[50]
+    fin = pd.DataFrame({
+        "time": [disc1, disc2],
+        "cfo":           [1000.0,  2000.0],
+        "cfo_to_np":     [1.1,     1.2],
+        "cfo_to_rev":    [0.15,    0.18],
+        "debt_ratio":    [0.40,    0.35],
+        "roic":          [0.12,    0.15],
+        "roa":           [0.08,    0.10],
+        "net_margin":    [0.10,    0.12],
+        "op_margin":     [0.14,    0.16],
+        "current_ratio": [1.5,     1.8],
+        "quick_ratio":   [1.0,     1.2],
+        "cash_ratio":    [0.5,     0.6],
+        "equity_mult":   [2.0,     2.5],
+        "asset_turn":    [0.8,     0.9],
+        "inv_turn":      [4.0,     5.0],
+        "ar_turn":       [6.0,     7.0],
+    })
+    return fin, disc1, disc2
+
+
+def test_fin_factor_cols_count_and_names():
+    """FACTOR_COLS has 55 entries; f_bm@0, f_npyoy@1 unchanged; last == f_arturn."""
+    assert len(bm.FACTOR_COLS) == 55, f"Expected 55, got {len(bm.FACTOR_COLS)}"
+    assert bm.FACTOR_COLS[0] == "f_bm"
+    assert bm.FACTOR_COLS[1] == "f_npyoy"
+    assert bm.FACTOR_COLS[-1] == "f_arturn"
+    # All 15 new factor names present
+    expected_new = [
+        "f_cfo", "f_cfonp", "f_cforev", "f_debt", "f_roic", "f_roa",
+        "f_netmargin", "f_opmargin", "f_curr", "f_quick", "f_cashratio",
+        "f_eqmult", "f_aturn", "f_iturn", "f_arturn",
+    ]
+    for fname in expected_new:
+        assert fname in bm.FACTOR_COLS, f"{fname} missing from FACTOR_COLS"
+
+
+def test_fin_pit_correctness():
+    """PIT correctness: backward merge_asof on disclosure date.
+
+    - day < disc1 → NaN (no disclosure yet)
+    - disc1 ≤ day < disc2 → disclosure-1 values
+    - day ≥ disc2 → disclosure-2 values
+    """
+    kday, fund, dates, close = _make_uptrend_fixture(n=140)
+    fin, disc1, disc2 = _make_fin_fixture(dates)
+
+    out = bm.compute_symbol_factors(kday, fund, None, fin=fin)
+
+    # Day before first disclosure → NaN
+    pre_disc = dates[5]   # day 5 < disc1 (day 10)
+    row_pre = out.loc[pre_disc]
+    assert np.isnan(row_pre["f_roic"]), \
+        f"f_roic should be NaN before first disclosure, got {row_pre['f_roic']}"
+    assert np.isnan(row_pre["f_debt"]), \
+        f"f_debt should be NaN before first disclosure, got {row_pre['f_debt']}"
+
+    # Day after disc1 but before disc2 → disclosure-1 values
+    mid1 = dates[30]   # disc1=day10 ≤ day30 < disc2=day50
+    row_mid1 = out.loc[mid1]
+    assert np.isclose(row_mid1["f_roic"], 0.12, rtol=1e-5), \
+        f"f_roic@mid1={row_mid1['f_roic']}, expected 0.12 (disc1)"
+    assert np.isclose(row_mid1["f_debt"], 0.40, rtol=1e-5), \
+        f"f_debt@mid1={row_mid1['f_debt']}, expected 0.40 (disc1)"
+
+    # Day after disc2 → disclosure-2 values
+    mid2 = dates[80]   # day80 ≥ disc2=day50
+    row_mid2 = out.loc[mid2]
+    assert np.isclose(row_mid2["f_roic"], 0.15, rtol=1e-5), \
+        f"f_roic@mid2={row_mid2['f_roic']}, expected 0.15 (disc2)"
+    assert np.isclose(row_mid2["f_debt"], 0.35, rtol=1e-5), \
+        f"f_debt@mid2={row_mid2['f_debt']}, expected 0.35 (disc2)"
+
+
+def test_fin_none_gives_nan():
+    """fin=None → all 15 financial factor columns are NaN."""
+    kday, fund, dates, _ = _make_uptrend_fixture(n=140)
+    out = bm.compute_symbol_factors(kday, fund, None, fin=None)
+    mid = dates[100]
+    row = out.loc[mid]
+    fin_factors = [
+        "f_cfo", "f_cfonp", "f_cforev", "f_debt", "f_roic", "f_roa",
+        "f_netmargin", "f_opmargin", "f_curr", "f_quick", "f_cashratio",
+        "f_eqmult", "f_aturn", "f_iturn", "f_arturn",
+    ]
+    for fname in fin_factors:
+        assert fname in out.columns, f"{fname} column missing from output"
+        assert np.isnan(row[fname]), \
+            f"{fname} should be NaN when fin=None, got {row[fname]}"
