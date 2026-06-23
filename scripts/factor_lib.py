@@ -74,3 +74,12 @@ def elastic_net_fit(X, y, alpha, l1_ratio=0.5, max_iter=1000, tol=1e-7):
 def linear_score(Xrank, w):
     """线性打分 = 排名矩阵 · 权重。"""
     return np.asarray(Xrank, float) @ np.asarray(w, float)
+
+
+def expand_features(Xrank, interaction_pairs):
+    """N×p 排名矩阵 → [原始 | (x-0.5)² | 成对乘积]。interaction_pairs=[(i,j),...]（列索引）。"""
+    X = np.asarray(Xrank, float)
+    sq = (X - 0.5) ** 2
+    inter = (np.column_stack([X[:, i] * X[:, j] for (i, j) in interaction_pairs])
+             if interaction_pairs else np.empty((X.shape[0], 0)))
+    return np.column_stack([X, sq, inter])

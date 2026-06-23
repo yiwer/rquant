@@ -32,3 +32,11 @@ def test_elastic_net_l1ratio0_matches_ridge():
     Xc = X - X.mean(0); yc = y - y.mean()
     n = len(y); ridge = np.linalg.solve(Xc.T @ Xc / n + 0.1*np.eye(4), Xc.T @ yc / n)
     assert np.allclose(w, ridge, atol=1e-3)
+
+def test_expand_features_shape_and_values():
+    X = np.array([[0.0, 1.0], [0.5, 0.5], [1.0, 0.0]])
+    out = fl.expand_features(X, [(0, 1)])
+    assert out.shape == (3, 2 + 2 + 1)              # base2 + sq2 + inter1
+    assert np.allclose(out[:, :2], X)               # 前 p 列=原始
+    assert np.allclose(out[:, 2], (X[:, 0]-0.5)**2) # 非单调列
+    assert np.allclose(out[:, 4], X[:, 0]*X[:, 1])  # 交互列
