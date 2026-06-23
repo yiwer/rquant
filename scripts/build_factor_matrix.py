@@ -107,6 +107,9 @@ def compute_symbol_factors(kday, fund, sec):
         if "time" in s.columns and "date" not in s.columns:
             s = s.rename(columns={"time": "date"})
         s = s.rename(columns={"sec_mom20": "f_secmom"})[["date", "f_secmom"]]
+        # Normalize dates to YYYY-MM-DD for merge: kday times may carry HH:MM:SS suffix
+        s["date"] = s["date"].astype(str).str[:10]
+        out["date"] = out["date"].astype(str).str[:10]
         out = out.merge(s, on="date", how="left")
     else:
         out["f_secmom"] = np.nan
@@ -127,14 +130,20 @@ def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     roster = pd.read_csv(ROSTER)["symbol"].tolist()
     mem = pd.read_csv(MEMBERSHIP)                      # date,symbol（月末快照）
-    mem_dates = sorted(mem["date"].unique())
 
-    def members_at(d):
-        """≤d 最近快照的成分集。"""
-        i = np.searchsorted(mem_dates, d, side="right") - 1
+    # Pre-compute membership snapshot sets keyed by snapshot date (string).
+    # This avoids rebuilding sets inside the hot loop (was O(syms × rebs) set creations).
+    mem_dates_sorted = sorted(mem["date"].unique())
+    mem_snap = {d: set(mem[mem["date"] == d]["symbol"]) for d in mem_dates_sorted}
+
+    def members_at_cached(d_str):
+        """≤d 最近快照的成分集（从预计算字典取，O(log n) 查找 + O(1) 返回）。"""
+        # d_str may be a string "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS"
+        d_key = str(d_str)[:10]   # keep only date part for comparison
+        i = np.searchsorted(mem_dates_sorted, d_key, side="right") - 1
         if i < 0:
             return set()
-        return set(mem[mem["date"] == mem_dates[i]]["symbol"])
+        return mem_snap[mem_dates_sorted[i]]
 
     frames, all_dates = {}, set()
     for sym in roster:
@@ -156,14 +165,27 @@ def main():
         all_dates.update(fac.index)
 
     rebs = _weekly_dates(all_dates)
+    # Rebalance dates as plain date strings for membership lookup
+    rebs_str = [str(r)[:10] for r in rebs]
+    rebs_set = set(rebs_str)
+
+    # Pre-compute per-rebalance-date membership (one lookup per date, not per date×symbol)
+    reb_members = {d: members_at_cached(d) for d in rebs_str}
+
     rows = []
     for sym, fac in frames.items():
-        idx = fac.index.intersection(rebs)
-        sub = fac.loc[idx, FACTOR_COLS + ["fwd_ret_5d"]].copy()
+        # Align fac index (may be string or datetime) to rebalance date strings
+        fac_dates_str = [str(d)[:10] for d in fac.index]
+        # Build a boolean mask: date is a rebalance date AND symbol was a member
+        mask = np.array([
+            (d in rebs_set) and (sym in reb_members[d])
+            for d in fac_dates_str
+        ])
+        if not mask.any():
+            continue
+        sub = fac.loc[np.array(fac.index)[mask], FACTOR_COLS + ["fwd_ret_5d"]].copy()
         sub.insert(0, "symbol", sym)
-        sub.insert(0, "date", sub.index)
-        # Membership point-in-time mask: keep only rows where symbol was a member
-        sub = sub[[s in members_at(d) for d, s in zip(sub["date"], sub["symbol"])]]
+        sub.insert(0, "date", [str(d)[:10] for d in sub.index])
         rows.append(sub)
 
     panel = pd.concat(rows, ignore_index=True).sort_values(["date", "symbol"])
