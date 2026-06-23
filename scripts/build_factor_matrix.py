@@ -1,4 +1,4 @@
-"""导出周频因子面板：13 精选因子 + 未来5日收益。PIT + membership 点时掩码。
+"""导出周频因子面板：37 精选因子 + 未来5日收益。PIT + membership 点时掩码。
 产出 data/factor_panel/factors.csv（行=(date,symbol)）。
 --no-membership 模式跳过成分掩码，写 data/factor_panel/factors_full.csv。"""
 import sys
@@ -20,9 +20,25 @@ HOLD = 5            # 周频持有期（交易日）
 FROM, TO = "2018-01-01", "2026-06-30"
 
 FACTOR_COLS = [
+    # --- existing 13 (indices 0-12; f_bm@0, f_npyoy@1 must stay) ---
     "f_bm", "f_npyoy", "f_revyoy", "f_roe", "f_gm",
     "f_mom20", "f_mom120", "f_rev5", "f_trend60",
     "f_atr", "f_rvol", "f_logamt", "f_secmom",
+    # --- new 24 (indices 13-36) ---
+    # price/momentum
+    "f_mom60", "f_mom250", "f_rev10", "f_trend20",
+    "f_hi52", "f_donch60",
+    # technical indicators
+    "f_rsi14", "f_macd", "f_bollpctb",
+    # volatility
+    "f_vol20", "f_volratio", "f_maxdd60",
+    # volume/liquidity
+    "f_turn", "f_turnmean", "f_amihud", "f_voltrend",
+    # fundamental
+    "f_ep",
+    # sector/PA signals
+    "f_padir", "f_pastruct", "f_paregime", "f_papull",
+    "f_sectrend", "f_secbreadth", "f_secheat",
 ]
 
 
@@ -57,9 +73,12 @@ def compute_symbol_factors(kday, fund, sec):
     """Compute per-day factors + 5-day forward return for one symbol.
 
     Args:
-        kday: DataFrame with columns time, open, high, low, close, volume (ascending by time).
+        kday: DataFrame with columns time, open, high, low, close, volume,
+              amount, turn, pctChg (ascending by time).
         fund: DataFrame with time-point fundamentals (PIT, forward-filled via merge_asof).
-        sec:  DataFrame with columns date, sec_mom20 (sector momentum), or None.
+        sec:  DataFrame with columns date, sec_mom20 (and optionally pa_dir,
+              pa_struct, pa_regime, pa_pullback, sec_trend, sec_breadth, sec_heat),
+              or None.
     """
     # Sort by time first so all positional .values assignments are guaranteed aligned,
     # regardless of whether the caller supplied an already-sorted frame.
@@ -91,7 +110,7 @@ def compute_symbol_factors(kday, fund, sec):
     out["f_roe"] = fmap["roe"].values
     out["f_gm"] = fmap["gross_margin"].values
 
-    # ---- Price-based factors ----
+    # ---- Price-based factors (existing) ----
     out["f_mom20"] = (c / c.shift(20) - 1).values
     out["f_mom120"] = (c / c.shift(120) - 1).values
     out["f_rev5"] = (c / c.shift(5) - 1).values
@@ -101,20 +120,99 @@ def compute_symbol_factors(kday, fund, sec):
     amt = (c * v).rolling(20).mean()
     out["f_logamt"] = np.log(amt.where(amt > 0)).values
 
-    # ---- Sector momentum ----
+    # ---- Sector momentum (existing) ----
     if sec is not None and len(sec) > 0:
         # sec has columns: date, sec_mom20 (or time, sec_mom20)
         s = sec.copy()
         # Normalize column name: accept 'time' or 'date'
         if "time" in s.columns and "date" not in s.columns:
             s = s.rename(columns={"time": "date"})
-        s = s.rename(columns={"sec_mom20": "f_secmom"})[["date", "f_secmom"]]
-        # Normalize dates to YYYY-MM-DD for merge: kday times may carry HH:MM:SS suffix
+        # Normalize dates to YYYY-MM-DD for merge
         s["date"] = s["date"].astype(str).str[:10]
         out["date"] = out["date"].astype(str).str[:10]
-        out = out.merge(s, on="date", how="left")
+
+        # sec_mom20 -> f_secmom
+        sec_cols_available = [col for col in
+                              ["sec_mom20", "pa_dir", "pa_struct", "pa_regime",
+                               "pa_pullback", "sec_trend", "sec_breadth", "sec_heat"]
+                              if col in s.columns]
+        s_sub = s[["date"] + sec_cols_available].copy()
+        out = out.merge(s_sub, on="date", how="left")
+
+        # Map raw column names to factor names
+        if "sec_mom20" in s_sub.columns:
+            out = out.rename(columns={"sec_mom20": "f_secmom"})
+        else:
+            out["f_secmom"] = np.nan
     else:
+        out["date"] = out["date"].astype(str).str[:10]
         out["f_secmom"] = np.nan
+
+    # Fill PA/sector factors that may be missing
+    _pa_map = {
+        "pa_dir": "f_padir", "pa_struct": "f_pastruct", "pa_regime": "f_paregime",
+        "pa_pullback": "f_papull", "sec_trend": "f_sectrend",
+        "sec_breadth": "f_secbreadth", "sec_heat": "f_secheat",
+    }
+    for raw, fname in _pa_map.items():
+        if raw in out.columns:
+            out = out.rename(columns={raw: fname})
+        else:
+            out[fname] = np.nan
+
+    # ---- NEW price/momentum factors ----
+    h = df["high"].astype(float)
+    lo = df["low"].astype(float)
+
+    out["f_mom60"] = (c / c.shift(60) - 1).values
+    out["f_mom250"] = (c / c.shift(250) - 1).values
+    out["f_rev10"] = (c / c.shift(10) - 1).values
+    out["f_trend20"] = (c / c.rolling(20).mean() - 1).values
+    out["f_hi52"] = (c / c.rolling(250).max()).values
+    donch_range = (h.rolling(60).max() - lo.rolling(60).min()).replace(0, np.nan)
+    out["f_donch60"] = ((c - lo.rolling(60).min()) / donch_range).values
+
+    # ---- RSI-14 (Wilder) ----
+    d = c.diff()
+    up = d.clip(lower=0).ewm(alpha=1/14, adjust=False).mean()
+    dn = (-d.clip(upper=0)).ewm(alpha=1/14, adjust=False).mean()
+    # Guard: when dn==0 (pure uptrend) RSI=100; use np.where to avoid NaN from 0-division
+    dn_safe = dn.where(dn.abs() > 0)  # NaN when dn is ±0
+    rsi = 100 - 100 / (1 + up / dn_safe)
+    # When dn_safe is NaN and up>0 → RSI=100 (all up); when both 0 → RSI=50 (no movement)
+    rsi = rsi.where(dn_safe.notna(), other=np.where(up.values > 0, 100.0, 50.0))
+    out["f_rsi14"] = rsi.values
+
+    # ---- MACD histogram (normalised by close) ----
+    e12 = c.ewm(span=12, adjust=False).mean()
+    e26 = c.ewm(span=26, adjust=False).mean()
+    dif = e12 - e26
+    hist = dif - dif.ewm(span=9, adjust=False).mean()
+    out["f_macd"] = (hist / c).values
+
+    # ---- Bollinger %B ----
+    ma20 = c.rolling(20).mean()
+    sd20 = c.rolling(20).std()
+    out["f_bollpctb"] = ((c - (ma20 - 2 * sd20)) / (4 * sd20).replace(0, np.nan)).values
+
+    # ---- Volatility ----
+    ret = c.pct_change()
+    vol20 = ret.rolling(20).std()
+    vol60 = ret.rolling(60).std()
+    out["f_vol20"] = vol20.values
+    out["f_volratio"] = (vol20 / vol60.replace(0, np.nan)).values
+    out["f_maxdd60"] = (1 - c / c.rolling(60).max()).values
+
+    # ---- Volume/liquidity ----
+    out["f_turn"] = df["turn"].values
+    out["f_turnmean"] = df["turn"].rolling(20).mean().values
+    pct_abs = df["pctChg"].abs()
+    amt_col = df["amount"].where(df["amount"] > 0)
+    out["f_amihud"] = (pct_abs / amt_col).rolling(20).mean().values
+    out["f_voltrend"] = (v.rolling(5).mean() / v.rolling(60).mean() - 1).values
+
+    # ---- Fundamental: earnings yield ----
+    out["f_ep"] = (fmap["eps"].values / c.values)
 
     # ---- Forward return label ----
     out["fwd_ret_5d"] = (c.shift(-HOLD) / c - 1).values
@@ -178,7 +276,10 @@ def main(apply_membership=True, out_path=OUT):
         sp = os.path.join(SEC, f"{sym}.csv")
         sec = None
         if os.path.exists(sp):
-            sec = pd.read_csv(sp)[["time", "sec_mom20"]].rename(columns={"time": "date"})
+            sec = pd.read_csv(sp)[
+                ["time", "sec_mom20", "pa_dir", "pa_struct", "pa_regime",
+                 "pa_pullback", "sec_trend", "sec_breadth", "sec_heat"]
+            ].rename(columns={"time": "date"})
         fac = compute_symbol_factors(kday, fund, sec)
         frames[sym] = fac
         all_dates.update(fac.index)
