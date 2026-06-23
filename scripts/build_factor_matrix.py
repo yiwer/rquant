@@ -42,7 +42,7 @@ def atr14(high, low, close, n=14):
         for i in range(n + 1, len(tr)):
             atr[i] = (atr[i - 1] * (n - 1) + tr[i]) / n
     else:
-        # 数据不足路径：用所有有效 TR 均值填满最后一位（至少需要 2 根有效 TR）
+        # 数据不足路径：用所有有效 TR 均值填满最后一位（至少需要 1 根有效 TR）
         valid = tr[1:]   # tr[0] 无前收（NaN），从 index 1 开始
         if len(valid) >= 1:
             mean_tr = float(np.nanmean(valid))
@@ -52,14 +52,16 @@ def atr14(high, low, close, n=14):
 
 
 def compute_symbol_factors(kday, fund, sec):
-    """逐日因子 + 未来5日收益；index=date(str)。kday 升序。fund 时点前向填充。sec 可 None。
+    """Compute per-day factors + 5-day forward return for one symbol.
 
-    Step 3b corrections applied:
-    - merge_asof uses pd.to_datetime keys for reliable ordering
-    - output index retains original string dates
-    - sec join uses date column as key; when sec is None, f_secmom = NaN
+    Args:
+        kday: DataFrame with columns time, open, high, low, close, volume (ascending by time).
+        fund: DataFrame with time-point fundamentals (PIT, forward-filled via merge_asof).
+        sec:  DataFrame with columns date, sec_mom20 (sector momentum), or None.
     """
-    df = kday.copy().reset_index(drop=True)
+    # Sort by time first so all positional .values assignments are guaranteed aligned,
+    # regardless of whether the caller supplied an already-sorted frame.
+    df = kday.sort_values("time").reset_index(drop=True)
     c = df["close"].astype(float)
     v = df["volume"].astype(float)
 
@@ -78,8 +80,8 @@ def compute_symbol_factors(kday, fund, sec):
     # merge_asof requires both keys sorted and same type
     fmap = fmap.sort_values("time_dt")
     f2 = f2.sort_values("time_dt")
-    fmap = pd.merge_asof(fmap, f2, on="time_dt")
-    # fmap is now aligned to kday index order (kday was already sorted ascending)
+    fmap = pd.merge_asof(fmap, f2, on="time_dt", direction="backward")
+    # fmap is now aligned to the sorted df index; positional .values is safe
 
     out["f_bm"] = fmap["bps"].values / c.values
     out["f_npyoy"] = fmap["np_yoy"].values
