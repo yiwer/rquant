@@ -2,6 +2,13 @@ import numpy as np, pandas as pd
 import build_factor_matrix as bm
 
 
+def test_mask_by_membership_filters_non_members():
+    panel = pd.DataFrame({"date": ["2020-01-10", "2020-01-10"], "symbol": ["A", "B"]})
+    members_at = lambda d: {"A"}              # only A is a member
+    out = bm.mask_by_membership(panel, members_at)
+    assert list(out["symbol"]) == ["A"]
+
+
 def test_atr14_first_values():
     high = np.array([10.0, 11, 12]); low = np.array([9.0, 9.5, 11]); close = np.array([9.5, 10.5, 11.5])
     a = bm.atr14(high, low, close)

@@ -1,7 +1,9 @@
 """导出周频因子面板：13 精选因子 + 未来5日收益。PIT + membership 点时掩码。
-产出 data/factor_panel/factors.csv（行=(date,symbol)）。"""
+产出 data/factor_panel/factors.csv（行=(date,symbol)）。
+--no-membership 模式跳过成分掩码，写 data/factor_panel/factors_full.csv。"""
 import sys
 sys.stdout.reconfigure(encoding="utf-8")
+import argparse
 import os
 import numpy as np
 import pandas as pd
@@ -126,24 +128,41 @@ def _weekly_dates(all_dates):
     return ds[::HOLD]
 
 
-def main():
+def mask_by_membership(panel_df, members_at):
+    """Filter panel rows to those whose symbol ∈ members_at(date).
+
+    Args:
+        panel_df: DataFrame with columns 'date' and 'symbol'.
+        members_at: callable(date_str) -> set of member symbols.
+
+    Returns:
+        Filtered DataFrame (subset of rows), index preserved.
+    """
+    keep = [sym in members_at(d) for d, sym in zip(panel_df["date"], panel_df["symbol"])]
+    return panel_df[keep]
+
+
+def main(apply_membership=True, out_path=OUT):
     os.makedirs(OUT_DIR, exist_ok=True)
     roster = pd.read_csv(ROSTER)["symbol"].tolist()
-    mem = pd.read_csv(MEMBERSHIP)                      # date,symbol（月末快照）
 
-    # Pre-compute membership snapshot sets keyed by snapshot date (string).
-    # This avoids rebuilding sets inside the hot loop (was O(syms × rebs) set creations).
-    mem_dates_sorted = sorted(mem["date"].unique())
-    mem_snap = {d: set(mem[mem["date"] == d]["symbol"]) for d in mem_dates_sorted}
+    # Only load membership data when the mask is actually needed.
+    if apply_membership:
+        mem = pd.read_csv(MEMBERSHIP)                   # date,symbol（月末快照）
 
-    def members_at_cached(d_str):
-        """≤d 最近快照的成分集（从预计算字典取，O(log n) 查找 + O(1) 返回）。"""
-        # d_str may be a string "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS"
-        d_key = str(d_str)[:10]   # keep only date part for comparison
-        i = np.searchsorted(mem_dates_sorted, d_key, side="right") - 1
-        if i < 0:
-            return set()
-        return mem_snap[mem_dates_sorted[i]]
+        # Pre-compute membership snapshot sets keyed by snapshot date (string).
+        # This avoids rebuilding sets inside the hot loop (was O(syms × rebs) set creations).
+        mem_dates_sorted = sorted(mem["date"].unique())
+        mem_snap = {d: set(mem[mem["date"] == d]["symbol"]) for d in mem_dates_sorted}
+
+        def members_at_cached(d_str):
+            """≤d 最近快照的成分集（从预计算字典取，O(log n) 查找 + O(1) 返回）。"""
+            # d_str may be a string "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS"
+            d_key = str(d_str)[:10]   # keep only date part for comparison
+            i = np.searchsorted(mem_dates_sorted, d_key, side="right") - 1
+            if i < 0:
+                return set()
+            return mem_snap[mem_dates_sorted[i]]
 
     frames, all_dates = {}, set()
     for sym in roster:
@@ -169,32 +188,43 @@ def main():
     rebs_str = [str(r)[:10] for r in rebs]
     rebs_set = set(rebs_str)
 
-    # Pre-compute per-rebalance-date membership (one lookup per date, not per date×symbol)
-    reb_members = {d: members_at_cached(d) for d in rebs_str}
-
     rows = []
     for sym, fac in frames.items():
         # Align fac index (may be string or datetime) to rebalance date strings
         fac_dates_str = [str(d)[:10] for d in fac.index]
-        # Build a boolean mask: date is a rebalance date AND symbol was a member
-        mask = np.array([
-            (d in rebs_set) and (sym in reb_members[d])
-            for d in fac_dates_str
-        ])
-        if not mask.any():
+        # Keep only rebalance-date rows
+        reb_mask = np.array([d in rebs_set for d in fac_dates_str])
+        if not reb_mask.any():
             continue
-        sub = fac.loc[np.array(fac.index)[mask], FACTOR_COLS + ["fwd_ret_5d"]].copy()
+        sub = fac.loc[np.array(fac.index)[reb_mask], FACTOR_COLS + ["fwd_ret_5d"]].copy()
         sub.insert(0, "symbol", sym)
         sub.insert(0, "date", [str(d)[:10] for d in sub.index])
         rows.append(sub)
 
     panel = pd.concat(rows, ignore_index=True).sort_values(["date", "symbol"])
-    panel.to_csv(OUT, index=False, encoding="utf-8")
+
+    # Apply point-in-time membership mask when requested
+    if apply_membership:
+        panel = mask_by_membership(panel, members_at_cached)
+
+    panel.to_csv(out_path, index=False, encoding="utf-8")
     print(
-        f"wrote {len(panel)} rows x {len(FACTOR_COLS)} factors -> {OUT}"
+        f"wrote {len(panel)} rows x {len(FACTOR_COLS)} factors -> {out_path}"
         f"  (dates {panel['date'].min()}..{panel['date'].max()})"
     )
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Build weekly factor panel.")
+    parser.add_argument(
+        "--no-membership",
+        action="store_true",
+        help="Skip membership mask; write factors_full.csv instead of factors.csv.",
+    )
+    args = parser.parse_args()
+
+    if args.no_membership:
+        out_path = OUT.replace("factors.csv", "factors_full.csv")
+        main(apply_membership=False, out_path=out_path)
+    else:
+        main()
