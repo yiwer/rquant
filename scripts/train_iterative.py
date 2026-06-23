@@ -54,7 +54,7 @@ LOG_PATH = os.path.join(OUT_DIR, "iter_train_log.csv")
 # Hyper-parameters (spec-mandated)
 # ---------------------------------------------------------------------------
 
-ROUNDS = 3000
+ROUNDS = int(os.environ.get("ITER_ROUNDS", "3000"))   # configurable: test convergence at higher rounds
 LR = 1e-2
 STEP_CAP = 0.05
 P_DROP = 0.50
@@ -394,7 +394,7 @@ def run_fold(panel, fold, st_set, idx_data, rng):
     }
 
     # --- 3. Train per N, log, OOS eval ---
-    for N in (1, 2, 3):
+    for N in (2, 3):   # N=1 dropped: τ=0.02 degenerates to single-stock lottery
         print(f"\n    --- N={N} (tau={TAU[N]}) ---")
         # Fresh RNG state per N but deterministic across runs
         rng_n = np.random.default_rng(rng.integers(2**31))
@@ -439,7 +439,7 @@ def run_fold(panel, fold, st_set, idx_data, rng):
 # 7. Round-count analysis: val_obj at milestone rounds
 # ---------------------------------------------------------------------------
 
-MILESTONE_ROUNDS = [100, 500, 1000, 2000, 3000]
+MILESTONE_ROUNDS = [r for r in [100, 500, 1000, 2000, 5000, 10000, 15000, 20000, 30000] if r <= ROUNDS]
 
 
 def _round_count_analysis():
