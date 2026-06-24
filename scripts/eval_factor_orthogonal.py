@@ -75,17 +75,43 @@ def _load_sue(panel):
 
 
 def build_candidates(panel):
-    """name -> candidate Series (aligned to panel rows).
-
-    Batch A = earnings/financials-derived: products of existing columns a LINEAR
-    ridge cannot synthesise, plus eps-surprise SUE (own-vol standardized, a
-    different earnings mechanism than f_npyoy)."""
+    """Batch A — earnings/financials-derived (products + eps-surprise)."""
     p = panel
     return {
         "gpa":      p["f_gm"] * p["f_aturn"],            # gross profitability GP/A = gm × asset_turn
         "accruals": p["f_roa"] * (1.0 - p["f_cfonp"]),   # (NI−CFO)/TA proxy = roa × (1 − CFO/NI)
         "sue":      _load_sue(p),                        # standardized earnings surprise (PEAD axis)
     }
+
+
+def _load_holder_factors(panel):
+    """Batch C — holder-count %-change + net issuance, PIT-merged on 公告日期.
+
+    From data/holders/<sym>.csv (fetch_holder_shares.py). holder_chg<0 = 筹码集中
+    (accumulation); netissue = YoY total-share growth (issuance → supply)."""
+    hdir = os.path.join(er.REPO, "data", "holders")
+    holder = pd.Series(np.nan, index=panel.index)
+    issue = pd.Series(np.nan, index=panel.index)
+    pan = panel[["symbol", "date"]].copy()
+    pan["date_dt"] = pd.to_datetime(pan["date"])
+    for sym, grp in pan.groupby("symbol"):
+        fp = os.path.join(hdir, f"{sym}.csv")
+        if not os.path.exists(fp):
+            continue
+        h = pd.read_csv(fp, parse_dates=["announce"])
+        h = h.dropna(subset=["announce"]).sort_values("announce")
+        if h.empty:
+            continue
+        h["netissue"] = h["total_share"] / h["total_share"].shift(4) - 1.0
+        feats = h[["announce", "holder_pct_chg", "netissue"]]
+        g = grp.sort_values("date_dt")
+        m = pd.merge_asof(g, feats, left_on="date_dt", right_on="announce", direction="backward")
+        holder.loc[g.index] = m["holder_pct_chg"].values
+        issue.loc[g.index] = m["netissue"].values
+    return {"holder_chg": holder, "netissue": issue}
+
+
+CANDIDATE_BATCHES = {"A": build_candidates, "holders": _load_holder_factors}
 
 
 def _fold_of(d):
@@ -147,8 +173,12 @@ def incremental_ic(panel, cand):
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--batch", choices=list(CANDIDATE_BATCHES), default="A")
+    args = ap.parse_args()
     panel = pd.read_csv(er.PANEL_MEMBERSHIP, dtype={"symbol": str}).reset_index(drop=True)
-    cands = build_candidates(panel)
+    cands = CANDIDATE_BATCHES[args.batch](panel)
     print(f"orthogonal incremental-IC gate (OOS {OOS_LO}+, membership; existing {len(FACTOR_COLS)} factors)")
     print(f"gate: |inc RankIC|>{IC_MIN} AND |inc ICIR|>{ICIR_MIN} AND sign-consistent ≥4/6 folds\n")
     print(f"{'factor':>12}{'rawIC':>9}{'incIC':>9}{'incICIR':>9}{'inc_t':>8}{'inc+%':>7}{'cons':>6}  verdict")
