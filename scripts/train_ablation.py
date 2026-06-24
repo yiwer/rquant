@@ -3,7 +3,10 @@
 import sys, os
 sys.stdout.reconfigure(encoding="utf-8")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import warnings
 import numpy as np, pandas as pd
+warnings.filterwarnings("ignore")   # 静默 norm_winz 对退化列的 nanmean/nanvar RuntimeWarning(数值仍返 0,仅噪音)
+np.seterr(all="ignore")
 import eval_ridge as er
 import factor_lib as fl
 import iterate as it
@@ -12,6 +15,7 @@ from test_norm_hysteresis import norm_gauss, norm_rank, norm_winz
 
 SEED = 0
 DELTA_GRID = [0.0, 0.02, 0.05, 0.1]
+FIXED_DELTA = 0.05   # 消融:所有变体(含基线)固定 delta,跳过 per-variant 选 delta(快 ~4-5× + 同 delta 更公平可比);None=逐折选
 FOLDS = [
     ("2018-01-02", "2019-12-31", "2020-01-02", "2020-12-31"),
     ("2018-01-02", "2020-12-31", "2021-01-02", "2021-12-31"),
@@ -110,7 +114,7 @@ def eval_variant(panel, make_score_fn, st_set, idx, label):
         oos = panel[(panel["date"] >= ol) & (panel["date"] <= oh)]
         sf = make_score_fn(tl, th)
         train_panel = panel[(panel["date"] >= tl) & (panel["date"] <= th)]
-        d = select_delta_v(train_panel, sf, st_set)
+        d = FIXED_DELTA if FIXED_DELTA is not None else select_delta_v(train_panel, sf, st_set)
         rep = backtest_score(oos, sf, er.TOP_N, it.COST, st_set, d)
         rel = it.to_index_relative(rep, idx_m, idx_dates)
         fold_ex.append(rel["excess_return"] if rel else np.nan)
@@ -339,3 +343,31 @@ def axis4_cluster(panel, st_set, idx):
         r["stability_chg"] = cluster_stability(panel, ol0, oh0, cen2)
         rows.append(r)
     return rows
+
+
+# ── 主编排 ─────────────────────────────────────────────────────────────────────
+
+def _print_rows(title, rows, extra=()):
+    print(f"\n=== {title} ===")
+    hdr = f"{'variant':<28}{'mean':>9}{'pos':>6}{'IC':>9}" + "".join(f"{e:>10}" for e in extra)
+    print(hdr)
+    for r in rows:
+        line = f"{r['label']:<28}{r['mean']:>+9.4f}{str(r['pos'])+'/'+str(r['n']):>6}{r['ic']:>+9.4f}"
+        for e in extra:
+            v = r.get(e); line += f"{(f'{v:.3f}' if isinstance(v, float) else str(v)):>10}"
+        print(line)
+
+
+def main():
+    st_set = set(pd.read_csv(er.ST_PATH)["symbol"]) if os.path.exists(er.ST_PATH) else set()
+    panel = pd.read_csv(er.PANEL_MEMBERSHIP, dtype={"symbol": str})
+    idx = it.load_index("csi300")
+    print("Ridge 消融研究 — 6 折 OOS(membership)。基线 ridge-on-gauss ≈ +0.186 / 6-6 / IC≈0.066")
+    # 消融本轮只跑两条"真新"轴:轴1 逐因子归一化 + 轴4 聚类分模型。
+    # 轴2 dropout / 轴3 权重区间近已知(本弧先验 ≈ ridge),跳过;固定 delta=FIXED_DELTA 提速。
+    _print_rows("轴1 逐因子归一化", axis1_norms(panel, st_set, idx))
+    _print_rows("轴4 聚类→分模型", axis4_cluster(panel, st_set, idx), extra=("min_samples", "stability_chg"))
+
+
+if __name__ == "__main__":
+    main()
