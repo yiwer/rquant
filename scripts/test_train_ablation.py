@@ -26,3 +26,39 @@ def test_backtest_score_baseline_reproduces_backtest_ridge():
     got = ta.backtest_score(oos, sf, top_n=er.TOP_N, cost_bps=20.0, st_set=st, delta=0.05)
     assert abs(got["total_return"] - ref["total_return"]) < 1e-9
     assert [h["picks"] for h in got["holdings"]] == [h["picks"] for h in ref["holdings"]]
+
+
+# ── Task 2: Axis 1 + Axis 3 tests ─────────────────────────────────────────────
+
+def test_argmax_norm_per_factor_picks_highest_ic():
+    """Pure helper: picks the norm with highest summed |IC| per factor."""
+    acc = {
+        "gauss": np.array([0.10, 0.20]),
+        "rank":  np.array([0.30, 0.05]),
+        "winz":  np.array([0.02, 0.02]),
+    }
+    assert ta._argmax_norm_per_factor(acc, 2) == ["rank", "gauss"]
+
+
+def test_per_factor_norm_picks_max_train_ic():
+    """Smoke test: per_factor_norms returns a norm name per factor, no crash on real panel."""
+    p = _panel()
+    ch = ta.per_factor_norms(p, "2018-01-02", "2019-12-31")
+    assert len(ch) == len(ta.FC)
+    assert all(nm in ta.NORMS for nm in ch)
+
+
+def test_weight_hhi_dispersion():
+    """HHI = 1 for single-weight concentration, 0.25 for uniform 4-weight."""
+    h1, m1 = ta.weight_hhi(np.array([1.0, 0, 0, 0]))   # concentrated
+    h2, m2 = ta.weight_hhi(np.array([1.0, 1, 1, 1]))   # uniform
+    assert h1 == 1.0 and m1 == 1.0
+    assert abs(h2 - 0.25) < 1e-9 and abs(m2 - 0.25) < 1e-9
+
+
+def test_clip_pct_changes_dispersion():
+    """Tighter clip (p50) should produce HHI <= looser clip (p99)."""
+    p = _panel()
+    w99, _ = ta.fit_variant(p, "2018-01-02", "2021-12-31", clip_pct=99)
+    w50, _ = ta.fit_variant(p, "2018-01-02", "2021-12-31", clip_pct=50)
+    assert ta.weight_hhi(w50)[0] <= ta.weight_hhi(w99)[0] + 1e-9

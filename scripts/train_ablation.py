@@ -126,3 +126,99 @@ def baseline_score_fn(panel, st_set):
         w, _ = fit_variant(panel, tl, th)
         return lambda g: norm_gauss(g[FC].to_numpy(float)) @ w
     return make
+
+
+# ── Axis 1: per-factor normalization ──────────────────────────────────────────
+
+NORMS = {"gauss": norm_gauss, "rank": norm_rank, "winz": norm_winz}
+
+
+def apply_per_factor_norm(M, norm_choice):
+    """M:(n,p); norm_choice: length-p list of norm names. Apply each col's own norm."""
+    M = np.asarray(M, float)
+    cols = [NORMS[norm_choice[j]](M[:, [j]])[:, 0] for j in range(M.shape[1])]
+    return np.column_stack(cols)
+
+
+def _argmax_norm_per_factor(acc: dict, p: int) -> list:
+    """Pure helper: acc maps norm-name -> length-p array of summed |IC|.
+    Returns per-factor argmax norm name list of length p."""
+    return [max(acc, key=lambda nm: acc[nm][j]) for j in range(p)]
+
+
+def per_factor_norms(panel, lo, hi):
+    """For each factor pick the norm (gauss/rank/winz) with highest |rank_ic| on TRAIN.
+    Returns length-p list of norm name strings."""
+    sub = panel[(panel["date"] >= lo) & (panel["date"] <= hi)].dropna(subset=["fwd_ret_5d"])
+    p = len(FC)
+    acc = {nm: np.zeros(p) for nm in NORMS}
+    for d, g in sub.groupby("date"):
+        g = g.dropna(subset=["fwd_ret_5d"])
+        if len(g) < 20:
+            continue
+        fwd = g["fwd_ret_5d"].to_numpy(float)
+        X = g[FC].to_numpy(float)
+        for nm, fn in NORMS.items():
+            Xn = fn(X)
+            for j in range(p):
+                ic = fl.rank_ic(Xn[:, j], fwd)
+                if not np.isnan(ic):
+                    acc[nm][j] += abs(ic)
+    return _argmax_norm_per_factor(acc, p)
+
+
+# ── Axis 3: weight value-range / dispersion ───────────────────────────────────
+
+def weight_hhi(w):
+    """Herfindahl-Hirschman index of absolute weight shares. Returns (hhi, max_share)."""
+    a = np.abs(np.asarray(w, float))
+    s = a.sum()
+    if s == 0:
+        return 0.0, 0.0
+    shares = a / s
+    return float((shares ** 2).sum()), float(shares.max())
+
+
+def axis1_norms(panel, st_set, idx):
+    """Axis 1: compare gauss / rank / winz / per-factor-IC norm variants."""
+    rows = []
+    for nm, fn in [("gauss(基线)", norm_gauss), ("rank", norm_rank), ("winz", norm_winz)]:
+        def mk(tl, th, fn=fn):
+            w, _ = fit_variant(panel, tl, th, norm_fn=fn)
+            return lambda g: fn(g[FC].to_numpy(float)) @ w
+        rows.append(eval_variant(panel, mk, st_set, idx, f"norm={nm}"))
+
+    def mk_pf(tl, th):
+        ch = per_factor_norms(panel, tl, th)
+        sub = panel[(panel["date"] >= tl) & (panel["date"] <= th)].dropna(subset=["fwd_ret_5d"])
+        p = len(FC); Gram = np.zeros((p, p)); b = np.zeros(p)
+        for d, g in sub.groupby("date"):
+            g = g.dropna(subset=["fwd_ret_5d"])
+            if len(g) < 5:
+                continue
+            G = apply_per_factor_norm(g[FC].to_numpy(float), ch)
+            y = fl.cross_sectional_rank(g["fwd_ret_5d"].to_numpy(float)) - 0.5
+            Gram += G.T @ G; b += G.T @ y
+        lam = er.RIDGE_A * np.mean(np.diag(Gram))
+        w = np.linalg.solve(Gram + lam * np.eye(p), b)
+        q = np.percentile(np.abs(w), 90) + 1e-12
+        w = np.clip(w, -q, q)
+        return lambda g: apply_per_factor_norm(g[FC].to_numpy(float), ch) @ w
+
+    rows.append(eval_variant(panel, mk_pf, st_set, idx, "norm=per-factor(TRAIN-IC)"))
+    return rows
+
+
+def axis3_clip(panel, st_set, idx):
+    """Axis 3: compare clip percentile variants; attach weight-dispersion metrics."""
+    rows = []
+    for cp in [99, 90, 75, 50]:
+        def mk(tl, th, cp=cp):
+            w, _ = fit_variant(panel, tl, th, clip_pct=cp)
+            return lambda g: norm_gauss(g[FC].to_numpy(float)) @ w
+        r = eval_variant(panel, mk, st_set, idx, f"clip=p{cp}{'(基线)' if cp == 90 else ''}")
+        w_full, _ = fit_variant(panel, "2018-01-02", "2026-06-04", clip_pct=cp)
+        hhi, mx = weight_hhi(w_full)
+        r["hhi"] = hhi; r["max_share"] = mx
+        rows.append(r)
+    return rows
