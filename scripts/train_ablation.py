@@ -209,6 +209,21 @@ def axis1_norms(panel, st_set, idx):
     return rows
 
 
+# ── Axis 2: dropout-count sensitivity via bagging-ridge ───────────────────────
+
+def axis2_dropout(panel, st_set, idx, n_bags=20):
+    """Axis 2: sweep drop_p ∈ {0, 0.25, 0.5, 0.75}; p=0 → baseline (n_bags=1)."""
+    rows = []
+    for pdrop in [0.0, 0.25, 0.5, 0.75]:
+        def mk(tl, th, pdrop=pdrop):
+            w, _ = fit_variant(panel, tl, th, drop_p=pdrop,
+                               n_bags=(1 if pdrop == 0 else n_bags))
+            return lambda g: norm_gauss(g[FC].to_numpy(float)) @ w
+        rows.append(eval_variant(panel, mk, st_set, idx,
+                                 f"dropout p={pdrop}{'(基线)' if pdrop == 0 else f' ×{n_bags}袋'}"))
+    return rows
+
+
 def axis3_clip(panel, st_set, idx):
     """Axis 3: compare clip percentile variants; attach weight-dispersion metrics."""
     rows = []

@@ -62,3 +62,19 @@ def test_clip_pct_changes_dispersion():
     w99, _ = ta.fit_variant(p, "2018-01-02", "2021-12-31", clip_pct=99)
     w50, _ = ta.fit_variant(p, "2018-01-02", "2021-12-31", clip_pct=50)
     assert ta.weight_hhi(w50)[0] <= ta.weight_hhi(w99)[0] + 1e-9
+
+
+# ── Task 3: Axis 2 dropout-bagging tests ──────────────────────────────────────
+
+def test_dropout_p0_reproduces_baseline_weights():
+    p = _panel()
+    w0, _ = ta.fit_variant(p, "2018-01-02", "2021-12-31", drop_p=0.0, n_bags=1)
+    wb, _ = er.fit_ridge(p, "2018-01-02", "2021-12-31")
+    assert np.allclose(w0, wb, atol=1e-9)
+
+
+def test_dropout_masks_columns():
+    # drop_p=1.0 但保至少一列 → 权重几乎全 0(只一列非零方向)
+    p = _panel()
+    w, _ = ta.fit_variant(p, "2018-01-02", "2019-12-31", drop_p=1.0, n_bags=1, seed=1)
+    assert int((np.abs(w) > 1e-9).sum()) <= 1
