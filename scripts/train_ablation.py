@@ -237,3 +237,105 @@ def axis3_clip(panel, st_set, idx):
         r["hhi"] = hhi; r["max_share"] = mx
         rows.append(r)
     return rows
+
+
+# ── Axis 4: unsupervised cluster → per-class ridge ────────────────────────────
+
+def kmeans_fit(X, k, seed=SEED, iters=50):
+    """k-means++ init + Lloyd iterations. numpy only. Deterministic given seed."""
+    X = np.asarray(X, float); n = len(X); rng = np.random.default_rng(seed)
+    # k-means++ initialisation
+    cen = [X[rng.integers(n)]]
+    for _ in range(1, k):
+        d2 = np.min([((X - c) ** 2).sum(1) for c in cen], axis=0)
+        probs = d2 / d2.sum() if d2.sum() > 0 else np.ones(n) / n
+        cen.append(X[rng.choice(n, p=probs)])
+    cen = np.array(cen)
+    for _ in range(iters):
+        lab = kmeans_assign(X, cen)
+        new = np.array([X[lab == j].mean(0) if (lab == j).any() else cen[j] for j in range(k)])
+        if np.allclose(new, cen):
+            break
+        cen = new
+    return cen
+
+
+def kmeans_assign(X, centroids):
+    """Return nearest-centroid label index for each row of X."""
+    X = np.asarray(X, float)
+    d = np.stack([((X - c) ** 2).sum(1) for c in centroids], axis=1)
+    return d.argmin(1)
+
+
+def train_centroids(panel, lo, hi, k):
+    """Fit KMeans on TRAIN weeks' stacked norm_gauss(factors)."""
+    sub = panel[(panel["date"] >= lo) & (panel["date"] <= hi)].dropna(subset=["fwd_ret_5d"])
+    rows = [norm_gauss(g[FC].to_numpy(float)) for _, g in sub.groupby("date") if len(g) >= 5]
+    X = np.vstack(rows)
+    return kmeans_fit(X, k)
+
+
+def cluster_score_fn(panel, lo, hi, k):
+    """Per-cluster ridge fit. Returns (score_fn, centroids, guard dict).
+    guard contains per-cluster TRAIN sample counts, min_samples, avg_samples."""
+    cen = train_centroids(panel, lo, hi, k)
+    sub = panel[(panel["date"] >= lo) & (panel["date"] <= hi)].dropna(subset=["fwd_ret_5d"])
+    p = len(FC)
+    Gram = [np.zeros((p, p)) for _ in range(k)]; bb = [np.zeros(p) for _ in range(k)]
+    cnt = np.zeros(k)
+    for d, g in sub.groupby("date"):
+        g = g.dropna(subset=["fwd_ret_5d"])
+        if len(g) < 5: continue
+        G = norm_gauss(g[FC].to_numpy(float))
+        lab = kmeans_assign(G, cen)
+        y = fl.cross_sectional_rank(g["fwd_ret_5d"].to_numpy(float)) - 0.5
+        for j in range(k):
+            mask = lab == j
+            if mask.sum() == 0: continue
+            Gj = G[mask]; Gram[j] += Gj.T @ Gj; bb[j] += Gj.T @ y[mask]; cnt[j] += mask.sum()
+    W = np.zeros((k, p))
+    for j in range(k):
+        if cnt[j] == 0: continue
+        lam = er.RIDGE_A * np.mean(np.diag(Gram[j])) if np.trace(Gram[j]) > 0 else 1.0
+        w = np.linalg.solve(Gram[j] + lam * np.eye(p), bb[j])
+        q = np.percentile(np.abs(w), 90) + 1e-12; W[j] = np.clip(w, -q, q)
+    def score_fn(g):
+        G = norm_gauss(g[FC].to_numpy(float)); lab = kmeans_assign(G, cen)
+        return np.array([G[i] @ W[lab[i]] for i in range(len(G))])
+    guard = {"cluster_samples": cnt.tolist(), "min_samples": float(cnt.min()), "avg_samples": float(cnt.mean())}
+    return score_fn, cen, guard
+
+
+def cluster_stability(panel, ol, oh, centroids):
+    """Same-stock adjacent-week label change rate (0=fully stable, 1=changes every week)."""
+    oos = panel[(panel["date"] >= ol) & (panel["date"] <= oh)]
+    last = {}; changes = 0; total = 0
+    for d in sorted(oos["date"].unique()):
+        g = oos[oos["date"] == d]
+        G = norm_gauss(g[FC].to_numpy(float)); lab = kmeans_assign(G, centroids)
+        for sym, l in zip(g["symbol"].values, lab):
+            if sym in last:
+                total += 1; changes += int(last[sym] != l)
+            last[sym] = l
+    return float(changes / total) if total else np.nan
+
+
+def axis4_cluster(panel, st_set, idx):
+    """Axis 4: pooled baseline (K=1) + K∈{2,3,5}. Each row attaches overfit guards."""
+    rows = []
+    rows.append(eval_variant(panel, baseline_score_fn(panel, st_set), st_set, idx, "pooled(基线 K=1)"))
+    for k in [2, 3, 5]:
+        guards = {}
+        def mk(tl, th, k=k, guards=guards):
+            sf, cen, gd = cluster_score_fn(panel, tl, th, k)
+            guards["last"] = gd; guards["cen"] = cen; guards["tl"] = tl
+            return sf
+        r = eval_variant(panel, mk, st_set, idx, f"cluster K={k}")
+        # last-fold guards (stability computed on last fold OOS)
+        gd = guards.get("last", {})
+        r["min_samples"] = gd.get("min_samples"); r["avg_samples"] = gd.get("avg_samples")
+        tl0, th0, ol0, oh0 = FOLDS[-1]
+        sf2, cen2, _ = cluster_score_fn(panel, tl0, th0, k)
+        r["stability_chg"] = cluster_stability(panel, ol0, oh0, cen2)
+        rows.append(r)
+    return rows

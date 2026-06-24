@@ -78,3 +78,22 @@ def test_dropout_masks_columns():
     p = _panel()
     w, _ = ta.fit_variant(p, "2018-01-02", "2019-12-31", drop_p=1.0, n_bags=1, seed=1)
     assert int((np.abs(w) > 1e-9).sum()) <= 1
+
+
+# ── Task 4: Axis 4 KMeans tests ───────────────────────────────────────────────
+
+def test_kmeans_separates_two_blobs():
+    rng = np.random.default_rng(0)
+    A = rng.normal(-5, 0.3, (50, 3)); B = rng.normal(5, 0.3, (50, 3))
+    X = np.vstack([A, B])
+    cen = ta.kmeans_fit(X, 2, seed=0)
+    lab = ta.kmeans_assign(X, cen)
+    # within-blob labels are identical; blobs get different labels
+    assert len(set(lab[:50])) == 1 and len(set(lab[50:])) == 1
+    assert lab[0] != lab[50]
+
+
+def test_kmeans_deterministic():
+    X = np.random.default_rng(1).normal(0, 1, (80, 4))
+    c1 = ta.kmeans_fit(X, 3, seed=7); c2 = ta.kmeans_fit(X, 3, seed=7)
+    assert np.allclose(c1, c2)
