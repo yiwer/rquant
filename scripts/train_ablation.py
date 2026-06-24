@@ -55,7 +55,7 @@ def fit_variant(panel, lo, hi, norm_fn=norm_gauss, clip_pct=90, drop_p=0.0, n_ba
 def backtest_score(panel, score_fn, top_n, cost_bps, st_set, delta):
     """通用周频回测——逐字镜像 er.backtest_ridge,仅把 score 换成 score_fn(g)。"""
     panel = panel.sort_values(["date", "symbol"])
-    nav = 1.0; prev = set(); navs = []; period = []; total_turn = 0.0
+    nav = 1.0; prev = set(); navs = []; total_turn = 0.0
     for d in sorted(panel["date"].unique()):
         g = er._eligible(panel[panel["date"] == d].dropna(subset=["fwd_ret_5d"]), st_set)
         if len(g) < top_n:
@@ -67,11 +67,16 @@ def backtest_score(panel, score_fn, top_n, cost_bps, st_set, delta):
         pick = gi.head(top_n)
         ret = float(pick["fwd_ret_5d"].mean()); cur = set(pick["symbol"])
         turn = len(cur ^ prev) / max(len(cur) + len(prev), 1); total_turn += turn
-        net = ret - cost_bps / 1e4 * turn; period.append(net)
+        net = ret - cost_bps / 1e4 * turn
         nav *= (1.0 + net); navs.append({"t": d, "nav": nav, "picks": list(cur)}); prev = cur
+    peak = -1e9
+    mdd = 0.0
+    for h in navs:
+        peak = max(peak, h["nav"])
+        mdd = max(mdd, 1.0 - h["nav"] / peak)
     total = navs[-1]["nav"] - 1.0 if navs else 0.0
     return {"holdings": navs, "regime_slices": [], "total_return": total,
-            "max_drawdown": 0.0, "turnover": total_turn, "n_rebalances": len(navs),
+            "max_drawdown": mdd, "turnover": total_turn, "n_rebalances": len(navs),
             "excess_return": 0.0}
 
 
@@ -110,7 +115,7 @@ def eval_variant(panel, make_score_fn, st_set, idx, label):
         rel = it.to_index_relative(rep, idx_m, idx_dates)
         fold_ex.append(rel["excess_return"] if rel else np.nan)
         ics.append(oos_rank_ic(oos, sf, st_set))
-    arr = np.array([x for x in fold_ex if x is not None and not np.isnan(x)])
+    arr = np.array([x for x in fold_ex if not np.isnan(x)])
     return {"label": label, "fold_excess": fold_ex, "mean": float(arr.mean()) if len(arr) else np.nan,
             "pos": int((arr > 0).sum()), "n": len(arr), "ic": float(np.nanmean(ics))}
 
