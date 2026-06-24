@@ -16,6 +16,8 @@ as info only).
 """
 import sys
 import os
+import argparse
+import json
 sys.stdout.reconfigure(encoding="utf-8")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -72,6 +74,7 @@ def _excess(dates, rets, idx):
 
 
 def main():
+    ap = argparse.ArgumentParser(); ap.add_argument("--json", default=None); args = ap.parse_args()
     st_set = set(pd.read_csv(er.ST_PATH)["symbol"]) if os.path.exists(er.ST_PATH) else set()
     panel = pd.read_csv(er.PANEL_MEMBERSHIP, dtype={"symbol": str})
     idx = it.load_index("csi300")
@@ -82,6 +85,7 @@ def main():
     print("blend ridge-on-gauss × value(净利双核) — weekly, 6 OOS folds (membership)")
     print(f"{'OOS':>6}{'corr':>8}{'shR':>7}{'shV':>7}{'shB':>7}{'ddR':>7}{'ddV':>7}{'ddB':>7}{'exR':>8}{'exV':>8}{'exB':>8}")
     agg = {k: [] for k in ["corr", "shR", "shV", "shB", "ddR", "ddV", "ddB", "exR", "exV", "exB", "wopt"]}
+    fold_rows = []
     for tl, th, ol, oh in FOLDS:
         oos = panel[(panel["date"] >= ol) & (panel["date"] <= oh)]
         w, _ = er.fit_ridge(panel, tl, th)
@@ -109,6 +113,9 @@ def main():
             agg[k].append(row[k])
         print(f"{ol[:4]:>6}{corr:>+8.2f}{row['shR']:>7.2f}{row['shV']:>7.2f}{row['shB']:>7.2f}"
               f"{row['ddR']:>7.2f}{row['ddV']:>7.2f}{row['ddB']:>7.2f}{exR:>+8.3f}{exV:>+8.3f}{exB:>+8.3f}")
+        fold_rows.append({"oos": ol[:4], "corr": corr, "sh_ridge": row["shR"], "sh_val": row["shV"],
+                          "sh_blend": row["shB"], "dd_ridge": row["ddR"], "dd_val": row["ddV"],
+                          "dd_blend": row["ddB"], "ex_ridge": row["exR"], "ex_val": row["exV"], "ex_blend": row["exB"]})
 
     print("\n=== 6-fold means ===")
     m = {k: float(np.nanmean(v)) for k, v in agg.items()}
@@ -124,6 +131,14 @@ def main():
           f"({m['ddB']:.2f} vs {best_single_dd:.2f})")
     print(f"  → diversification {'HELPS' if (m['shB'] > best_single_sh or m['ddB'] < best_single_dd) else 'does NOT help'} "
           f"(corr {m['corr']:+.2f})")
+
+    if args.json:
+        mean = {"corr": m["corr"], "sh_ridge": m["shR"], "sh_val": m["shV"], "sh_blend": m["shB"],
+                "dd_ridge": m["ddR"], "dd_val": m["ddV"], "dd_blend": m["ddB"],
+                "ex_ridge": m["exR"], "ex_val": m["exV"], "ex_blend": m["exB"]}
+        json.dump({"folds": fold_rows, "mean": mean}, open(args.json, "w", encoding="utf-8"),
+                  ensure_ascii=False, indent=2)
+        print(f"[eval_blend] json → {args.json}")
 
 
 if __name__ == "__main__":
