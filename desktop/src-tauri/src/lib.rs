@@ -145,6 +145,7 @@ pub fn run() {
             paper_cmds::paper_ridge_advance,
             paper_cmds::paper_ridge_retrain,
             paper_cmds::paper_blend_recompute,
+            paper_cmds::paper_stock_detail,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

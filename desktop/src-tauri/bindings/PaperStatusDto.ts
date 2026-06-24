@@ -2,4 +2,4 @@
 import type { BlendDto } from "./BlendDto";
 import type { PaperRowDto } from "./PaperRowDto";
 
-export type PaperStatusDto = { initialized: boolean, strategy: string, train_lo: string, train_hi: string, n_train_dates: bigint, delta: number, top_n: bigint, cost_bps: number, open_picks: Array<string>, closed: Array<PaperRowDto>, cum_net: number, cum_excess: number | null, blend: BlendDto | null, };
+export type PaperStatusDto = { initialized: boolean, strategy: string, train_lo: string, train_hi: string, n_train_dates: bigint, delta: number, top_n: bigint, cost_bps: number, open_picks: Array<string>, closed: Array<PaperRowDto>, cum_net: number, cum_excess: number | null, blend: BlendDto | null, names: { [key in string]?: string }, };

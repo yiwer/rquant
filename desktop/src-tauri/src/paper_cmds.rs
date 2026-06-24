@@ -1,7 +1,7 @@
 //! 「纸面盘」命令层:读 paper_ridge 产物算状态 DTO;写操作 shell Python(镜像 iter_cmds)。
 use crate::commands::AppState;
 use crate::dto_paper::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{BufRead, BufReader, Read};
 use std::process::{Command, Stdio};
 
@@ -9,9 +9,71 @@ fn jstr(v: &serde_json::Value, k: &str) -> String { v.get(k).and_then(|x| x.as_s
 fn jf64(v: &serde_json::Value, k: &str) -> f64 { v.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0) }
 fn ji64(v: &serde_json::Value, k: &str) -> i64 { v.get(k).and_then(|x| x.as_i64()).unwrap_or(0) }
 
+/// 从 stock_names.csv 文本(header: symbol,name + optional extra cols)解析代码→名称映射。
+/// 文件缺失/解析失败时调用方传空串 → 返回空 map,不 panic。
+pub(crate) fn parse_names_csv(csv_text: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    for line in csv_text.lines().skip(1) {
+        let mut it = line.splitn(3, ',');
+        let sym = match it.next() { Some(s) if !s.is_empty() => s.to_string(), _ => continue };
+        let name = match it.next() { Some(s) => s.to_string(), None => continue };
+        map.insert(sym, name);
+    }
+    map
+}
+
+fn load_names(state: &AppState) -> HashMap<String, String> {
+    let path = state.ws.root().join("data").join("baostock").join("stock_names.csv");
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    parse_names_csv(&text)
+}
+
+/// 纯函数:从 factors.csv 文本中找 symbol 的最新一行,返回 (asof, Vec<FactorKVDto>)。
+/// 忽略 date / symbol / fwd_ret_5d 列;NaN 或空 → None。
+pub(crate) fn latest_factor_row(csv_text: &str, symbol: &str) -> (String, Vec<FactorKVDto>) {
+    let mut lines = csv_text.lines();
+    let header = match lines.next() { Some(h) => h, None => return (String::new(), vec![]) };
+    let cols: Vec<&str> = header.split(',').collect();
+    let skip_set = ["date", "symbol", "fwd_ret_5d"];
+
+    // Find latest row for this symbol (keep last match = latest date assuming sorted asc)
+    let mut best_date = String::new();
+    let mut best_fields: Vec<String> = vec![];
+    for line in lines {
+        let fields: Vec<&str> = line.split(',').collect();
+        if fields.len() < cols.len() { continue; }
+        // symbol is col 1 (after date)
+        let sym_idx = cols.iter().position(|c| *c == "symbol").unwrap_or(1);
+        if fields.get(sym_idx).map(|s| s.trim()) != Some(symbol) { continue; }
+        let date_idx = cols.iter().position(|c| *c == "date").unwrap_or(0);
+        let d = fields.get(date_idx).unwrap_or(&"").trim().to_string();
+        if d >= best_date {
+            best_date = d;
+            best_fields = fields.iter().map(|s| s.to_string()).collect();
+        }
+    }
+    if best_date.is_empty() { return (String::new(), vec![]); }
+    let kvs: Vec<FactorKVDto> = cols.iter().enumerate()
+        .filter(|(_, c)| !skip_set.contains(c))
+        .map(|(i, c)| {
+            let raw = best_fields.get(i).map(|s| s.trim()).unwrap_or("");
+            let value = if raw.is_empty() { None } else {
+                raw.parse::<f64>().ok().filter(|f| f.is_finite())
+            };
+            FactorKVDto { key: c.to_string(), value }
+        })
+        .collect();
+    (best_date, kvs)
+}
+
 /// 纯:解析三产物 → DTO。weights 空/解析失败 → initialized=false。
 pub fn parse_status(weights_json: &str, journal_csv: &str, blend_json: Option<&str>,
                     idx: &BTreeMap<String, f64>) -> PaperStatusDto {
+    parse_status_with_names(weights_json, journal_csv, blend_json, idx, &HashMap::new())
+}
+
+pub fn parse_status_with_names(weights_json: &str, journal_csv: &str, blend_json: Option<&str>,
+                    idx: &BTreeMap<String, f64>, name_map: &HashMap<String, String>) -> PaperStatusDto {
     let w: Option<serde_json::Value> = serde_json::from_str(weights_json).ok();
     let initialized = w.is_some();
     let w = w.unwrap_or(serde_json::Value::Null);
@@ -55,11 +117,18 @@ pub fn parse_status(weights_json: &str, journal_csv: &str, blend_json: Option<&s
             ex_ridge: jf64(&m,"ex_ridge"), ex_val: jf64(&m,"ex_val"), ex_blend: jf64(&m,"ex_blend"),
         }},
     });
+    // Collect all symbols visible in status, look them up in name_map
+    let all_syms: std::collections::HashSet<&str> = open_picks.iter().map(String::as_str)
+        .chain(closed.iter().flat_map(|r| r.picks.iter().map(String::as_str)))
+        .collect();
+    let names: HashMap<String, String> = all_syms.iter()
+        .filter_map(|s| name_map.get(*s).map(|n| (s.to_string(), n.clone())))
+        .collect();
     PaperStatusDto {
         initialized, strategy: jstr(&w,"strategy"),
         train_lo: jstr(&w,"train_lo"), train_hi: jstr(&w,"train_hi"), n_train_dates: ji64(&w,"n_train_dates"),
         delta: jf64(&w,"delta"), top_n: ji64(&w,"top_n"), cost_bps: jf64(&w,"cost_bps"),
-        open_picks, closed, cum_net, cum_excess, blend,
+        open_picks, closed, cum_net, cum_excess, blend, names,
     }
 }
 
@@ -72,7 +141,22 @@ pub fn paper_ridge_status(state: tauri::State<AppState>) -> Result<PaperStatusDt
     let journal = std::fs::read_to_string(d.join("paper_ridge_journal.csv")).unwrap_or_default();
     let blend = std::fs::read_to_string(d.join("paper_blend.json")).ok();
     let idx = crate::index_relative::load_index(&state.ws.index_dir().join("csi300.csv")).unwrap_or_default();
-    Ok(parse_status(&weights, &journal, blend.as_deref(), &idx))
+    let name_map = load_names(&state);
+    Ok(parse_status_with_names(&weights, &journal, blend.as_deref(), &idx, &name_map))
+}
+
+#[tauri::command]
+pub fn paper_stock_detail(state: tauri::State<AppState>, symbol: String) -> Result<PaperStockDetailDto, String> {
+    if !crate::paths::valid_symbol(&symbol) {
+        return Err(format!("invalid symbol: {symbol}"));
+    }
+    let name_map = load_names(&state);
+    let name = name_map.get(&symbol).cloned().unwrap_or_else(|| symbol.clone());
+    let kday_path = format!("data/baostock/kday/{symbol}.csv");
+    let factors_path = state.ws.root().join("data").join("factor_panel").join("factors.csv");
+    let csv_text = std::fs::read_to_string(&factors_path).unwrap_or_default();
+    let (asof, factors) = latest_factor_row(&csv_text, &symbol);
+    Ok(PaperStockDetailDto { symbol, name, kday_path, asof, factors })
 }
 
 fn shell_python(state: &AppState, kind: &'static str, args: Vec<String>) -> Result<String, String> {
@@ -164,5 +248,66 @@ mod tests {
         let bl = s.blend.unwrap();
         assert_eq!(bl.folds.len(), 1);
         assert!((bl.mean.dd_blend - 0.17).abs() < 1e-9);
+    }
+
+    // ── latest_factor_row tests ──────────────────────────────────────────────
+    const FACTORS_CSV: &str = "date,symbol,f_bm,f_mom,fwd_ret_5d\n\
+2026-06-11,sh600000,0.5,1.2,0.01\n\
+2026-06-18,sh600000,0.6,,0.02\n\
+2026-06-11,sz000001,0.3,0.9,0.005\n";
+
+    #[test]
+    fn latest_factor_row_picks_latest_date() {
+        let (asof, kvs) = latest_factor_row(FACTORS_CSV, "sh600000");
+        assert_eq!(asof, "2026-06-18");
+        // Should have f_bm and f_mom (not date/symbol/fwd_ret_5d)
+        assert_eq!(kvs.len(), 2);
+        let f_bm = kvs.iter().find(|k| k.key == "f_bm").unwrap();
+        assert!((f_bm.value.unwrap() - 0.6).abs() < 1e-9);
+        // f_mom is empty → None
+        let f_mom = kvs.iter().find(|k| k.key == "f_mom").unwrap();
+        assert!(f_mom.value.is_none());
+    }
+
+    #[test]
+    fn latest_factor_row_excludes_skip_cols() {
+        let (_, kvs) = latest_factor_row(FACTORS_CSV, "sh600000");
+        assert!(!kvs.iter().any(|k| k.key == "date" || k.key == "symbol" || k.key == "fwd_ret_5d"));
+    }
+
+    #[test]
+    fn latest_factor_row_returns_empty_for_unknown_symbol() {
+        let (asof, kvs) = latest_factor_row(FACTORS_CSV, "sh999999");
+        assert_eq!(asof, "");
+        assert!(kvs.is_empty());
+    }
+
+    // ── parse_names_csv tests ────────────────────────────────────────────────
+    const NAMES_CSV: &str = "symbol,name\nsh600000,浦发银行\nsz000001,平安银行\n";
+
+    #[test]
+    fn parse_names_csv_builds_map() {
+        let m = parse_names_csv(NAMES_CSV);
+        assert_eq!(m.get("sh600000").map(String::as_str), Some("浦发银行"));
+        assert_eq!(m.get("sz000001").map(String::as_str), Some("平安银行"));
+        assert!(m.get("sh999999").is_none());
+    }
+
+    #[test]
+    fn parse_names_csv_empty_text_returns_empty_map() {
+        assert!(parse_names_csv("").is_empty());
+    }
+
+    #[test]
+    fn names_populated_in_parse_status_with_names() {
+        let name_map: HashMap<String, String> = [
+            ("sh600208".to_string(), "新湖中宝".to_string()),
+            ("sh600000".to_string(), "浦发银行".to_string()),
+        ].into_iter().collect();
+        let s = parse_status_with_names(W, J, None, &idx(), &name_map);
+        assert_eq!(s.names.get("sh600208").map(String::as_str), Some("新湖中宝"));
+        assert_eq!(s.names.get("sh600000").map(String::as_str), Some("浦发银行"));
+        // Symbol not in name_map should be absent
+        assert!(s.names.get("sz000039").is_none());
     }
 }

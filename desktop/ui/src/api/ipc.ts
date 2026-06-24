@@ -19,6 +19,7 @@ import type { UniverseEntryDto } from "@bindings/UniverseEntryDto";
 import type { GmTailConfig } from "@bindings/GmTailConfig";
 import type { GmTailStatusDto } from "@bindings/GmTailStatusDto";
 import type { PaperStatusDto } from "@bindings/PaperStatusDto";
+import type { PaperStockDetailDto } from "@bindings/PaperStockDetailDto";
 
 export const api = {
   cockpitOverview: () => invoke<OverviewDto>("cockpit_overview"),
@@ -92,5 +93,6 @@ export const api = {
   paperRidgeAdvance: () => invoke<string>("paper_ridge_advance"),
   paperRidgeRetrain: () => invoke<string>("paper_ridge_retrain"),
   paperBlendRecompute: () => invoke<string>("paper_blend_recompute"),
+  paperStockDetail: (symbol: string) => invoke<PaperStockDetailDto>("paper_stock_detail", { symbol }),
 };
 export type Api = typeof api;
