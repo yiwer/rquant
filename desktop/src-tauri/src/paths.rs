@@ -69,6 +69,16 @@ impl Workspace {
     pub fn sector_dir(&self) -> PathBuf { self.root.join("data").join("baostock").join("sector") }
     pub fn sector_membership_path(&self) -> PathBuf { self.root.join("data").join("baostock").join("sector_membership.csv") }
     pub fn kday_dir(&self) -> PathBuf { self.root.join("data").join("baostock").join("kday") }
+    // ---- gm 尾盘取数（数据位置单一出口；移植即生效，无写死路径）----
+    pub fn scripts_dir(&self) -> PathBuf { self.root.join("scripts") }
+    pub fn gm_dir(&self) -> PathBuf { self.root.join("data").join("gm") }
+    pub fn gm_k15m_dir(&self) -> PathBuf { self.gm_dir().join("k15m") }
+    pub fn gm_snapshot_dir(&self) -> PathBuf { self.gm_dir().join("snapshot") }
+    pub fn gm_token_path(&self) -> PathBuf { self.gm_dir().join(".token") }
+    pub fn gm_shortlist_path(&self) -> PathBuf { self.gm_dir().join("shortlist.txt") }
+    pub fn gm_tail_log_path(&self) -> PathBuf { self.gm_dir().join("tail.log") }
+    pub fn gm_config_path(&self) -> PathBuf { self.gm_dir().join("tail.config.json") }
+    pub fn gm_tail_launcher(&self) -> PathBuf { self.scripts_dir().join("gm_tail_run.ps1") }
     pub fn screen_runs_dir(&self) -> PathBuf {
         self.desktop_data_dir().join("screen_runs")
     }
@@ -103,6 +113,17 @@ mod tests {
         assert!(ws.runs_dir().ends_with(".rquant-desktop/runs"));
         assert!(ws.data_dir().ends_with(".rquant-desktop/data"));
         assert!(ws.universes_dir().ends_with(".rquant-desktop/universes"));
+    }
+
+    #[test]
+    fn gm_paths_resolve_under_root() {
+        let ws = Workspace::new(std::path::PathBuf::from("E:/rust-app/rquant"));
+        assert!(ws.gm_dir().ends_with("data/gm"));
+        assert!(ws.gm_k15m_dir().ends_with("data/gm/k15m"));
+        assert!(ws.gm_snapshot_dir().ends_with("data/gm/snapshot"));
+        assert!(ws.gm_token_path().ends_with("data/gm/.token"));
+        assert!(ws.gm_config_path().ends_with("data/gm/tail.config.json"));
+        assert!(ws.gm_tail_launcher().ends_with("scripts/gm_tail_run.ps1"));
     }
 
     #[test]

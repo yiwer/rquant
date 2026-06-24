@@ -8,6 +8,7 @@ import ManualRunButton from "../components/ManualRunButton";
 import { api } from "../api/ipc";
 import { friendlyError } from "../errors";
 import ValueBookCard from "../components/ValueBookCard";
+import GmTailPanel from "../components/GmTailPanel";
 
 export default function Cockpit() {
   const { overview, loading, error, load } = useCockpit();
@@ -80,6 +81,9 @@ export default function Cockpit() {
         <Col span={10}>
           <RunStatusPanel runlog={overview.runlog} schtask={overview.schtask} onOpenLog={() => void openLog()} />
         </Col>
+      </Row>
+      <Row gutter={12} style={{ marginTop: 12 }}>
+        <Col span={24}><GmTailPanel /></Col>
       </Row>
       <Drawer title="运行日志（末 200 行）" open={logOpen} onClose={() => setLogOpen(false)} width={720}>
         <pre style={{ fontSize: 12, whiteSpace: "pre-wrap" }}>{logText}</pre>

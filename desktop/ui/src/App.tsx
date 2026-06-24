@@ -13,12 +13,14 @@ import Verdict from "./pages/Verdict";
 import Factor from "./pages/Factor";
 import Deploy from "./pages/Deploy";
 import Audit from "./pages/Audit";
+import PaperRidge from "./pages/PaperRidge";
 
 export const MODULES = [
   { key: "cockpit", label: "驾驶舱" },
   { key: "backtest", label: "回测中心" },
   { key: "data", label: "数据工作台" },
   { key: "deploy", label: "部署" },
+  { key: "paper", label: "纸面盘" },
   { key: "screen", label: "选股" },
   { key: "research", label: "研究" },
   { key: "audit", label: "审计" },
@@ -64,7 +66,8 @@ function Shell() {
           <Route path="/factor" element={<Factor />} />
           <Route path="/deploy" element={<Deploy />} />
           <Route path="/audit" element={<Audit />} />
-          {MODULES.filter((m) => m.key !== "cockpit" && m.key !== "backtest" && m.key !== "data" && m.key !== "screen" && m.key !== "research" && m.key !== "audit" && m.key !== "verdict" && m.key !== "factor" && m.key !== "deploy").map((m) => (
+          <Route path="/paper" element={<PaperRidge />} />
+          {MODULES.filter((m) => m.key !== "cockpit" && m.key !== "backtest" && m.key !== "data" && m.key !== "screen" && m.key !== "research" && m.key !== "audit" && m.key !== "verdict" && m.key !== "factor" && m.key !== "deploy" && m.key !== "paper").map((m) => (
             <Route key={m.key} path={`/${m.key}`} element={<Placeholder name={m.label} />} />
           ))}
           <Route path="*" element={<Navigate to="/cockpit" replace />} />

@@ -42,3 +42,13 @@ data/universe_intraday_symbols.txt
 # baostock 5yr backtest dataset (daily/15m bars + indicator features + sectors;
 # reproducible via scripts/{build_universe_union,fetch_baostock,build_indicators,build_sectors}.py)
 data/baostock/
+
+# xueqiu 15m bars (reproducible via scripts/fetch_xueqiu_15m.py)
+data/xueqiu/
+# 掘金 gm 15m bars (reproducible via scripts/fetch_gm_realtime.py)
+data/gm/
+# login cookie / api token / session secret — SECRET, never commit
+*.cookie
+.xq_cookie
+*.token
+.gm_token

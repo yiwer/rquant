@@ -16,6 +16,9 @@ import type { FactorPointDto } from "@bindings/FactorPointDto";
 import type { CsvInfoDto } from "@bindings/CsvInfoDto";
 import type { UniverseInfoDto } from "@bindings/UniverseInfoDto";
 import type { UniverseEntryDto } from "@bindings/UniverseEntryDto";
+import type { GmTailConfig } from "@bindings/GmTailConfig";
+import type { GmTailStatusDto } from "@bindings/GmTailStatusDto";
+import type { PaperStatusDto } from "@bindings/PaperStatusDto";
 
 export const api = {
   cockpitOverview: () => invoke<OverviewDto>("cockpit_overview"),
@@ -43,6 +46,13 @@ export const api = {
   universeWrite: (name: string, entries: UniverseEntryDto[]) => invoke<void>("universe_write", { name, entries }),
   fetchBatch: (symbols: string[], scale: number, datalen: number, adjust: string) =>
     invoke<string>("fetch_batch", { symbols, scale, datalen, adjust }),
+  // 尾盘取数(掘金 gm)
+  gmTailStatus: () => invoke<GmTailStatusDto>("gm_tail_status"),
+  gmTailGetConfig: () => invoke<GmTailConfig>("gm_tail_get_config"),
+  gmTailSetConfig: (config: GmTailConfig) => invoke<GmTailConfig>("gm_tail_set_config", { config }),
+  gmTailInstall: (config: GmTailConfig | null) => invoke<GmTailStatusDto>("gm_tail_install", { config }),
+  gmTailRemove: () => invoke<GmTailStatusDto>("gm_tail_remove"),
+  gmTailRunNow: () => invoke<void>("gm_tail_run_now"),
   // 选股
   screenConfigsList: () => invoke<import("@bindings/ScreenConfigDto").ScreenConfigDto[]>("screen_configs_list"),
   indexList: () => invoke<string[]>("index_list"),
@@ -77,5 +87,10 @@ export const api = {
   // 审计
   auditList: (limit: number, kind?: string, status?: string) => invoke<import("@bindings/AuditRecordDto").AuditRecordDto[]>("audit_list", { limit, kind: kind ?? null, status: status ?? null }),
   auditLogTail: (lines: number) => invoke<string>("audit_log_tail", { lines }),
+  // 纸面盘
+  paperRidgeStatus: () => invoke<PaperStatusDto>("paper_ridge_status"),
+  paperRidgeAdvance: () => invoke<string>("paper_ridge_advance"),
+  paperRidgeRetrain: () => invoke<string>("paper_ridge_retrain"),
+  paperBlendRecompute: () => invoke<string>("paper_blend_recompute"),
 };
 export type Api = typeof api;

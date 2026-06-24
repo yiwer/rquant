@@ -40,6 +40,7 @@ pub fn assemble_overview(ws: &Workspace) -> OverviewDto {
         diff_t,
         runlog: crate::runlog::read_status(ws),
         schtask: crate::schtask::query("rquant-paper"),
+        gm_tail: crate::gm_tail::status(),
     }
 }
 
@@ -92,6 +93,7 @@ pub fn cockpit_overview(state: tauri::State<AppState>) -> OverviewDto {
                     summary: "cockpit assembly panicked — check logs".into(),
                 },
                 schtask: None,
+                gm_tail: None,
             }
         })
 }

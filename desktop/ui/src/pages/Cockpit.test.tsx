@@ -26,6 +26,7 @@ const OVERVIEW: OverviewDto = {
   diff_t: "2026-06-12T15:00:00",
   runlog: { last_header: "==== Fri 06/12/2026 ====", ok: true, summary: "最近一次 run 正常收尾" },
   schtask: { next_run: "6/12/2026 3:35:00 PM", last_run: null, last_result: "267011", status: "Ready" },
+  gm_tail: null,
 };
 
 test("cockpit renders three book cards, diff and run status", async () => {

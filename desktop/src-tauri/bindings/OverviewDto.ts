@@ -12,4 +12,8 @@ diff: Array<DiffRowDto>, diff_t: string | null, runlog: RunlogStatusDto,
 /**
  * schtasks 查询失败/任务不存在 → None。
  */
-schtask: SchtaskDto | null, };
+schtask: SchtaskDto | null, 
+/**
+ * gm 尾盘取数计划任务(rquant-gm-tail)状态;未装/查询失败 → None。
+ */
+gm_tail: SchtaskDto | null, };

@@ -20,8 +20,11 @@ pub mod dto_factor;
 pub mod dto_eval;
 pub mod dto_analyze;
 pub mod dto_deploy;
+pub mod dto_gm;
 pub mod error;
 pub mod gates;
+pub mod gm_tail;
+pub mod gm_tail_cmds;
 pub mod analyze;
 pub mod index_relative;
 pub mod iter_cmds;
@@ -38,6 +41,8 @@ pub mod schtask;
 pub mod screen_cmds;
 pub mod screen_runs;
 pub mod tasks;
+pub mod dto_paper;
+pub mod paper_cmds;
 
 use std::sync::Arc;
 use tauri::Emitter;
@@ -130,6 +135,16 @@ pub fn run() {
             deploy_cmds::deploy_commit_month,
             audit_cmds::audit_list,
             audit_cmds::audit_log_tail,
+            gm_tail_cmds::gm_tail_status,
+            gm_tail_cmds::gm_tail_get_config,
+            gm_tail_cmds::gm_tail_set_config,
+            gm_tail_cmds::gm_tail_install,
+            gm_tail_cmds::gm_tail_remove,
+            gm_tail_cmds::gm_tail_run_now,
+            paper_cmds::paper_ridge_status,
+            paper_cmds::paper_ridge_advance,
+            paper_cmds::paper_ridge_retrain,
+            paper_cmds::paper_blend_recompute,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

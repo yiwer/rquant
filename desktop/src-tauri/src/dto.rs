@@ -84,6 +84,8 @@ pub struct OverviewDto {
     pub runlog: RunlogStatusDto,
     /// schtasks 查询失败/任务不存在 → None。
     pub schtask: Option<SchtaskDto>,
+    /// gm 尾盘取数计划任务(rquant-gm-tail)状态;未装/查询失败 → None。
+    pub gm_tail: Option<SchtaskDto>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
