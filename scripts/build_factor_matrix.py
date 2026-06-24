@@ -527,7 +527,7 @@ def _load_index_close(csv_path):
     return df.set_index("date")["close"]
 
 
-def main(apply_membership=True, out_path=OUT):
+def main(apply_membership=True, out_path=OUT, asof=None):
     os.makedirs(OUT_DIR, exist_ok=True)
     roster = pd.read_csv(ROSTER)["symbol"].tolist()
 
@@ -583,10 +583,15 @@ def main(apply_membership=True, out_path=OUT):
         frames[sym] = fac
         all_dates.update(fac.index)
 
-    rebs = _weekly_dates(all_dates)
-    # Rebalance dates as plain date strings for membership lookup
-    rebs_str = [str(r)[:10] for r in rebs]
-    rebs_set = set(rebs_str)
+    if asof:
+        # 只产指定日截面(供 --asof 打分);fwd_ret_5d 该日多为 NaN,出仓位不需要
+        rebs_str = [asof]
+        rebs_set = {asof}
+    else:
+        rebs = _weekly_dates(all_dates)
+        # Rebalance dates as plain date strings for membership lookup
+        rebs_str = [str(r)[:10] for r in rebs]
+        rebs_set = set(rebs_str)
 
     rows = []
     for sym, fac in frames.items():
@@ -621,9 +626,17 @@ if __name__ == "__main__":
         action="store_true",
         help="Skip membership mask; write factors_full.csv instead of factors.csv.",
     )
+    parser.add_argument(
+        "--asof",
+        default=None,
+        help="只产该日(YYYY-MM-DD)截面 → factors_asof.csv(供 paper_ridge.py --asof 用冻结权重出仓位)",
+    )
     args = parser.parse_args()
 
-    if args.no_membership:
+    if args.asof:
+        out_path = OUT.replace("factors.csv", "factors_asof.csv")
+        main(apply_membership=True, out_path=out_path, asof=args.asof)
+    elif args.no_membership:
         out_path = OUT.replace("factors.csv", "factors_full.csv")
         main(apply_membership=False, out_path=out_path)
     else:

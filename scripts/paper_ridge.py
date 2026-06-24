@@ -49,6 +49,7 @@ from test_norm_hysteresis import norm_gauss
 
 WEIGHTS_PATH = os.path.join(er.OUT_DIR, "paper_ridge_weights.json")
 JOURNAL_PATH = os.path.join(er.OUT_DIR, "paper_ridge_journal.csv")
+ASOF_PATH = os.path.join(er.OUT_DIR, "factors_asof.csv")
 SEP = ";"
 JOURNAL_COLS = ["date", "status", "picks", "prev_picks", "turnover", "gross_ret", "net_ret"]
 
@@ -285,6 +286,55 @@ def cumulative_excess(rows):
 
 
 # ---------------------------------------------------------------------------
+# As-of pick (frozen weights applied to any chosen date's cross-section)
+# ---------------------------------------------------------------------------
+
+def asof_pick(meta, st_set, asof, top_n=None, hysteresis=True):
+    """用冻结权重对指定日截面(factors_asof.csv)出 top-N 仓位。日期无关:权重已验证,
+    套用到任一天的合格截面即得当日选股。hysteresis=True 时 delta 对上次纸面持仓加分
+    (适合"继续持有纸面册");全新建仓应 hysteresis=False(无幽灵持仓加分)。"""
+    if not os.path.exists(ASOF_PATH):
+        raise SystemExit(f"[paper_ridge] 缺 {ASOF_PATH} —— 先跑: python scripts/build_factor_matrix.py --asof {asof}")
+    panel = pd.read_csv(ASOF_PATH, dtype={"symbol": str})
+    g = panel[panel["date"] == asof] if "date" in panel.columns else panel
+    if len(g) == 0:
+        avail = sorted(panel["date"].unique()) if "date" in panel.columns else []
+        raise SystemExit(f"[paper_ridge] {asof} 无截面;factors_asof.csv 含日期 {avail}")
+    names = {}
+    npath = os.path.join(er.REPO, "data", "baostock", "stock_names.csv")
+    if os.path.exists(npath):
+        _nd = pd.read_csv(npath, dtype=str)
+        names = dict(zip(_nd["symbol"], _nd["name"]))
+    elig = er._eligible(g, st_set)            # 名单 ST 闸(st_symbols.csv)+ roe/bm/流动性；不 dropna fwd
+    # 双保险:名称含 ST/*ST/退 的一律剔除(防 st_symbols.csv 名单滞后)
+    if names:
+        is_st = elig["symbol"].map(lambda s: ("ST" in str(names.get(s, "")).upper()) or ("退" in str(names.get(s, ""))))
+        n_drop = int(is_st.sum())
+        elig = elig[~is_st]
+        if n_drop:
+            print(f"  [ST双保险] 按名称额外剔除 {n_drop} 只 ST/退 票")
+    w = np.array(meta["weights"], float)
+    delta = float(meta["delta"]); tn = int(top_n or meta["top_n"])
+    prev = (_split(read_journal()[-1]["picks"]) if read_journal() else []) if hysteresis else []
+    if len(elig) < tn:
+        raise SystemExit(f"[paper_ridge] {asof} 合格池仅 {len(elig)} 只(<{tn});检查数据是否覆盖该日")
+    G = norm_gauss(elig[FACTOR_COLS].to_numpy(float))
+    score = G @ w
+    if delta > 0.0 and prev:
+        score = score + delta * elig["symbol"].isin(set(prev)).to_numpy().astype(float)
+    gi = elig.assign(_score=score).sort_values(["_score", "symbol"], ascending=[False, True])
+    picks = list(gi.head(tn)["symbol"])
+    print(f"\n=== 「去相关岭组合」as-of {asof} 选股 ===")
+    print(f"  冻结权重 train {meta['train_lo']}..{meta['train_hi']} · 合格池 {len(elig)} 只(membership∩ST/流动性闸) · "
+          f"top{tn} · delta={delta:.2f}{'(对上次持仓迟滞)' if prev else ''}")
+    print(f"  {'rank':>4}{'symbol':>11}  {'name':<10}{'score':>9}")
+    for i, (_, r) in enumerate(gi.head(max(tn, 5)).iterrows(), 1):
+        print(f"  {i:>4}{r['symbol']:>11}  {names.get(r['symbol'], ''):<10}{r['_score']:>+9.3f}{'   ← 买入' if i <= tn else ''}")
+    print(f"\n  → 周三入仓口径:用 {asof} 收盘截面打分,T+1 次日开盘买入上面 top{tn}。")
+    return picks
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -292,10 +342,20 @@ def main():
     ap = argparse.ArgumentParser(description="「去相关岭组合」前向纸面册")
     ap.add_argument("--status", action="store_true", help="只读打印当前册，不推进/不写盘")
     ap.add_argument("--retrain", action="store_true", help="按今天最新已标注数据重冻权重（开新册）")
+    ap.add_argument("--asof", default=None, help="用冻结权重对该日(YYYY-MM-DD)截面出仓位（需先 build_factor_matrix.py --asof）")
+    ap.add_argument("--top", type=int, default=None, help="--asof 时覆盖 top_n（默认用冻结的 top_n）")
+    ap.add_argument("--no-hyst", action="store_true", help="--asof 时关闭迟滞（全新建仓,无上次持仓加分）")
     args = ap.parse_args()
 
-    panel = pd.read_csv(er.PANEL_MEMBERSHIP, dtype={"symbol": str})
     st_set = set(pd.read_csv(er.ST_PATH)["symbol"]) if os.path.exists(er.ST_PATH) else set()
+
+    if args.asof:
+        if not os.path.exists(WEIGHTS_PATH):
+            raise SystemExit("[paper_ridge] no frozen weights yet — run --retrain first.")
+        asof_pick(load_weights(), st_set, args.asof, top_n=args.top, hysteresis=not args.no_hyst)
+        return
+
+    panel = pd.read_csv(er.PANEL_MEMBERSHIP, dtype={"symbol": str})
 
     if args.status:
         if not os.path.exists(WEIGHTS_PATH):
